@@ -67,7 +67,13 @@
 			
 
 
-	<Frame name="Atr_Confirm_Frame" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="DIALOG" hidden="true">
+	<!-- FULLSCREEN_DIALOG, not DIALOG: toplevel frames re-raise when clicked, and a -->
+	<!-- raise into a populated strata restacks the whole strata (the drag-freeze    -->
+	<!-- mechanism, docs/DRAG-FREEZE.md). This dialog is not movable so it never     -->
+	<!-- pays that per-drag, but it still pays per click; the sparse strata makes    -->
+	<!-- each raise cheap. toplevel is kept deliberately - these confirm dialogs     -->
+	<!-- stack with the other Atr_* dialogs and should order on click.               -->
+	<Frame name="Atr_Confirm_Frame" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="FULLSCREEN_DIALOG" hidden="true">
 		<Size><AbsDimension x="300" y="150" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="290" y="-190"/></Offset></Anchor></Anchors>
 	
@@ -172,7 +178,16 @@
 		<Color r="1" g="0.5" b="0.25"/>
 	</Font>
 
-	<Frame name="Atr_Mask" toplevel="true" parent="UIParent" enableMouse="true" hidden="true">
+	<!-- Scrim, not a dialog: shown BEHIND the Atr_* confirm dialogs to grey out the -->
+	<!-- auction house and swallow stray clicks. toplevel deliberately REMOVED - a   -->
+	<!-- toplevel frame re-raises whenever it is clicked, which (a) restacks its     -->
+	<!-- whole strata, the drag-freeze mechanism from docs/DRAG-FREEZE.md, and (b)   -->
+	<!-- is wrong for a scrim anyway: raising the mask would lift it above the very  -->
+	<!-- dialog it is masking. Strata is left unset on purpose so the mask keeps     -->
+	<!-- inheriting a strata BELOW the dialogs; it covers the auction house on Show  -->
+	<!-- by strata/level, never by the toplevel raise, so coverage is unchanged.     -->
+	<!-- enableMouse still swallows the clicks, which is the mask's actual job.      -->
+	<Frame name="Atr_Mask" parent="UIParent" enableMouse="true" hidden="true">
 		<Size><AbsDimension x="820" y="450" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="26" y="-129"/></Offset></Anchor></Anchors>
 	
@@ -1210,7 +1225,9 @@
 
    <!-- Confirm Cancel Auction screen --> 
 
-	<Frame name="Atr_CancelAuction_Confirm_Frame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="DIALOG" hidden="true">
+	<!-- FULLSCREEN_DIALOG, not DIALOG: a toplevel raise restacks its whole strata,  -->
+	<!-- so keep these dialogs on the sparse one (see Atr_Confirm_Frame above).      -->
+	<Frame name="Atr_CancelAuction_Confirm_Frame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="FULLSCREEN_DIALOG" hidden="true">
 		<Size><AbsDimension x="340" y="115" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-390"/></Offset></Anchor></Anchors>
 	
@@ -1247,7 +1264,9 @@
 	</Font>
 
 
-	<Frame name="Atr_FullScanFrame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" frameStrata="DIALOG" enableMouse="true" hidden="true">
+	<!-- FULLSCREEN_DIALOG, not DIALOG: a toplevel raise restacks its whole strata,  -->
+	<!-- so keep these dialogs on the sparse one (see Atr_Confirm_Frame above).      -->
+	<Frame name="Atr_FullScanFrame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" frameStrata="FULLSCREEN_DIALOG" enableMouse="true" hidden="true">
 		<Size><AbsDimension x="460" y="420" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="220" y="-130"/></Offset></Anchor></Anchors>
 
@@ -1502,7 +1521,15 @@
 	<!-- Margin filters, each with an enable checkbox and a threshold.      -->
 	<!-- Opened by the "Profit Margin" button on the SELL inventory browser.-->
 	<!-- ================================================================= -->
-	<Frame name="Atr_ProfitMarginPopup" parent="UIParent" frameStrata="DIALOG" toplevel="true" enableMouse="true" movable="true" hidden="true">
+	<!-- DRAG-FREEZE FIX (Ascension 3.3.5): this popup is movable, and a movable  -->
+	<!-- frame that pairs toplevel="true" with a populated strata (DIALOG) freezes -->
+	<!-- the client ~0.6-2.6s the first time it is dragged each session: the drag  -->
+	<!-- raises the toplevel frame, and raising into a crowded strata restacks the -->
+	<!-- whole strata in a one-time engine pass. Fix is BOTH halves: move to the   -->
+	<!-- sparse FULLSCREEN_DIALOG strata AND drop toplevel, so no raise happens on -->
+	<!-- click/drag at all. Front-on-open is unaffected: this is a singleton and   -->
+	<!-- Atr_PM_Open already calls :Raise() explicitly (Auctionator.lua).          -->
+	<Frame name="Atr_ProfitMarginPopup" parent="UIParent" frameStrata="FULLSCREEN_DIALOG" enableMouse="true" movable="true" hidden="true">
 		<Size><AbsDimension x="400" y="250"/></Size>
 		<Anchors><Anchor point="CENTER"/></Anchors>
 		<Backdrop bgFile="Interface\DialogFrame\UI-DialogBox-Background" edgeFile="Interface\DialogFrame\UI-DialogBox-Border" tile="true">

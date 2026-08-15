@@ -129,7 +129,8 @@ end
 -- children: an EMPTY HIGH+SetToplevel(true) frame still froze 1273ms, while
 -- FULLSCREEN_DIALOG or dropping SetToplevel was smooth. CAUSE = SetToplevel(true)
 -- raising into the crowded HIGH strata (children/backdrop/dropdowns all
--- exonerated). See docs/DRAG-FREEZE.md + docs/FINDINGS.md. The E/F/G/H frames
+-- exonerated). See docs/DRAG-FREEZE.md at this repo's root (and docs/FINDINGS.md
+-- in the Digigull/BiS-Scanner repo, which is not vendored here). The E/F/G/H frames
 -- below are kept as a backdrop/children control; they do NOT reproduce the bug.
 --
 -- CONSTRUCTION isolation test (2026-08-14) — the backdrop is EXONERATED.
@@ -202,10 +203,14 @@ local function buildC()
         f:SetSize(240, 150)
         f:SetPoint("TOPLEFT", CPOS[i][1], CPOS[i][2])
         f:SetFrameStrata(v.strata)
-        f:SetToplevel(true)                 -- same as the real windows (cpp + BiS)
+        -- Kept deliberately: this harness VARIES strata and holds toplevel constant,
+        -- so the flag must stay to isolate the strata axis. Note it no longer mirrors
+        -- the shipping windows — those have since dropped SetToplevel entirely to
+        -- kill the residual ~50ms per-drag restack (docs/DRAG-FREEZE.md).
+        f:SetToplevel(true)
         f:EnableMouse(true)
         f:SetMovable(true)
-        f:RegisterForDrag("LeftButton")     -- same path the smooth cpp window uses
+        f:RegisterForDrag("LeftButton")     -- same drag path the real cpp windows use
         f:SetScript("OnDragStart", f.StartMoving)
         f:SetScript("OnDragStop", f.StopMovingOrSizing)
         f:SetBackdrop(LIGHT)                -- backdrop held CONSTANT across E/F/G/H

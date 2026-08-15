@@ -7,11 +7,13 @@ reference/minimap-loot-window-plan.md). A movable, closable floating frame that
 renders the per-item roll log collected by Modules/LootTracker.lua (who rolled
 what, and who won).
 
-§8.6 note: on this client, StaticPopups/overlays render BEHIND the Interface
-Options window. This is a plain gameplay-time frame (not a StaticPopup) shown
-while the options window is closed, so it should render fine — but that is the
-in-game smoke-test gate for this phase. If it misbehaves, the fallback is an
-options-page render of the same log.
+§8.6 note (SUPERSEDED, kept for context): the original concern was that on this
+client StaticPopups/overlays render BEHIND the Interface Options window, so the
+window was put on a high strata to avoid disappearing behind it. The window now
+sits on LOW on purpose — see the strata comment in CreateLootWindow. Rendering
+under the Blizzard panels is the intended behaviour for a persistent log you leave
+open while playing, so what §8.6 treated as a failure mode is now the design. The
+old fallback (rendering the log on an options page instead) is therefore moot.
 
 All addon state lives here (the runtime log + persistence + redraw); the module
 only parses chat and pushes events in via LootTracker_Record / LootTracker_OpenRoll.
@@ -192,22 +194,26 @@ function PasslootBiS:CreateLootWindow()
 	f:SetResizable(true)
 	f:SetMinResize(160, 150)
 	f:SetMaxResize(800, 900)
-	-- FULLSCREEN_DIALOG, and deliberately NO SetToplevel: on Ascension 3.3.5 a
-	-- SetToplevel(true) frame re-raises on every click/drag, and each raise
-	-- restacks the strata (~50ms on FULLSCREEN_DIALOG, a full ~0.6-2.6s freeze on
-	-- HIGH). This is a singleton window that never needs click-to-raise, so
-	-- dropping SetToplevel gives 0 spikes on drag; the high strata still renders
-	-- it above DIALOG-strata panels, and Raise() on open (ToggleLootWindow) puts
-	-- it in front. (see DRAGFREEZE note — the "0 spikes" cure)
-	f:SetFrameStrata("FULLSCREEN_DIALOG")
-	f:SetBackdrop({
-		["bgFile"] = "Interface\\DialogFrame\\UI-DialogBox-Background",
-		["edgeFile"] = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		["tile"] = true,
-		["tileSize"] = 32,
-		["edgeSize"] = 32,
-		["insets"] = { ["left"] = 11, ["right"] = 12, ["top"] = 12, ["bottom"] = 11 },
-	})
+	-- Deliberately NO SetToplevel: on Ascension 3.3.5 a SetToplevel(true) frame
+	-- re-raises on every click/drag, and each raise restacks the strata (~50ms on a
+	-- sparse one, a full ~0.6-2.6s freeze on a crowded one like HIGH). This is a
+	-- singleton window that never needs click-to-raise, so dropping the flag gives
+	-- 0 spikes on drag. (see DRAGFREEZE note — the "0 spikes" cure)
+	--
+	-- LOW strata: this is a persistent floating log you leave open while playing, so
+	-- it should sit UNDER the default Blizzard panels (bags, character sheet, world
+	-- map) the way a damage meter does, rather than covering them. LOW is still above
+	-- the 3D world. Note this reverses the original §8.6 choice in the file header,
+	-- which put the window high specifically so it would not disappear behind the
+	-- Interface Options window — that is now the accepted, intended behaviour: the
+	-- log is not something you read while configuring the addon.
+	--
+	-- Safe on LOW only because there is no SetToplevel above: a LOW + toplevel window
+	-- would restack the LOW strata on every drag, the same mechanism as the HIGH
+	-- freeze. Raise() in ToggleLootWindow still works, but it orders the window among
+	-- LOW siblings only — it cannot cross strata, so the window stays under the panels.
+	f:SetFrameStrata("LOW")
+	PasslootBiS:ApplyDarkBackdrop(f)   -- shared house chrome (Core/PassLoot.lua)
 	f:EnableMouse(true)
 	f:SetMovable(true)
 	f:RegisterForDrag("LeftButton")

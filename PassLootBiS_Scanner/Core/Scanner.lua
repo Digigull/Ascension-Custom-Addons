@@ -542,13 +542,12 @@ local function debugShow(text)
 		dbgFrame:SetWidth(520)
 		dbgFrame:SetHeight(440)
 		dbgFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+		-- Deliberately NOT ns.UI.applyWindowChrome (which uses LOW): this is a
+		-- copy/paste box you open to select text out of, so it has to float above
+		-- whatever is on screen rather than sit under the Blizzard panels.
+		-- Spike-free regardless, because it never calls SetToplevel.
 		dbgFrame:SetFrameStrata("DIALOG")
-		dbgFrame:SetBackdrop({
-			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-			tile = true, tileSize = 32, edgeSize = 32,
-			insets = { left = 11, right = 12, top = 12, bottom = 11 },
-		})
+		ns.UI.applyDarkBackdrop(dbgFrame)   -- shared house chrome (Core/UI.lua)
 		dbgFrame:EnableMouse(true)
 		dbgFrame:SetMovable(true)
 		dbgFrame:RegisterForDrag("LeftButton")
