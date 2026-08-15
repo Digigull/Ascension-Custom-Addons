@@ -129,7 +129,7 @@ end
 -- children: an EMPTY HIGH+SetToplevel(true) frame still froze 1273ms, while
 -- FULLSCREEN_DIALOG or dropping SetToplevel was smooth. CAUSE = SetToplevel(true)
 -- raising into the crowded HIGH strata (children/backdrop/dropdowns all
--- exonerated). See docs/DRAG-FREEZE.md at this repo's root (and docs/FINDINGS.md
+-- exonerated). See management/docs/DRAG-FREEZE.md (and docs/FINDINGS.md
 -- in the Digigull/BiS-Scanner repo, which is not vendored here). The E/F/G/H frames
 -- below are kept as a backdrop/children control; they do NOT reproduce the bug.
 --
@@ -206,7 +206,7 @@ local function buildC()
         -- Kept deliberately: this harness VARIES strata and holds toplevel constant,
         -- so the flag must stay to isolate the strata axis. Note it no longer mirrors
         -- the shipping windows — those have since dropped SetToplevel entirely to
-        -- kill the residual ~50ms per-drag restack (docs/DRAG-FREEZE.md).
+        -- kill the residual ~50ms per-drag restack (management/docs/DRAG-FREEZE.md).
         f:SetToplevel(true)
         f:EnableMouse(true)
         f:SetMovable(true)

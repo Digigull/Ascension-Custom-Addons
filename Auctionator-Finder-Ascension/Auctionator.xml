@@ -69,10 +69,10 @@
 
 	<!-- FULLSCREEN_DIALOG, not DIALOG: toplevel frames re-raise when clicked, and a -->
 	<!-- raise into a populated strata restacks the whole strata (the drag-freeze    -->
-	<!-- mechanism, docs/DRAG-FREEZE.md). This dialog is not movable so it never     -->
-	<!-- pays that per-drag, but it still pays per click; the sparse strata makes    -->
-	<!-- each raise cheap. toplevel is kept deliberately - these confirm dialogs     -->
-	<!-- stack with the other Atr_* dialogs and should order on click.               -->
+	<!-- mechanism, management/docs/DRAG-FREEZE.md). This dialog is not movable so   -->
+	<!-- it never pays that per-drag, but it still pays per click; the sparse strata -->
+	<!-- makes each raise cheap. toplevel is kept deliberately - these confirm       -->
+	<!-- dialogs stack with the other Atr_* dialogs and should order on click.       -->
 	<Frame name="Atr_Confirm_Frame" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="FULLSCREEN_DIALOG" hidden="true">
 		<Size><AbsDimension x="300" y="150" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="290" y="-190"/></Offset></Anchor></Anchors>
@@ -181,12 +181,13 @@
 	<!-- Scrim, not a dialog: shown BEHIND the Atr_* confirm dialogs to grey out the -->
 	<!-- auction house and swallow stray clicks. toplevel deliberately REMOVED - a   -->
 	<!-- toplevel frame re-raises whenever it is clicked, which (a) restacks its     -->
-	<!-- whole strata, the drag-freeze mechanism from docs/DRAG-FREEZE.md, and (b)   -->
-	<!-- is wrong for a scrim anyway: raising the mask would lift it above the very  -->
-	<!-- dialog it is masking. Strata is left unset on purpose so the mask keeps     -->
-	<!-- inheriting a strata BELOW the dialogs; it covers the auction house on Show  -->
-	<!-- by strata/level, never by the toplevel raise, so coverage is unchanged.     -->
-	<!-- enableMouse still swallows the clicks, which is the mask's actual job.      -->
+	<!-- whole strata (the drag-freeze mechanism, management/docs/DRAG-FREEZE.md),   -->
+	<!-- and (b) is wrong for a scrim anyway: raising the mask would lift it above   -->
+	<!-- the very dialog it is masking. Strata is left unset on purpose so the mask  -->
+	<!-- keeps inheriting a strata BELOW the dialogs; it covers the auction house on -->
+	<!-- Show by strata/level, never by the toplevel raise, so coverage is           -->
+	<!-- unchanged. enableMouse still swallows the clicks, which is the mask's       -->
+	<!-- actual job.                                                                 -->
 	<Frame name="Atr_Mask" parent="UIParent" enableMouse="true" hidden="true">
 		<Size><AbsDimension x="820" y="450" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="26" y="-129"/></Offset></Anchor></Anchors>

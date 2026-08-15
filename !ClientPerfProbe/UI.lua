@@ -566,7 +566,7 @@ showDetail = function(title, text)
         f:SetPoint("CENTER")
         -- No SetToplevel: a toplevel frame re-raises on every click/drag, and each
         -- raise restacks the strata (~50ms even on sparse FULLSCREEN_DIALOG) — a
-        -- repeatable per-drag spike (docs/DRAG-FREEZE.md). Singleton popup, so
+        -- repeatable per-drag spike (management/docs/DRAG-FREEZE.md). Singleton popup, so
         -- click-to-raise is unused; showDetail() calls Raise() once instead.
         f:SetFrameStrata("FULLSCREEN_DIALOG")
         darkBackdrop(f)
@@ -756,7 +756,7 @@ buildGlossary = function()
     f:SetPoint("CENTER")
     -- No SetToplevel: it would re-raise (and restack the strata) on every drag.
     -- Singleton popup — UI.ShowGlossary() calls Raise() once instead. See
-    -- docs/DRAG-FREEZE.md.
+    -- management/docs/DRAG-FREEZE.md.
     f:SetFrameStrata("FULLSCREEN_DIALOG")
     darkBackdrop(f)
     f:EnableMouse(true)
@@ -876,7 +876,8 @@ local function makeMenu(menuName, items)
     -- FULLSCREEN_DIALOG puts the menu above the LOW-strata main window by strata
     -- alone, so SetToplevel adds nothing — and it would restack the strata on
     -- every click. closeMenus() keeps only one menu open at a time, so there is
-    -- no sibling to raise above and no Raise() is needed. See docs/DRAG-FREEZE.md.
+    -- no sibling to raise above and no Raise() is needed. See
+    -- management/docs/DRAG-FREEZE.md.
     menu:SetFrameStrata("FULLSCREEN_DIALOG")
     darkBackdrop(menu)
     menu:SetWidth(156)
@@ -1017,7 +1018,7 @@ local function build()
     -- below MEDIUM/HIGH/DIALOG/FULLSCREEN yet still above the 3D world (WORLD),
     -- so the window renders over the game but under the panels.
     -- No SetToplevel: that + a populated strata is the confirmed drag-freeze
-    -- (variant A, docs/DRAG-FREEZE.md); without it any strata is spike-free
+    -- (variant A, management/docs/DRAG-FREEZE.md); without it any strata is spike-free
     -- (variant B). A one-time Raise() on open (UI.Show) only orders it among
     -- LOW siblings — it cannot cross strata, so the window stays under the panels.
     frame:SetFrameStrata("LOW")

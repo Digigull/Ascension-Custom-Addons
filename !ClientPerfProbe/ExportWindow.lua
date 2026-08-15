@@ -55,7 +55,7 @@ local function build()
     -- cheap. But cheap is not free: the follow-up measurement put each toplevel
     -- raise at ~50ms, paid on EVERY click/drag. Dropping the flag takes that to
     -- zero. Singleton window, so click-to-raise is unused; ExportWindow.Show()
-    -- calls Raise() once for front-on-open. See docs/DRAG-FREEZE.md.
+    -- calls Raise() once for front-on-open. See management/docs/DRAG-FREEZE.md.
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
     -- LIGHT backdrop — the Details/DetailsFramework recipe (a 1px WHITE8X8 border + the
     -- flat UI-Tooltip-Background), REPLACING the standard tiled UI-DialogBox parchment +

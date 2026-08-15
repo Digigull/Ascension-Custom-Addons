@@ -30,7 +30,7 @@ becomes load-bearing again -- which is the trap this file exists to prevent.
 Front-on-open, the one thing the flag did usefully provide, is kept explicitly via
 UI.raiseOnOpen() in each show path: one restack on open rather than one per drag.
 
-See docs/DRAG-FREEZE.md at the repo root for the full write-up.
+See management/docs/DRAG-FREEZE.md for the full write-up.
 
 Guarded: a table with no :SetFrameStrata (or a nil frame) is a safe no-op, so this
 is inert under bare lua5.1 where no real frames exist.

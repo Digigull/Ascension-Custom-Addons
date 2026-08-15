@@ -1,0 +1,17 @@
+# Keep maintenance material out of the archives GitHub generates (the "Download
+# ZIP" button and release source tarballs are both built with `git archive`), so
+# a user downloading the addons gets only the addon folders.
+#
+# This is packaging only, NOT privacy: export-ignore has no effect on `git clone`
+# or the web UI, and everything here stays publicly browsable.
+#
+# No trailing slash - in .gitattributes a pattern that matches a directory does
+# not recursively match paths inside it (unlike .gitignore); git archive prunes
+# the whole tree from the directory entry itself.
+
+/management export-ignore
+/.gitattributes export-ignore
+
+# The root CLAUDE.md exists only to import management/docs/CLAUDE.md, which is
+# excluded above - in an archive it would be a pointer to nothing.
+/CLAUDE.md export-ignore
