@@ -23,7 +23,7 @@ exists only so this file is picked up when a session starts at the repo root.
 
 ## The drag freeze — the one domain rule that matters
 
-Full write-up: `!ClientPerfProbe/docs/DRAG-FREEZE.md`. Read it before touching any frame's
+Full write-up: `docs/DRAG-FREEZE.md`. Read it before touching any frame's
 strata, `SetToplevel`, or `Raise`. Short version:
 
 - **Never call `SetToplevel(true)` on a new window.** A toplevel frame re-raises on every

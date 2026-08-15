@@ -129,7 +129,8 @@ end
 -- children: an EMPTY HIGH+SetToplevel(true) frame still froze 1273ms, while
 -- FULLSCREEN_DIALOG or dropping SetToplevel was smooth. CAUSE = SetToplevel(true)
 -- raising into the crowded HIGH strata (children/backdrop/dropdowns all
--- exonerated). See docs/DRAG-FREEZE.md + docs/FINDINGS.md. The E/F/G/H frames
+-- exonerated). See docs/DRAG-FREEZE.md at this repo's root (and docs/FINDINGS.md
+-- in the Digigull/BiS-Scanner repo, which is not vendored here). The E/F/G/H frames
 -- below are kept as a backdrop/children control; they do NOT reproduce the bug.
 --
 -- CONSTRUCTION isolation test (2026-08-14) — the backdrop is EXONERATED.

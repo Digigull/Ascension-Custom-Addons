@@ -43,7 +43,7 @@ frame:SetClampedToScreen(true)
 -- For the same reason there is deliberately no Raise() in the show path: Raise()
 -- restacks the strata too, and on a populated strata like HIGH that is the very
 -- pass we are avoiding. It is not needed -- strata alone already puts this above
--- the character panel. See docs/DRAG-FREEZE.md in the !ClientPerfProbe repo.
+-- the character panel. See docs/DRAG-FREEZE.md at the repo root.
 frame:SetFrameStrata("HIGH")
 frame:RegisterForDrag("LeftButton")
 -- Flat dark house style (Details-like): the tooltip background plus a 1px WHITE8X8
