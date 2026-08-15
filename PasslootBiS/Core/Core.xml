@@ -1,0 +1,12 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/..\FrameXML\UI.xsd">
+	<Script file="PassLoot.lua"/>
+	<Script file="MinimapButton.lua"/>
+	<Script file="LootWindow.lua"/>
+	<Script file="RollAdvisor.lua"/>
+	<Script file="RollRetry.lua"/>
+	<Script file="Constants.lua"/>
+	<Script file="MainGUI.lua"/>
+	<Script file="ModulesGUI.lua"/>
+	<Script file="ItemInfo.lua"/>
+	<Script file="Cache.lua"/>
+</Ui>

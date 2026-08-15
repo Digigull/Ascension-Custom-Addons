@@ -1,0 +1,13 @@
+﻿## Interface: 30300
+## Title: PassLoot (BiS)
+## Author: Odlaw, Modified for Ascension by Xan; BiS import fork
+## Version: 1.0
+## Notes: PassLoot fork with BisBeard BiS-list import. Runs standalone; do not enable alongside stock PassLoot.
+## Notes-zhCN: 自动在指定的物品上采取贪婪，需求或者放弃的掷骰操作
+## SavedVariables: PasslootBiSDB, PassLootBiSRollLogDB
+## OptionalDeps: Ace3, LibBabble-Inventory-3.0, LibSink-2.0, LibDataBroker-1.1, ClientPerfProbe
+
+Libs\Libs.xml
+Locales\Locales.xml
+Core\core.xml
+Modules\Modules.xml

@@ -1,0 +1,35 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/..\FrameXML\UI.xsd">
+	<Script file="CreateWidget.lua"/>
+	<Script file="Bind.lua"/>
+	<Script file="CanIRoll.lua"/>
+	<Script file="ConfirmBoP.lua"/>
+	<Script file="ConfirmDE.lua"/>
+	<Script file="Equipslot.lua"/>
+	<Script file="ExceptionalItem.lua"/>
+	<Script file="GroupRaid.lua"/>
+	<Script file="GuildGroup.lua"/>
+	<Script file="Inventory.lua"/>
+	<Script file="ItemID.lua"/>
+	<Script file="ItemLevel.lua"/>
+	<Script file="ItemName.lua"/>
+	<Script file="ItemPrice.lua"/>
+	<Script file="LearnedItem.lua"/>
+	<Script file="LootWon.lua"/>
+	<Script file="MysticEnchant.lua"/>
+	<Script file="MythicItemLevel.lua"/>
+	<Script file="PlayerClass.lua"/>
+	<Script file="PlayerLevel.lua"/>
+	<Script file="PlayerName.lua"/>
+	<Script file="Quality.lua"/>
+	<Script file="RequiredLevel.lua"/>
+	<Script file="TypeSubType.lua"/>
+	<Script file="Unique.lua"/>
+	<Script file="Usable.lua"/>
+	<Script file="VanityUnlock.lua"/>
+	<Script file="WardrobeUnlock.lua"/>
+	<Script file="ZoneName.lua"/>
+	<Script file="ZoneType.lua"/>
+	<Script file="BiSImport.lua"/>
+	<Script file="BiSRollLog.lua"/>
+	<Script file="LootTracker.lua"/>
+</Ui>
