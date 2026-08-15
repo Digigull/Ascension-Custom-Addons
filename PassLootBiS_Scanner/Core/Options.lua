@@ -163,10 +163,11 @@ local function build()
 	frame = CreateFrame("Frame", "PLBiSScannerOptions", UIParent)
 	frame:SetWidth(320)
 	frame:SetHeight(580)
-	-- DRAG-FREEZE FIX: drag-safe strata + toplevel via the shared helper (see
-	-- Core/UI.lua). HIGH + SetToplevel(true) froze the client ~1s on first drag;
-	-- FULLSCREEN_DIALOG keeps the toplevel raise cheap. Measured via /plbisscan
-	-- dragtest; centralized here so no window can drift back to HIGH+toplevel.
+	-- DRAG-FREEZE FIX: drag-safe strata via the shared helper (see Core/UI.lua).
+	-- HIGH + SetToplevel(true) froze the client ~1s on first drag; FULLSCREEN_DIALOG
+	-- alone still cost ~50ms on EVERY drag while the toplevel flag remained, so the
+	-- flag is gone too and Options.Show() calls UI.raiseOnOpen() instead. Measured
+	-- via /plbisscan dragtest; centralized so no window can drift back.
 	ns.UI.applyWindowChrome(frame)
 	frame:SetBackdrop({
 		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -385,8 +386,9 @@ local function buildFilter()
 	filterFrame = CreateFrame("Frame", "PLBiSScannerFilter", UIParent)
 	filterFrame:SetWidth(380)
 	filterFrame:SetHeight(540)
-	-- DRAG-FREEZE FIX: drag-safe strata + toplevel via the shared helper (see
-	-- Core/UI.lua and the note on PLBiSScannerOptions above).
+	-- DRAG-FREEZE FIX: drag-safe strata via the shared helper, no toplevel (see
+	-- Core/UI.lua and the note on PLBiSScannerOptions above). ShowFilter() calls
+	-- UI.raiseOnOpen() so this still opens in front.
 	ns.UI.applyWindowChrome(filterFrame)
 	filterFrame:SetBackdrop({
 		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -521,6 +523,7 @@ function Options.Show()
 	build()
 	Options.Refresh()
 	frame:Show()
+	ns.UI.raiseOnOpen(frame)   -- front-of-strata on open; replaces the dropped SetToplevel
 end
 
 function Options.Hide()
@@ -556,6 +559,7 @@ function Options.ShowFilter()
 	if not buildFilter() then return end
 	Options.RefreshFilter()
 	filterFrame:Show()
+	ns.UI.raiseOnOpen(filterFrame)   -- front-of-strata on open; replaces the dropped SetToplevel
 end
 
 function Options.HideFilter()
