@@ -564,8 +564,11 @@ showDetail = function(title, text)
         local f = CreateFrame("Frame", "ClientPerfProbeDetail", UIParent)
         f:SetSize(420, 260)
         f:SetPoint("CENTER")
+        -- No SetToplevel: a toplevel frame re-raises on every click/drag, and each
+        -- raise restacks the strata (~50ms even on sparse FULLSCREEN_DIALOG) — a
+        -- repeatable per-drag spike (docs/DRAG-FREEZE.md). Singleton popup, so
+        -- click-to-raise is unused; showDetail() calls Raise() once instead.
         f:SetFrameStrata("FULLSCREEN_DIALOG")
-        f:SetToplevel(true)
         darkBackdrop(f)
         f:EnableMouse(true)
         f:SetMovable(true)
@@ -605,6 +608,7 @@ showDetail = function(title, text)
     local h = detailFrame.bodyFS:GetStringHeight()
     if type(h) == "number" and h > 0 then detailFrame.bodyFrame:SetHeight(h + 8) end
     detailFrame:Show()
+    detailFrame:Raise()   -- front-of-strata on open; replaces the dropped SetToplevel
 end
 
 --------------------------------------------------------------------------------
@@ -750,8 +754,10 @@ buildGlossary = function()
     local f = CreateFrame("Frame", "ClientPerfProbeGuide", UIParent)
     f:SetSize(480, 470)
     f:SetPoint("CENTER")
+    -- No SetToplevel: it would re-raise (and restack the strata) on every drag.
+    -- Singleton popup — UI.ShowGlossary() calls Raise() once instead. See
+    -- docs/DRAG-FREEZE.md.
     f:SetFrameStrata("FULLSCREEN_DIALOG")
-    f:SetToplevel(true)
     darkBackdrop(f)
     f:EnableMouse(true)
     f:SetMovable(true)
@@ -867,8 +873,11 @@ end
 
 local function makeMenu(menuName, items)
     local menu = CreateFrame("Frame", menuName, frame)
+    -- FULLSCREEN_DIALOG puts the menu above the LOW-strata main window by strata
+    -- alone, so SetToplevel adds nothing — and it would restack the strata on
+    -- every click. closeMenus() keeps only one menu open at a time, so there is
+    -- no sibling to raise above and no Raise() is needed. See docs/DRAG-FREEZE.md.
     menu:SetFrameStrata("FULLSCREEN_DIALOG")
-    menu:SetToplevel(true)
     darkBackdrop(menu)
     menu:SetWidth(156)
     menu:Hide()
@@ -955,8 +964,9 @@ local function buildDropdown()
     frame.catMenuBtn = btn
 
     local menu = CreateFrame("Frame", "ClientPerfProbeUIMenu", frame)
+    -- No SetToplevel — same reasoning as makeMenu() above: strata alone already
+    -- lifts it over the LOW main window, and the flag would restack per click.
     menu:SetFrameStrata("FULLSCREEN_DIALOG")
-    menu:SetToplevel(true)
     darkBackdrop(menu)
     menu:SetPoint("TOPLEFT", btn, "BOTTOMLEFT", 0, -2)
     menu:SetWidth(130)
@@ -1177,6 +1187,7 @@ function UI.Select(id) if frame then selectCat(id) end end
 function UI.ShowGlossary()
     if not glossaryFrame then buildGlossary() end
     glossaryFrame:Show()
+    glossaryFrame:Raise()   -- front-of-strata on open; replaces the dropped SetToplevel
     layoutGlossaryList()
 end
 

@@ -49,8 +49,14 @@ local function build()
     frame = CreateFrame("Frame", "ClientPerfProbeExport", UIParent)
     frame:SetSize(600, 440)
     frame:SetPoint("CENTER")
+    -- No SetToplevel. This window was the reference "never freezes" control while
+    -- the drag-freeze was being isolated, on FULLSCREEN_DIALOG + toplevel — and it
+    -- never showed the ~1s cold freeze, because the sparse strata makes the raise
+    -- cheap. But cheap is not free: the follow-up measurement put each toplevel
+    -- raise at ~50ms, paid on EVERY click/drag. Dropping the flag takes that to
+    -- zero. Singleton window, so click-to-raise is unused; ExportWindow.Show()
+    -- calls Raise() once for front-on-open. See docs/DRAG-FREEZE.md.
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
-    frame:SetToplevel(true)
     -- LIGHT backdrop — the Details/DetailsFramework recipe (a 1px WHITE8X8 border + the
     -- flat UI-Tooltip-Background), REPLACING the standard tiled UI-DialogBox parchment +
     -- ornate 32px 9-slice border. MEASURE-FIRST EXPERIMENT (docs/FINDINGS.md "BACKDROP
@@ -139,6 +145,7 @@ function ExportWindow.Show(report)
     end
     pageIndex = 1
     frame:Show()
+    frame:Raise()   -- front-of-strata on open; replaces the dropped SetToplevel
     render()
 end
 
