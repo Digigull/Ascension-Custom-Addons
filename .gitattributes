@@ -11,3 +11,7 @@
 
 /management export-ignore
 /.gitattributes export-ignore
+
+# The root CLAUDE.md exists only to import management/docs/CLAUDE.md, which is
+# excluded above - in an archive it would be a pointer to nothing.
+/CLAUDE.md export-ignore
