@@ -28,15 +28,35 @@ frame:SetPoint("CENTER")
 frame:SetMovable(true)
 frame:EnableMouse(true)
 frame:SetClampedToScreen(true)
-frame:SetFrameStrata("DIALOG")
+-- HIGH to match the character panel this popup belongs to: it opens anchored
+-- under the "Show PvP" button on the currency tab, and that button (CurrencyTab.lua)
+-- and the vendor overlay (Vendor.lua) both sit on HIGH for the same reason. HIGH
+-- is above the character panel itself, so the popup stays readable where it pops
+-- up; MEDIUM would put it in the panel's own strata and let frame level decide,
+-- which would likely hide it behind the panel.
+--
+-- HIGH is only safe here because this frame never calls SetToplevel(true). That
+-- pairing -- toplevel on a populated strata like HIGH -- is the confirmed drag
+-- freeze (~0.6-2.6s on the first drag each session): the drag raises the frame and
+-- the raise restacks the whole crowded strata. Do NOT add SetToplevel here.
+--
+-- For the same reason there is deliberately no Raise() in the show path: Raise()
+-- restacks the strata too, and on a populated strata like HIGH that is the very
+-- pass we are avoiding. It is not needed -- strata alone already puts this above
+-- the character panel. See docs/DRAG-FREEZE.md in the !ClientPerfProbe repo.
+frame:SetFrameStrata("HIGH")
 frame:RegisterForDrag("LeftButton")
+-- Flat dark house style (Details-like): the tooltip background plus a 1px WHITE8X8
+-- border, tinted near-black, replacing the ornate gold UI-DialogBox chrome. Purely
+-- cosmetic -- the backdrop has no bearing on the drag freeze.
 frame:SetBackdrop({
-    bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-    edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    tile = true, tileSize = 64, edgeSize = 1,
+    insets = { left = 1, right = 1, top = 1, bottom = 1 },
 })
-frame:SetBackdropColor(0, 0, 0, 0.85)
+frame:SetBackdropColor(0.05, 0.05, 0.07, 0.95)
+frame:SetBackdropBorderColor(0.30, 0.30, 0.34, 1)
 frame:Hide() -- opened via the Currency-tab button, not shown by default
 
 local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
