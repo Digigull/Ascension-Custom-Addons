@@ -3,9 +3,11 @@
 Release home for a set of custom World of Warcraft addons built for
 [Project Ascension](https://ascension.gg) (WotLK 3.3.5, Interface 30300).
 
-Each folder is a standalone, drop-in addon. Copy the folders you want into your
-client's `Interface\AddOns` directory — keeping the folder name exactly as it is
-here — and enable them at the character select screen.
+Each folder listed below is a standalone, drop-in addon. Copy the folders you want
+into your client's `Interface\AddOns` directory — keeping the folder name exactly as
+it is here — and enable them at the character select screen. (`management/` is the
+one exception: it holds the repo's docs and maintenance tooling and is not an addon,
+so leave it here.)
 
 | Addon | Version | What it does |
 | --- | --- | --- |

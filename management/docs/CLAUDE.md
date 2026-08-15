@@ -1,10 +1,25 @@
 # Working in Ascension-Custom-Addons
 
 WoW 3.3.5 (Interface 30300) addons for Project Ascension. Five independent addons in one
-repo; each top-level folder drops straight into `Interface\AddOns` under that exact name.
+repo; each **addon** folder drops straight into `Interface\AddOns` under that exact name.
 
 This file holds the repo-wide conventions. It is imported by the root `CLAUDE.md`, which
 exists only so this file is picked up when a session starts at the repo root.
+
+## Repo layout
+
+The five addon folders stay at the repo root so a user can download one and drop it into
+`Interface\AddOns` unchanged. Everything that is *not* shipped to the client lives under
+`management/`, which is the one top-level folder that is not an addon:
+
+```
+management/
+  docs/                          repo-wide docs (this file, DRAG-FREEZE.md)
+  addons/<addon>/tools/          per-addon maintenance tooling, not shipped
+```
+
+Keep it that way: nothing under `management/` may be required at runtime, and no new
+non-addon folder belongs at the root.
 
 ## Environment
 
@@ -23,7 +38,7 @@ exists only so this file is picked up when a session starts at the repo root.
 
 ## The drag freeze — the one domain rule that matters
 
-Full write-up: `docs/DRAG-FREEZE.md`. Read it before touching any frame's
+Full write-up: `management/docs/DRAG-FREEZE.md`. Read it before touching any frame's
 strata, `SetToplevel`, or `Raise`. Short version:
 
 - **Never call `SetToplevel(true)` on a new window.** A toplevel frame re-raises on every
