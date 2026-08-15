@@ -1,0 +1,48 @@
+## Interface: 30300
+## Title: Auctionator |cff00c000Finder (Ascension)|r
+## Version: 2.9.9
+## Author: Zirco
+## X-Website: http://auctionator-addon.com
+## X-Localizations: enUS, deDE, ruRU, svSE, frFR, esES
+## Notes: A lightweight addon that makes it easy and fast to buy, sell and manage auctions
+## SavedVariablesPerCharacter: AUCTIONATOR_SHOW_ST_PRICE, AUCTIONATOR_ENABLE_ALT, AUCTIONATOR_OPEN_FIRST, AUCTIONATOR_OPEN_BUY, AUCTIONATOR_OPEN_ALL_BAGS, AUCTIONATOR_DEF_DURATION, AUCTIONATOR_SHOW_TIPS, AUCTIONATOR_V_TIPS, AUCTIONATOR_A_TIPS, AUCTIONATOR_D_TIPS, AUCTIONATOR_SHIFT_TIPS, AUCTIONATOR_DE_DETAILS_TIPS, AUCTIONATOR_TIPS_ALT, AUCTIONATOR_TIPS_HL_COLOR, AUCTIONATOR_DEFTAB, AUCTIONATOR_SALE_MSG, AUCTIONATOR_QTY_TIPS, AUCTIONATOR_QTY_LOC_TIPS
+## SavedVariables: AUCTIONATOR_SAVEDVARS, AUCTIONATOR_PRICING_HISTORY, AUCTIONATOR_SHOPPING_LISTS, AUCTIONATOR_PRICE_DATABASE, AUCTIONATOR_MEAN_PRICE_DATABASE, AUCTIONATOR_LAST_SCAN_TIME, AUCTIONATOR_TOONS, AUCTIONATOR_STACKING_PREFS, AUCTIONATOR_SCAN_MINLEVEL, AUCTIONATOR_FINDER_SETTINGS, AUCTIONATOR_VENDOR_LEARNED, AUCTIONATOR_BAZAAR, AUCTIONATOR_AH_VARIANT, AUCTIONATOR_SELL_IGNORE, AUCTIONATOR_CRAFT_RECIPES, AUCTIONATOR_NPC_PRICES, AUCTIONATOR_ITEM_LOCATIONS
+
+Locales\enUS.lua
+Locales\deDE.lua
+Locales\ruRU.lua
+Locales\frFR.lua
+Locales\svSE.lua
+Locales\esES.lua
+
+zcUtils.lua
+
+Auctionator.lua
+AuctionatorShop.lua
+
+Auctionator.xml
+
+AuctionatorLocalize.lua
+AuctionatorPane.lua
+AuctionatorScan.lua
+AuctionatorQuery.lua
+AuctionatorVendorSeed.lua
+AuctionatorHints.lua
+AuctionatorVendor.lua
+AuctionatorConflicts.lua
+AuctionatorAPI.lua
+AuctionatorConfig.lua
+AuctionatorBuy.lua
+AuctionatorFinder.lua
+AuctionatorFinderPriceDB.lua
+AuctionatorFinderFullScan.lua
+AuctionatorFinderOptions.lua
+AuctionatorFinderBuyRedirect.lua
+AuctionatorBazaar.lua
+AuctionatorFinderScanThrottle.lua
+AuctionatorFinderProfession.lua
+AuctionatorFinderMerchant.lua
+AuctionatorFinderItemCount.lua
+
+AuctionatorConfig.xml
+

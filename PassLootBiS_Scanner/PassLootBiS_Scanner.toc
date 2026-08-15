@@ -1,0 +1,41 @@
+## Interface: 30300
+## Title: PassLootBiS Scanner
+## Notes: Live loot-roll upgrade scanner. Scores rolled items against your equipped gear using per-spec stat weights read from the item's own tooltip, and tells you if it is an upgrade.
+## Author: Digigull
+## Version: 0.1.0-alpha
+## SavedVariables: PassLootBiS_ScannerDB
+## SavedVariablesPerCharacter: PassLootBiS_ScannerCharDB
+## OptionalDeps: PasslootBiS, Auctionator-Finder-Ascension, Auctionator, ClientPerfProbe
+## X-Category: Loot
+## X-Website: https://github.com/Digigull/BiS-Scanner
+
+# --- Embedded libraries (LibStub keeps only the newest copy at runtime) ---
+Libs\LibStub\LibStub.lua
+Libs\LibScaledStats-1.0\LibScaledStats-1.0.lua
+
+# --- Baked stat weights (generated from weights.json by tools/build_weights.py) ---
+Data\Weights.lua
+
+# --- Pure logic cores (offline-testable under lua5.1) ---
+Core\Score.lua
+Core\Slots.lua
+Core\SpecWeights.lua
+Core\Filter.lua
+Core\Verdict.lua
+
+# --- Optional integrations (guarded global reads). MUST load before Scanner,
+#     which captures ns.Auctionator as a load-time local (nil if loaded later). ---
+Integrations\Auctionator.lua
+
+# --- UI + event flow (WoW-API, guarded) ---
+Core\UI.lua
+Core\Alert.lua
+Core\Scanner.lua
+Core\Tooltip.lua
+
+# --- Minimap button + settings window (load after Scanner: need ns.setSpec/ns.db) ---
+Core\MinimapButton.lua
+Core\Options.lua
+
+# --- Drag-freeze isolation harness (DEBUG; /plbisscan dragtest). Loads last. ---
+Core\DragTest.lua

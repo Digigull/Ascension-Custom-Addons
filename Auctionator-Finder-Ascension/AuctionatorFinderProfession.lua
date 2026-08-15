@@ -1,0 +1,772 @@
+-- FINDER: profession (trade skill) scanning ------------------------------------
+--
+-- This file owns everything the Finder learns from a profession window: the
+-- crafted-goods recipe harvest, the recipe-tooltip fallback, and the per-item
+-- craft-cost lookup the SELL tab's Crafted Goods Margin filter reads.  It was
+-- lifted out of the main Auctionator.lua so the profession code lives in one
+-- place -- both to keep the scan gentle (see the event frame at the bottom) and
+-- to give future profession features (filter/sort the most profitable recipes)
+-- a home to grow in.
+--
+-- The 3.3.5 client cannot be asked "what reagents craft item X"; that data is
+-- only reachable while a profession window is open (GetTradeSkill* APIs).  So
+-- we HARVEST it into AUCTIONATOR_CRAFT_RECIPES (account-wide) from two sources:
+--
+--   1. Profession windows (Atr_Craft_Harvest): every craftable item the player
+--      can make.  Keyed by the produced item's ID, reagents by ID, with the
+--      exact yield.  This is the reliable source.
+--   2. Recipe ITEM tooltips (Atr_Craft_HarvestRecipeTooltip): when the player
+--      views a plan/formula/recipe/pattern/schematic they haven't necessarily
+--      learned, we read the created item from the recipe's name ("Pattern:
+--      Frostweave Bag" -> "Frostweave Bag") and scrape the reagent line from
+--      the tooltip.  Keyed by the created item's NAME, reagents by NAME, yield
+--      assumed 1.  Best-effort (English tooltip format), fills coverage the
+--      profession windows miss.
+--
+-- The Crafted Goods Margin filter then knows the craft cost of anything from
+-- either source.  Coverage grows as professions are opened and recipes viewed.
+
+local function Atr_Craft_DB()
+    AUCTIONATOR_CRAFT_RECIPES = AUCTIONATOR_CRAFT_RECIPES or {};
+    return AUCTIONATOR_CRAFT_RECIPES;
+end
+
+-- Walk the currently-open trade skill and store every recipe we can read.
+-- Returns  stored, complete  where `complete` is false if any recipe row's item
+-- link was still cold (data streaming in): the caller uses that to decide
+-- whether this pass is final, so a cold-cache harvest is not mistaken for a
+-- finished one and re-runs when the cache warms.
+function Atr_Craft_Harvest()
+    if (type(GetNumTradeSkills) ~= "function") then return 0, false; end
+    local n = GetNumTradeSkills() or 0;
+    if (n <= 0) then return 0, false; end
+
+    local db = Atr_Craft_DB();
+    local ItemID = (zc and zc.ItemIDfromLink) or nil;
+
+    local stored, cold = 0, 0;
+    for i = 1, n do
+        local _, skillType = GetTradeSkillInfo(i);
+        if (skillType and skillType ~= "header") then
+            local madeLink = GetTradeSkillItemLink and GetTradeSkillItemLink(i) or nil;
+            if (madeLink == nil) then
+                cold = cold + 1;   -- recipe row present but its item data is still streaming
+            else
+                local madeID = ItemID and tonumber((ItemID(madeLink))) or nil;   -- extra parens: ItemID returns 3 values
+                if (madeID) then
+                    local made = 1;
+                    if (GetTradeSkillNumMade) then
+                        local lo = GetTradeSkillNumMade(i);
+                        made = tonumber(lo) or 1;
+                        if (made < 1) then made = 1; end
+                    end
+
+                    local reagents = {};
+                    local numR = GetTradeSkillNumReagents and GetTradeSkillNumReagents(i) or 0;
+                    for j = 1, numR do
+                        local rname, _, rcount = GetTradeSkillReagentInfo(i, j);
+                        local rlink = GetTradeSkillReagentItemLink and GetTradeSkillReagentItemLink(i, j) or nil;
+                        local rid   = rlink and ItemID and tonumber((ItemID(rlink))) or nil;   -- extra parens: ItemID returns 3 values
+                        -- Keep the reagent's NAME too, and store it even when only the
+                        -- name is available: on the Ascension client
+                        -- GetTradeSkillReagentItemLink can return nil while the name
+                        -- (from GetTradeSkillReagentInfo) is fine.  Atr_Craft_GetCraftCost
+                        -- prices by id OR name, so a name-only reagent still costs out --
+                        -- without this the whole recipe was silently dropped.
+                        if (rid or (rname and rname ~= "")) then
+                            table.insert(reagents, { id = rid, name = rname, count = tonumber(rcount) or 1 });
+                        end
+                    end
+
+                    if (#reagents > 0) then
+                        db[madeID] = { made = made, reagents = reagents };
+                        stored = stored + 1;
+                    end
+                end
+            end
+        end
+    end
+
+    return stored, (cold == 0);
+end
+
+-- Per-item cost, in copper, to buy the reagents and craft the item, or nil when
+-- it isn't a harvested recipe or a reagent price is missing.  Looks up the
+-- recipe by produced-item ID (profession-window source) first, then by name
+-- (recipe-tooltip source).  Reagent price is Auctionator's auction price (the
+-- price DB is name-keyed, so ID- and name-based reagents both resolve); when a
+-- reagent has no auction price (e.g. it is vendor-bought) we fall back to its
+-- vendor value as a rough floor.  If even that is unavailable (item not cached)
+-- the total is unknown, so we return nil and the caller leaves it unfiltered.
+function Atr_Craft_GetCraftCost(link, name)
+    if (AUCTIONATOR_CRAFT_RECIPES == nil) then return nil; end
+
+    local rec;
+
+    local itemID;
+    if (type(link) == "number") then
+        itemID = link;
+    elseif (link and zc and zc.ItemIDfromLink) then
+        itemID = tonumber((zc.ItemIDfromLink(link)));   -- extra parens: ItemIDfromLink returns 3 values
+    end
+    if (itemID) then rec = AUCTIONATOR_CRAFT_RECIPES[itemID]; end
+
+    if (rec == nil) then
+        if (name == nil and link and type(link) ~= "number" and GetItemInfo) then
+            name = GetItemInfo(link);
+        end
+        if (name) then rec = AUCTIONATOR_CRAFT_RECIPES[name]; end
+    end
+
+    if (rec == nil or rec.reagents == nil) then return nil; end
+
+    local total = 0;
+    for _, r in ipairs(rec.reagents) do
+        local key = r.id or r.name;   -- ID from window harvest, name from tooltip harvest
+
+        -- NPC-sold reagent (vial, thread, flux, ...): its real cost is the fixed
+        -- NPC price, so use that and ignore whatever it's relisted for on the AH.
+        local price = (r.id and Atr_GetNPCPrice) and tonumber(Atr_GetNPCPrice(r.id)) or nil;
+
+        if (price == nil or price <= 0) then
+            price = (key and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(key)) or nil;
+        end
+        if (price == nil or price <= 0) then
+            price = (key and Atr_GetSellValue) and tonumber(Atr_GetSellValue(key)) or nil;   -- vendor-value floor
+        end
+        if (price == nil or price <= 0) then
+            return nil;   -- a reagent we can't price -> craft cost unknown
+        end
+        total = total + (price * (r.count or 1));
+    end
+
+    local made = rec.made or 1;
+    if (made < 1) then made = 1; end
+    return math.floor(total / made);
+end
+
+-- True when we have a harvested recipe for this item at all, regardless of
+-- whether its reagents can be priced.  Atr_Craft_GetCraftCost returns nil both
+-- for "not a recipe" and for "a recipe with a reagent we can't price yet"; this
+-- lets a caller (the craft-cost tooltip) tell those apart and show a "cost
+-- unknown" hint for the craftable-but-unpriced case instead of staying silent.
+function Atr_Craft_HasRecipe(link, name)
+    if (AUCTIONATOR_CRAFT_RECIPES == nil) then return false; end
+
+    local itemID;
+    if (type(link) == "number") then
+        itemID = link;
+    elseif (link and zc and zc.ItemIDfromLink) then
+        itemID = tonumber((zc.ItemIDfromLink(link)));   -- extra parens: returns 3 values
+    end
+    if (itemID and AUCTIONATOR_CRAFT_RECIPES[itemID]) then return true; end
+
+    if (name == nil and link and type(link) ~= "number" and GetItemInfo) then
+        name = GetItemInfo(link);
+    end
+    if (name and AUCTIONATOR_CRAFT_RECIPES[name]) then return true; end
+
+    return false;
+end
+
+-- Split a tooltip line into reagent {name, count} pairs, or nil if the line is
+-- not a reagent list.  Recipe tooltips end with a line like
+-- "Frostweave Cloth (4), Infinite Dust (1)"; every comma-segment is
+-- "<name> (<count>)".  The "Requires <Profession> (<skill>)" line also carries
+-- a parenthesised number, so lines starting with "Requires"/"Use:" are rejected.
+local function Atr_Craft_ParseReagentLine(text)
+    if (type(text) ~= "string" or text == "") then return nil; end
+    if (text:find("^Requires") or text:find("^Use:")) then return nil; end
+
+    local reagents = {};
+    for seg in string.gmatch(text .. ",", "%s*(.-)%s*,") do
+        local rname, rcount = seg:match("^(.-)%s*%((%d+)%)$");
+        if (not rname or rname == "") then return nil; end   -- a non-reagent segment: not a reagent line
+        table.insert(reagents, { name = rname, count = tonumber(rcount) or 1 });
+    end
+    if (#reagents == 0) then return nil; end
+    return reagents;
+end
+
+-- Harvest a recipe from the tooltip currently showing for a Recipe-class item.
+-- `itemName` is the recipe item's name ("Pattern: Frostweave Bag"); the created
+-- item's name is whatever follows the "<Prefix>: " (that is the item the player
+-- would have in their bags).  The reagent list is scraped from the tooltip's
+-- bottom line.  Yield is not shown on recipe tooltips, so it is assumed 1 --
+-- for multi-yield recipes this overestimates per-item cost (holds more), which
+-- is the safe direction.  Best-effort, English tooltip format.
+function Atr_Craft_HarvestRecipeTooltip(tip, itemName)
+    if (tip == nil or type(itemName) ~= "string") then return; end
+
+    local created = itemName:match("^%a+:%s+(.+)$");   -- strip Plans:/Pattern:/Recipe:/Formula:/...
+    if (created == nil or created == "") then return; end
+
+    local getName = tip.GetName and tip:GetName() or nil;
+    if (getName == nil) then return; end
+    local n = (tip.NumLines and tip:NumLines()) or 0;
+
+    local reagents;
+    for i = 2, n do
+        local fs = _G[getName .. "TextLeft" .. i];
+        local txt = fs and fs.GetText and fs:GetText() or nil;
+        local parsed = Atr_Craft_ParseReagentLine(txt);
+        if (parsed) then reagents = parsed; end   -- keep the last match (reagents sit at the bottom)
+    end
+
+    if (reagents) then
+        local db = Atr_Craft_DB();
+        -- Don't shadow a precise profession-window entry: only the name key is
+        -- written here, and the cost lookup prefers the ID key.
+        db[created] = { made = 1, reagents = reagents, byTooltip = true };
+    end
+end
+
+-- A stable fingerprint of the open profession: its name plus its recipe count.
+-- Same profession, same count -> same list, so once it has been harvested with
+-- a warm cache we never need to walk it again this session.  Learning a new
+-- recipe changes the count and re-arms one harvest.  Returns nil when no
+-- profession is really open (GetTradeSkillLine reports "UNKNOWN" then), which
+-- keeps the throttle from ever skipping a genuine window.
+local function Atr_Craft_Signature()
+    if (type(GetTradeSkillLine) ~= "function") then return nil; end
+    local prof = GetTradeSkillLine();
+    if (prof == nil or prof == "" or prof == "UNKNOWN") then return nil; end
+    local n = (type(GetNumTradeSkills) == "function") and (GetNumTradeSkills() or 0) or 0;
+    if (n <= 0) then return nil; end
+    return prof .. "#" .. n;
+end
+
+-- The guarded harvest the timer actually calls: skip entirely if this exact
+-- profession list was already fully harvested this session, otherwise harvest
+-- and record it -- but only mark it done when the cache was warm, so a harvest
+-- taken mid-stream is retried on the next quiet update instead of locked in.
+local function Atr_Craft_HarvestGuarded()
+    local sig = Atr_Craft_Signature();
+    if (sig and type(Fdr_ScanThrottle_Seen) == "function" and Fdr_ScanThrottle_Seen(sig)) then
+        return;   -- already learned this profession this session
+    end
+
+    local ok, _, complete = pcall(Atr_Craft_Harvest);   -- best-effort: a harvest error must never break the UI
+    if (ok and complete and sig and type(Fdr_ScanThrottle_Mark) == "function") then
+        Fdr_ScanThrottle_Mark(sig);
+    end
+end
+
+-- Harvest whenever a profession window opens or refreshes.  A dedicated frame
+-- keeps this off the core event dispatcher.
+--
+-- TRADE_SKILL_UPDATE does NOT fire once per open: Blizzard's own UI refires it
+-- for every recipe whose item data is still streaming in from the server, so a
+-- single profession-window open produces a BURST of the event -- a full storm
+-- when the item cache is cold (e.g. right after a client repair wipes it).
+-- Re-harvesting the entire skill list on every one of those events froze the
+-- client on large Ascension professions.  So we DEBOUNCE: each event just arms
+-- a short timer, and the harvest runs ONCE, a beat after the updates go quiet.
+-- On top of that the harvest is GUARDED by the session throttle, so re-opening
+-- a profession already learned this session costs only a signature compare, not
+-- another walk.  The produced-item IDs come straight from the recipe links, so
+-- one late pass reads exactly the same data the per-event passes would have.
+if (type(CreateFrame) == "function") then
+    local f = CreateFrame("Frame");
+    f:RegisterEvent("TRADE_SKILL_SHOW");
+    f:RegisterEvent("TRADE_SKILL_UPDATE");
+
+    local DELAY   = 0.5;     -- seconds of quiet before harvesting
+    local elapsed = 0;
+
+    f:Hide();                -- OnUpdate only ticks while shown; stay idle until armed
+
+    f:SetScript("OnEvent", function(self)
+        elapsed = 0;
+        self:Show();         -- (re)arm the timer; a fresh event pushes it back out
+    end);
+
+    f:SetScript("OnUpdate", function(self, dt)
+        elapsed = elapsed + (dt or 0);
+        if (elapsed >= DELAY) then
+            elapsed = 0;
+            self:Hide();     -- stop ticking before harvesting (idempotent, one-shot)
+            Atr_Craft_HarvestGuarded();
+        end
+    end);
+end
+
+-- PROFITABILITY SORT: "Sort by Profit" checkbox on the profession window ------
+--
+-- A checkbox that sits just above the trade-skill window's top-left corner.
+-- When ticked, the recipe list is reordered so the items you can craft at the
+-- biggest profit sit at the top and the least profitable (or loss-making) sit
+-- at the bottom.  Recipes we cannot fully price (a reagent with no known cost,
+-- or a produced item with no auction price) sink below every priced recipe,
+-- keeping the ranked part of the list trustworthy.
+--
+-- It composes WITH the window's built-in controls, not instead of them: the
+-- subclass / slot dropdowns, the "Have Materials" checkbox and the search box
+-- all narrow what GetTradeSkillInfo returns, and we simply re-rank whatever
+-- survives those filters.  Category headers are dropped while sorting (a flat
+-- ranked list is the whole point), so turning the box on expands every
+-- collapsed category first, so nothing hides from the ranking.
+--
+-- How the reorder works without fighting Blizzard's (skinned) UI: we do NOT
+-- rebuild the window.  TradeSkillFrame_Update is wrapped so the ORIGINAL runs
+-- first (it styles the rows, updates the rank bar, the reagent panel, the
+-- create button -- everything), and then, only while the box is ticked, we
+-- rewrite just the visible list buttons to point at our ranked order.  Each
+-- button keeps a REAL trade-skill index as its ID, so clicking, selecting,
+-- the detail pane and Create all keep working through stock code untouched.
+-- The whole rewrite is pcall-guarded: any surprise on this custom client
+-- disables the feature and falls straight back to the stock list rather than
+-- leaving a broken window.
+--
+-- Profit per item = the produced item's auction price (Atr_GetAuctionPrice)
+-- minus what its reagents cost, divided by the recipe's yield.  Reagent cost
+-- uses the same cascade the Crafted Goods Margin filter uses: fixed NPC price
+-- first (vials, thread, ...), then auction price, then the vendor-sell floor.
+
+-- Reagent unit cost in copper, or nil when we cannot price it at all.  Mirrors
+-- the cascade in Atr_Craft_GetCraftCost, read live from the open window here.
+local function Atr_ProfSort_ReagentPrice(id, name)
+    local price = (id and Atr_GetNPCPrice) and tonumber(Atr_GetNPCPrice(id)) or nil;
+    if (price == nil or price <= 0) then
+        price = (name and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name)) or nil;
+    end
+    if (price == nil or price <= 0) then
+        local key = id or name;
+        price = (key and Atr_GetSellValue) and tonumber(Atr_GetSellValue(key)) or nil;
+    end
+    return price;
+end
+
+-- Per-item craft COST for trade-skill row i, in copper, read live from the open
+-- window, or nil when a reagent can't be priced.  Independent of the produced
+-- item's own market price, so the craft-cost tooltip can show a cost even for an
+-- item that has never been on the AH.  Global for the harness.
+function Atr_ProfSort_RowCost(i)
+    if (type(GetTradeSkillInfo) ~= "function") then return nil; end
+    local _, skillType = GetTradeSkillInfo(i);
+    if (skillType == "header") then return nil; end
+
+    local made = 1;
+    if (type(GetTradeSkillNumMade) == "function") then
+        local lo = GetTradeSkillNumMade(i);
+        made = tonumber(lo) or 1;
+        if (made < 1) then made = 1; end
+    end
+
+    local numR = (type(GetTradeSkillNumReagents) == "function") and (GetTradeSkillNumReagents(i) or 0) or 0;
+    if (numR == 0) then return nil; end
+
+    local total = 0;
+    for j = 1, numR do
+        local rname, _, rcount = GetTradeSkillReagentInfo(i, j);
+        local rlink = (type(GetTradeSkillReagentItemLink) == "function") and GetTradeSkillReagentItemLink(i, j) or nil;
+        local rid   = (rlink and zc and zc.ItemIDfromLink) and tonumber((zc.ItemIDfromLink(rlink))) or nil;   -- extra parens: returns 3 values
+        local price = Atr_ProfSort_ReagentPrice(rid, rname);
+        if (price == nil or price <= 0) then return nil; end   -- one unpriceable reagent -> whole recipe unpriced
+        total = total + price * (tonumber(rcount) or 1);
+    end
+
+    return math.floor(total / made);
+end
+
+-- Per-item craft profit for trade-skill row i, in copper, or nil when it can't
+-- be totalled (not a real recipe, unpriced produced item, or any reagent we
+-- can't price).  Returns  profit, cost, sell  so a caller can show the parts.
+-- Global so the mock-WoW harness can unit-test the maths without a real window.
+function Atr_ProfSort_RowProfit(i)
+    if (type(GetTradeSkillInfo) ~= "function") then return nil; end
+    local name, skillType = GetTradeSkillInfo(i);
+    if (skillType == "header" or name == nil) then return nil; end
+
+    local sell = (Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name)) or nil;
+    if (sell == nil or sell <= 0) then return nil; end   -- no market price to rank on
+
+    local cost = Atr_ProfSort_RowCost(i);
+    if (cost == nil) then return nil; end
+
+    return (sell - cost), cost, sell;
+end
+
+-- Craft cost for a produced item, read LIVE from the open profession window by
+-- matching the item to the recipe that makes it.  Returns  cost, found  where
+-- found is true when a matching recipe row exists at all (so the tooltip can
+-- say "cost unknown" rather than nothing when the row is there but a reagent
+-- isn't priced).  This is the reliable path on the Ascension client, where the
+-- background harvest into AUCTIONATOR_CRAFT_RECIPES can miss recipes whose
+-- reagent item links come back nil.  Global for the harness.
+function Atr_Craft_LiveCostForItem(link, name)
+    if (type(GetNumTradeSkills) ~= "function") then return nil, false; end
+    local n = GetNumTradeSkills() or 0;
+    if (n <= 0) then return nil, false; end
+
+    local wantID;
+    if (type(link) == "number") then
+        wantID = link;
+    elseif (link and zc and zc.ItemIDfromLink) then
+        wantID = tonumber((zc.ItemIDfromLink(link)));
+    end
+    if (name == nil and link and type(link) ~= "number" and GetItemInfo) then
+        name = GetItemInfo(link);
+    end
+
+    for i = 1, n do
+        local madeName, skillType = GetTradeSkillInfo(i);
+        if (skillType and skillType ~= "header") then
+            local matched = false;
+            if (wantID and type(GetTradeSkillItemLink) == "function") then
+                local madeLink = GetTradeSkillItemLink(i);
+                local madeID = (madeLink and zc and zc.ItemIDfromLink) and tonumber((zc.ItemIDfromLink(madeLink))) or nil;
+                if (madeID and madeID == wantID) then matched = true; end
+            end
+            if (not matched and name and madeName == name) then matched = true; end
+            if (matched) then
+                return Atr_ProfSort_RowCost(i), true;   -- cost may be nil (a reagent unpriced), but the recipe exists
+            end
+        end
+    end
+    return nil, false;
+end
+
+-- Walk the open trade skill and return  order, profitByIndex  where order is a
+-- list of REAL skill indices (headers dropped) ranked profit-descending, and
+-- profitByIndex maps each of those indices to its per-item profit (nil =
+-- unpriceable).  Priced recipes rank above every unpriceable one; ties and
+-- unpriceable rows keep their original list order (a stable sort).  Global for
+-- the harness.
+function Atr_ProfSort_BuildOrder()
+    local n = (type(GetNumTradeSkills) == "function") and (GetNumTradeSkills() or 0) or 0;
+    local entries, profitByIndex = {}, {};
+    for i = 1, n do
+        local _, skillType = GetTradeSkillInfo(i);
+        if (skillType and skillType ~= "header") then
+            local p = Atr_ProfSort_RowProfit(i);
+            profitByIndex[i] = p;
+            entries[#entries + 1] = { index = i, profit = p, seq = #entries + 1 };
+        end
+    end
+
+    table.sort(entries, function(a, b)
+        if (a.profit == nil and b.profit == nil) then return a.seq < b.seq; end
+        if (a.profit == nil) then return false; end   -- unpriceable sinks below anything priced
+        if (b.profit == nil) then return true; end
+        if (a.profit ~= b.profit) then return a.profit > b.profit; end   -- most profit first
+        return a.seq < b.seq;   -- stable tie-break
+    end);
+
+    local order = {};
+    for k, e in ipairs(entries) do order[k] = e.index; end
+    return order, profitByIndex;
+end
+
+-- Compact signed copper -> short coloured string ("+12g" / "-3s" / "+40c").
+-- Only the largest non-zero denomination is shown so the row stays short.
+local function Atr_ProfSort_MoneyShort(c)
+    local neg = (c < 0);
+    local a   = neg and -c or c;
+    local g   = math.floor(a / 10000);
+    local s   = math.floor((a % 10000) / 100);
+    local str;
+    if     (g > 0) then str = g .. "g";
+    elseif (s > 0) then str = s .. "s";
+    else                str = a .. "c"; end
+    local col = neg and "|cffff5555" or "|cff55ff55";
+    return col .. (neg and "-" or "+") .. str .. "|r";
+end
+
+-- ---- reorder state + UI ----------------------------------------------------
+
+local Atr_ProfSort_OrigUpdate;                 -- saved stock TradeSkillFrame_Update
+local gProfSort_Check;                          -- the checkbox frame
+local gProfSort_Broken   = false;               -- a render error disables us for the session
+local gProfSort_Order    = nil;                 -- cached ranked index list
+local gProfSort_Profit   = nil;                 -- cached index -> profit map
+local gProfSort_Sig      = nil;                 -- signature the cache was built for
+local gProfSort_InRemap  = false;               -- guards our own remap against re-entry
+local gProfSort_Suspend  = false;               -- true while expanding categories: skip the sort pass
+local gProfSort_HiTex    = nil;                  -- our own faint selection texture
+Atr_ProfSort_LastError   = nil;                 -- last remap error, for /atrprofsort diagnostics
+
+-- Our own selection highlight: a faint, transparent bar we fully control, drawn
+-- in the BACKGROUND layer so it sits BEHIND the row text.  We use this instead
+-- of moving the stock TradeSkillHighlightFrame -- reparenting/resizing that
+-- shared frame leaked into (and broke) the normal, sort-off highlight.  Created
+-- lazily on the frame that owns the list button it will sit over.
+local function Atr_ProfSort_HiTexFor(btn)
+    if (btn == nil or type(btn.CreateTexture) ~= "function") then return nil; end
+    if (gProfSort_HiTex == nil) then
+        gProfSort_HiTex = btn:CreateTexture(nil, "BACKGROUND");
+        gProfSort_HiTex:SetTexture(1, 0.82, 0, 0.16);   -- faint gold, mostly transparent
+    end
+    return gProfSort_HiTex;
+end
+
+local function Atr_ProfSort_Enabled()
+    return (AUCTIONATOR_FINDER_SETTINGS ~= nil) and (AUCTIONATOR_FINDER_SETTINGS.profSort == true);
+end
+
+-- A cheap fingerprint of the current (filtered) list.  Same profession, same
+-- count and same first/last row name -> same list, so scrolling reuses the
+-- ranked order and only a real filter/list change rebuilds it.
+local function Atr_ProfSort_Signature()
+    if (type(GetNumTradeSkills) ~= "function") then return "0"; end
+    local n     = GetNumTradeSkills() or 0;
+    local prof  = (type(GetTradeSkillLine) == "function" and GetTradeSkillLine()) or "?";
+    local first = (n > 0) and select(1, GetTradeSkillInfo(1)) or "";
+    local last  = (n > 0) and select(1, GetTradeSkillInfo(n)) or "";
+    return prof .. "#" .. n .. "#" .. tostring(first) .. "#" .. tostring(last);
+end
+
+-- Rewrite the visible list buttons to our ranked order.  Called only while the
+-- box is ticked, always after the stock update has run.  Errors here are
+-- caught by the wrapper, which then falls back to the stock list.
+local function Atr_ProfSort_Remap()
+    local scroll = TradeSkillListScrollFrame;
+    if (scroll == nil) then return; end
+
+    local DISPLAYED = (type(TRADE_SKILLS_DISPLAYED) == "number" and TRADE_SKILLS_DISPLAYED) or 8;
+    local HEIGHT    = (type(TRADE_SKILL_HEIGHT)    == "number" and TRADE_SKILL_HEIGHT)    or 16;
+
+    local sig = Atr_ProfSort_Signature();
+    if (sig ~= gProfSort_Sig or gProfSort_Order == nil) then
+        gProfSort_Order, gProfSort_Profit = Atr_ProfSort_BuildOrder();
+        gProfSort_Sig = sig;
+    end
+    local order   = gProfSort_Order or {};
+    local numRows = #order;
+
+    local offset = FauxScrollFrame_GetOffset(scroll) or 0;
+    local maxOff = numRows - DISPLAYED;
+    if (maxOff < 0) then maxOff = 0; end
+    if (offset > maxOff) then offset = maxOff; end
+
+    local selected = TradeSkillFrame and TradeSkillFrame.selectedSkill;
+    local selectedBtn = nil;   -- the visible button showing the selected recipe, if any
+
+    for i = 1, DISPLAYED do
+        local btn = _G["TradeSkillSkill" .. i];
+        if (btn) then
+            local pos = offset + i;
+            if (pos <= numRows) then
+                local realIndex = order[pos];
+                local name, skillType, numAvailable = GetTradeSkillInfo(realIndex);
+                local base = name or "?";
+                if (numAvailable and numAvailable > 0) then base = base .. " [" .. numAvailable .. "]"; end
+
+                -- Colour by difficulty via an escape code baked into the text, NOT
+                -- SetTextColor: the Ascension list buttons have SetText but no
+                -- SetTextColor method (calling it errored and disabled the sort).
+                local color = (type(TradeSkillTypeColor) == "table") and TradeSkillTypeColor[skillType] or nil;
+                local hex = color and string.format("%02x%02x%02x",
+                    math.floor((color.r or 1) * 255 + 0.5),
+                    math.floor((color.g or 1) * 255 + 0.5),
+                    math.floor((color.b or 1) * 255 + 0.5)) or "ffffff";
+                local shown = "|cff" .. hex .. base .. "|r";
+
+                local profit = gProfSort_Profit and gProfSort_Profit[realIndex];
+                if (profit ~= nil) then shown = shown .. "  " .. Atr_ProfSort_MoneyShort(profit); end
+
+                btn:SetText(shown);
+
+                if (btn.SetID) then btn:SetID(realIndex); end   -- stock click/selection reads GetID(): keep it real
+                btn:Show();
+
+                if (selected == realIndex) then selectedBtn = btn; end
+                if (btn.UnlockHighlight) then btn:UnlockHighlight(); end   -- clear any stray mouse-over lock
+            else
+                btn:Hide();
+            end
+        end
+    end
+
+    -- The stock TradeSkillHighlightFrame anchors itself by the recipe's NATURAL
+    -- position, so once we reorder it points at the wrong (usually scrolled-away)
+    -- row.  We do NOT touch its parent or points (doing so leaked into the normal
+    -- sort-off highlight) -- we only HIDE it while sorting, and draw our own faint
+    -- bar on the correct row instead.  Stock re-shows it when the sort is off.
+    if (TradeSkillHighlightFrame and TradeSkillHighlightFrame.Hide) then
+        TradeSkillHighlightFrame:Hide();
+    end
+
+    local hi = Atr_ProfSort_HiTexFor(selectedBtn);
+    if (hi) then
+        if (selectedBtn) then
+            hi:SetParent(selectedBtn);
+            hi:ClearAllPoints();
+            hi:SetPoint("TOPLEFT",     selectedBtn, "TOPLEFT",     0, 0);
+            hi:SetPoint("BOTTOMRIGHT", selectedBtn, "BOTTOMRIGHT", 0, 0);
+            hi:Show();
+        else
+            hi:Hide();
+        end
+    end
+
+    FauxScrollFrame_Update(scroll, numRows, DISPLAYED, HEIGHT);   -- range = ranked count, not the stock total
+end
+
+-- Expand every collapsed category so no recipe hides from the ranking.  Only
+-- called from the checkbox click (a safe context) and window-open, never from
+-- inside the remap.  Suspended so the burst of updates the expands trigger just
+-- redraw the stock list; the single ranked pass runs afterwards, from Refresh.
+local function Atr_ProfSort_ExpandAll()
+    if (type(GetNumTradeSkills) ~= "function" or type(ExpandTradeSkillSubClass) ~= "function") then return; end
+    gProfSort_Suspend = true;
+    pcall(function()
+        local n = GetNumTradeSkills() or 0;
+        for i = n, 1, -1 do   -- bottom-up: expanding header i only inserts rows after i
+            local _, skillType, _, isExpanded = GetTradeSkillInfo(i);
+            if (skillType == "header" and not isExpanded) then
+                ExpandTradeSkillSubClass(i);
+            end
+        end
+    end);
+    gProfSort_Suspend = false;
+end
+
+-- TradeSkillFrame_Update wrapper: stock first (styles rows + the rest of the
+-- window), then our ranked rewrite of the list when the box is ticked.
+--
+-- Two guards keep it safe.  gProfSort_InRemap makes a nested call a complete
+-- no-op: our own FauxScrollFrame_Update can move the scrollbar, and SetValue
+-- fires the scroll handler SYNCHRONOUSLY, which re-enters TradeSkillFrame_Update
+-- mid-remap -- letting it run again would re-stock the rows we just sorted (or
+-- recurse without end).  gProfSort_Suspend lets the stock update run but skips
+-- the sort pass while we are expanding categories.
+local function Atr_ProfSort_Wrapper(...)
+    if (gProfSort_InRemap) then return; end   -- re-entry from our own scroll update: do nothing
+    if (Atr_ProfSort_OrigUpdate) then Atr_ProfSort_OrigUpdate(...); end
+    if (gProfSort_Suspend) then return; end
+    if (Atr_ProfSort_Enabled() and not gProfSort_Broken) then
+        gProfSort_InRemap = true;
+        local ok, err = pcall(Atr_ProfSort_Remap);
+        gProfSort_InRemap = false;
+        if (not ok) then
+            gProfSort_Broken = true;
+            Atr_ProfSort_LastError = tostring(err);
+            if (AUCTIONATOR_FINDER_SETTINGS) then AUCTIONATOR_FINDER_SETTINGS.profSort = false; end
+            if (gProfSort_Check) then gProfSort_Check:SetChecked(nil); end
+            if (gProfSort_HiTex) then gProfSort_HiTex:Hide(); end               -- drop our selection bar
+            if (Atr_ProfSort_OrigUpdate) then Atr_ProfSort_OrigUpdate(); end   -- redraw a clean stock list
+            if (DEFAULT_CHAT_FRAME) then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00Auctionator:|r Sort by Profit hit a snag and was turned off: |cffff8888"
+                    .. tostring(err) .. "|r  (type /atrprofsort to copy this)");
+            end
+        end
+    end
+end
+
+local function Atr_ProfSort_InstallHook()
+    if (Atr_ProfSort_OrigUpdate) then return; end                 -- already installed
+    if (type(TradeSkillFrame_Update) ~= "function") then return; end
+    Atr_ProfSort_OrigUpdate = TradeSkillFrame_Update;
+    TradeSkillFrame_Update  = Atr_ProfSort_Wrapper;
+end
+
+-- Re-rank and redraw now (e.g. right after the box is clicked).
+local function Atr_ProfSort_Refresh()
+    gProfSort_Order, gProfSort_Profit, gProfSort_Sig = nil, nil, nil;   -- force a rebuild
+    if (type(TradeSkillFrame_Update) == "function") then TradeSkillFrame_Update(); end
+end
+
+local function Atr_ProfSort_CreateCheckbox()
+    if (gProfSort_Check) then return; end
+    if (type(CreateFrame) ~= "function" or TradeSkillFrame == nil) then return; end   -- retry on the next open
+
+    local chk = CreateFrame("CheckButton", "Atr_ProfSort_Check", TradeSkillFrame, "UICheckButtonTemplate");
+    chk:SetWidth(20);
+    chk:SetHeight(20);
+    -- Up in the title bar, in the gap between the portrait and the centred
+    -- profession title.  A small box + short label so it fits that strip.
+    chk:SetPoint("TOPLEFT", TradeSkillFrame, "TOPLEFT", 76, -15);
+
+    local label = _G["Atr_ProfSort_CheckText"];
+    if (label) then
+        label:SetText("Sort Profit");
+        if (GameFontHighlightSmall) then label:SetFontObject(GameFontHighlightSmall); end   -- compact, fits the title strip
+    end
+
+    AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
+    chk:SetChecked(AUCTIONATOR_FINDER_SETTINGS.profSort and true or nil);
+
+    chk:SetScript("OnClick", function(self)
+        AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
+        local on = self:GetChecked() and true or false;
+        AUCTIONATOR_FINDER_SETTINGS.profSort = on;
+        gProfSort_Broken = false;                       -- a re-tick clears a prior snag and retries
+        if (on) then
+            Atr_ProfSort_ExpandAll();
+        elseif (gProfSort_HiTex) then
+            gProfSort_HiTex:Hide();                     -- our bar must not linger once the sort is off
+        end
+        Atr_ProfSort_Refresh();
+    end);
+
+    chk:SetScript("OnEnter", function(self)
+        if (GameTooltip == nil) then return; end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT");
+        GameTooltip:AddLine("Sort by Profit");
+        GameTooltip:AddLine("Ranks the recipes you can make most profitable first,", 1, 1, 1, true);
+        GameTooltip:AddLine("least profitable last. The window's own filters still apply.", 1, 1, 1, true);
+        GameTooltip:AddLine("Profit = the item's auction price minus its reagent cost.", 0.7, 0.7, 0.7, true);
+        GameTooltip:Show();
+    end);
+    chk:SetScript("OnLeave", function() if (GameTooltip) then GameTooltip:Hide(); end end);
+
+    gProfSort_Check = chk;
+    Atr_ProfSort_InstallHook();
+end
+
+-- Build the checkbox the first time a profession window opens (TradeSkillFrame
+-- is real by then), and force a fresh ranking for the newly-opened list.
+if (type(CreateFrame) == "function") then
+    local cf = CreateFrame("Frame");
+    cf:RegisterEvent("TRADE_SKILL_SHOW");
+    cf:SetScript("OnEvent", function()
+        Atr_ProfSort_CreateCheckbox();
+        gProfSort_Order, gProfSort_Profit, gProfSort_Sig = nil, nil, nil;   -- new window -> rebuild
+        if (Atr_ProfSort_Enabled() and not gProfSort_Broken) then Atr_ProfSort_ExpandAll(); end
+    end);
+end
+
+-- /atrprofsort : diagnostics for the profit sort.  Prints what the reorder can
+-- see on this client (the frame, scroll frame and list buttons it needs), the
+-- feature's state and the last error -- so a "hit a snag" report has something
+-- concrete behind it.  Copies to the clipboard when the client supports it.
+if (SlashCmdList) then
+    SLASH_ATRPROFSORT1 = "/atrprofsort";
+    SlashCmdList["ATRPROFSORT"] = function ()
+        local L = {};
+        local function add(s) L[#L + 1] = s; end
+
+        local btns = 0;
+        while (_G["TradeSkillSkill" .. (btns + 1)]) do btns = btns + 1; end
+
+        local open  = (type(GetNumTradeSkills) == "function") and (GetNumTradeSkills() or 0) or 0;
+        local order = (open > 0) and select(1, Atr_ProfSort_BuildOrder()) or {};
+        local _, profByIdx = Atr_ProfSort_BuildOrder();
+        local priced = 0;
+        if (profByIdx) then for _, p in pairs(profByIdx) do if (p ~= nil) then priced = priced + 1; end end end
+
+        add("Auctionator Sort by Profit -- diagnostics");
+        add("  TradeSkillFrame:        " .. (TradeSkillFrame and "present" or "MISSING"));
+        add("  TradeSkillFrame_Update: " .. (type(TradeSkillFrame_Update) == "function" and "present" or "MISSING"));
+        add("  hook installed:         " .. (Atr_ProfSort_OrigUpdate and "yes" or "no"));
+        add("  TradeSkillListScrollFrame: " .. (TradeSkillListScrollFrame and "present" or "MISSING"));
+        add("  list buttons found:     " .. btns .. " (TradeSkillSkill1..N)");
+        add("  TRADE_SKILLS_DISPLAYED: " .. tostring(TRADE_SKILLS_DISPLAYED));
+        add("  FauxScrollFrame_Update: " .. (type(FauxScrollFrame_Update) == "function" and "present" or "MISSING"));
+        add("  setting (profSort):     " .. tostring(AUCTIONATOR_FINDER_SETTINGS and AUCTIONATOR_FINDER_SETTINGS.profSort));
+        add("  disabled by error:      " .. (gProfSort_Broken and "yes" or "no"));
+        add("  open profession rows:   " .. open .. "  (recipes ranked: " .. #order .. ", priced: " .. priced .. ")");
+        add("  last error:             " .. (Atr_ProfSort_LastError or "(none)"));
+
+        local report = table.concat(L, "\n");
+        if (DEFAULT_CHAT_FRAME) then
+            for _, line in ipairs(L) do DEFAULT_CHAT_FRAME:AddMessage(line); end
+        end
+        if (type(CopyToClipboard) == "function") then
+            CopyToClipboard(report);
+            if (DEFAULT_CHAT_FRAME) then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00(copied to clipboard)|r"); end
+        end
+    end
+end
+-- PROFITABILITY SORT end -----------------------------------------------------

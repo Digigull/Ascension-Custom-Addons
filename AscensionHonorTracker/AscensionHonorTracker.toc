@@ -1,0 +1,12 @@
+## Interface: 30300
+## Title: Ascension Honor Tracker
+## Notes: Always shows and tracks Honor and Conquest points, working around the Currency-tab display bug that hides them after login or relog.
+## Author: Digigull
+## Version: 1.0.0
+## SavedVariables: AscensionHonorTrackerDB
+## SavedVariablesPerCharacter: AscensionHonorTrackerCharDB
+
+Core.lua
+Display.lua
+CurrencyTab.lua
+Vendor.lua

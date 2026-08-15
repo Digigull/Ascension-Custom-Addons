@@ -1,0 +1,34 @@
+## Interface: 30300
+## Title: Client Perf Probe
+## Notes: Measure and mitigate client stutter — per-addon, per-event frame-time spike attribution (fixes gated on captures)
+## Author: Ascension-Stutter
+## Version: 0.2.0
+## SavedVariables: ClientPerfProbeDB
+## X-Category: Development
+## X-Website: https://github.com/digigull/ascension-stutter
+
+# The "!" folder-name prefix forces this addon to load FIRST (3.3.5 loads addons
+# alphabetically by folder; "!" sorts before letters/digits — the standard
+# !BugGrabber/!Swatter trick). There is no in-.toc load-priority field. Loading
+# first is deliberate MEASUREMENT: the LoadProfile can only attribute addons that
+# load AFTER its ADDON_LOADED listener exists, so loading early captures nearly the
+# whole cascade and shrinks the un-attributable `pre=` floor. /cpp load self-verifies
+# it worked (small pre=, high addon count). Not a mitigation — it changes what we can
+# SEE, not the client's behavior.
+#
+# Load order within this addon: pure/dependency-free modules first, driver last.
+RingBuffer.lua
+Report.lua
+Meter.lua
+LoadProfile.lua
+MemWalk.lua
+Storm.lua
+PreWarm.lua
+Probe.lua
+Events.lua
+Attrib.lua
+ExportWindow.lua
+Minimap.lua
+UI.lua
+BackdropTest.lua
+Core.lua
