@@ -543,12 +543,7 @@ local function debugShow(text)
 		dbgFrame:SetHeight(440)
 		dbgFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 		dbgFrame:SetFrameStrata("DIALOG")
-		dbgFrame:SetBackdrop({
-			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-			tile = true, tileSize = 32, edgeSize = 32,
-			insets = { left = 11, right = 12, top = 12, bottom = 11 },
-		})
+		ns.UI.applyDarkBackdrop(dbgFrame)   -- shared house chrome (Core/UI.lua)
 		dbgFrame:EnableMouse(true)
 		dbgFrame:SetMovable(true)
 		dbgFrame:RegisterForDrag("LeftButton")

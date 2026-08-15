@@ -169,12 +169,7 @@ local function build()
 	-- flag is gone too and Options.Show() calls UI.raiseOnOpen() instead. Measured
 	-- via /plbisscan dragtest; centralized so no window can drift back.
 	ns.UI.applyWindowChrome(frame)
-	frame:SetBackdrop({
-		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		tile = true, tileSize = 32, edgeSize = 32,
-		insets = { left = 11, right = 12, top = 12, bottom = 11 },
-	})
+	ns.UI.applyDarkBackdrop(frame)
 	frame:EnableMouse(true)
 	frame:SetMovable(true)
 	frame:RegisterForDrag("LeftButton")
@@ -390,12 +385,7 @@ local function buildFilter()
 	-- Core/UI.lua and the note on PLBiSScannerOptions above). ShowFilter() calls
 	-- UI.raiseOnOpen() so this still opens in front.
 	ns.UI.applyWindowChrome(filterFrame)
-	filterFrame:SetBackdrop({
-		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		tile = true, tileSize = 32, edgeSize = 32,
-		insets = { left = 11, right = 12, top = 12, bottom = 11 },
-	})
+	ns.UI.applyDarkBackdrop(filterFrame)
 	filterFrame:EnableMouse(true)
 	filterFrame:SetMovable(true)
 	filterFrame:RegisterForDrag("LeftButton")

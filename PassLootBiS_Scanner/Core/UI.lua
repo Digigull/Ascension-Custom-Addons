@@ -69,9 +69,52 @@ end
 -- explicit replacement for the click-to-raise that SetToplevel used to give us:
 -- same front-on-open result, but paid once per open instead of once per drag.
 -- Guarded like applyWindowChrome, so it is inert where no real frames exist.
+--
+-- NOTE: only call this on a SPARSE strata. Raise() restacks the frame's strata,
+-- which is cheap on FULLSCREEN_DIALOG but is the expensive ~1s pass on a crowded
+-- one like HIGH. UI.WINDOW_STRATA is sparse, so windows built via
+-- applyWindowChrome() are safe.
 function UI.raiseOnOpen(frame)
 	if not frame or type(frame.Raise) ~= "function" then return frame end
 	frame:Raise()
+	return frame
+end
+
+--------------------------------------------------------------------------------
+-- House window styling (cosmetic)
+--
+-- The flat dark "Details-style" chrome: the tooltip background tiled behind a 1px
+-- WHITE8X8 border, tinted near-black, replacing the ornate gold UI-DialogBox
+-- parchment. Kept here so every window in the addon shares one look and a single
+-- edit re-themes all of them.
+--
+-- Purely cosmetic and entirely separate from the drag-freeze work above: the
+-- backdrop was explicitly exonerated as a cause (an EMPTY frame with no backdrop
+-- at all still froze). Restyling a window neither causes nor cures a spike.
+--
+-- Pure data so it stays offline-inspectable, matching WINDOW_STRATA above.
+UI.DARK_BACKDROP = {
+	bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+	edgeFile = "Interface\\Buttons\\WHITE8X8",
+	tile = true, tileSize = 64, edgeSize = 1,
+	insets = { left = 1, right = 1, top = 1, bottom = 1 },
+}
+UI.DARK_BACKDROP_COLOR = { 0.05, 0.05, 0.07, 0.95 }   -- dark, mostly opaque
+UI.DARK_BORDER_COLOR   = { 0.30, 0.30, 0.34, 1 }      -- thin muted border
+
+-- Apply the house backdrop to a window. Guarded like the helpers above, so it is
+-- inert under bare lua5.1 where no real frames exist. Returns the frame.
+function UI.applyDarkBackdrop(frame)
+	if not frame or type(frame.SetBackdrop) ~= "function" then return frame end
+	frame:SetBackdrop(UI.DARK_BACKDROP)
+	local c = UI.DARK_BACKDROP_COLOR
+	if type(frame.SetBackdropColor) == "function" then
+		frame:SetBackdropColor(c[1], c[2], c[3], c[4])
+	end
+	local b = UI.DARK_BORDER_COLOR
+	if type(frame.SetBackdropBorderColor) == "function" then
+		frame:SetBackdropBorderColor(b[1], b[2], b[3], b[4])
+	end
 	return frame
 end
 
