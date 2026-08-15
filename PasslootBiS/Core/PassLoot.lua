@@ -1214,6 +1214,40 @@ local function mgrAcquireRow(f, i)
 	return row
 end
 
+-- House window chrome: the flat dark "Details-style" backdrop -- the tooltip
+-- background tiled behind a 1px WHITE8X8 border, tinted near-black -- replacing the
+-- ornate gold UI-DialogBox parchment. Defined here because Core/PassLoot.lua loads
+-- first (see Core/Core.xml), so LootWindow.lua and RollAdvisor.lua can both use it
+-- and one edit re-themes every hand-rolled window in the addon.
+--
+-- Deliberately NOT applied to the frames embedded in the Blizzard Interface Options
+-- panel (MainGUI.lua): those sit inside shared Blizzard chrome, where a dark box on
+-- the stock parchment reads as a seam rather than as a theme.
+--
+-- Cosmetic only. This is unrelated to the drag-freeze fixes elsewhere in this file:
+-- the backdrop was explicitly exonerated as a cause (an EMPTY frame with no backdrop
+-- still froze; the strata + SetToplevel pairing is what mattered).
+PasslootBiS.DARK_BACKDROP = {
+	["bgFile"] = "Interface\\Tooltips\\UI-Tooltip-Background",
+	["edgeFile"] = "Interface\\Buttons\\WHITE8X8",
+	["tile"] = true,
+	["tileSize"] = 64,
+	["edgeSize"] = 1,
+	["insets"] = { ["left"] = 1, ["right"] = 1, ["top"] = 1, ["bottom"] = 1 },
+}
+
+function PasslootBiS:ApplyDarkBackdrop(frame)
+	if not frame or type(frame.SetBackdrop) ~= "function" then return frame end
+	frame:SetBackdrop(self.DARK_BACKDROP)
+	if type(frame.SetBackdropColor) == "function" then
+		frame:SetBackdropColor(0.05, 0.05, 0.07, 0.95)        -- dark, mostly opaque
+	end
+	if type(frame.SetBackdropBorderColor) == "function" then
+		frame:SetBackdropBorderColor(0.30, 0.30, 0.34, 1)     -- thin muted border
+	end
+	return frame
+end
+
 function PasslootBiS:CreateBiSManagerWindow()
 	if self.BiSManagerWindowFrame then return self.BiSManagerWindowFrame end
 
@@ -1229,14 +1263,7 @@ function PasslootBiS:CreateBiSManagerWindow()
 	-- the DRAGFREEZE note's "0 spikes" cure. (The one-time f:Raise() on open in
 	-- ToggleBiSManagerWindow still guarantees front-of-strata when it's shown.)
 	f:SetFrameStrata("FULLSCREEN_DIALOG")
-	f:SetBackdrop({
-		["bgFile"] = "Interface\\DialogFrame\\UI-DialogBox-Background",
-		["edgeFile"] = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		["tile"] = true,
-		["tileSize"] = 32,
-		["edgeSize"] = 32,
-		["insets"] = { ["left"] = 11, ["right"] = 12, ["top"] = 12, ["bottom"] = 11 },
-	})
+	self:ApplyDarkBackdrop(f)
 	f:EnableMouse(true)
 	f:SetMovable(true)
 	f:RegisterForDrag("LeftButton")

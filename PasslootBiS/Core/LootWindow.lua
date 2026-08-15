@@ -200,14 +200,7 @@ function PasslootBiS:CreateLootWindow()
 	-- it above DIALOG-strata panels, and Raise() on open (ToggleLootWindow) puts
 	-- it in front. (see DRAGFREEZE note — the "0 spikes" cure)
 	f:SetFrameStrata("FULLSCREEN_DIALOG")
-	f:SetBackdrop({
-		["bgFile"] = "Interface\\DialogFrame\\UI-DialogBox-Background",
-		["edgeFile"] = "Interface\\DialogFrame\\UI-DialogBox-Border",
-		["tile"] = true,
-		["tileSize"] = 32,
-		["edgeSize"] = 32,
-		["insets"] = { ["left"] = 11, ["right"] = 12, ["top"] = 12, ["bottom"] = 11 },
-	})
+	PasslootBiS:ApplyDarkBackdrop(f)   -- shared house chrome (Core/PassLoot.lua)
 	f:EnableMouse(true)
 	f:SetMovable(true)
 	f:RegisterForDrag("LeftButton")

@@ -287,14 +287,7 @@ local function makeFrame()
   -- need click-to-raise — dropping SetToplevel gives 0 spikes on drag.
   -- (see DRAGFREEZE note — the "0 spikes" cure)
   f:SetFrameStrata("FULLSCREEN_DIALOG")
-  f:SetBackdrop({
-    ["bgFile"]   = "Interface\\DialogFrame\\UI-DialogBox-Background",
-    ["edgeFile"] = "Interface\\DialogFrame\\UI-DialogBox-Border",
-    ["tile"]     = true,
-    ["tileSize"] = 32,
-    ["edgeSize"] = 32,
-    ["insets"]   = { ["left"] = 11, ["right"] = 12, ["top"] = 12, ["bottom"] = 11 },
-  })
+  PasslootBiS:ApplyDarkBackdrop(f)   -- shared house chrome (Core/PassLoot.lua)
   f:EnableMouse(true)
   f:SetMovable(true)
   f:RegisterForDrag("LeftButton")
