@@ -14,21 +14,21 @@ an EMPTY HIGH+toplevel frame still froze 1273ms (so it is NOT the backdrop or th
 children), while FULLSCREEN_DIALOG + toplevel was smooth (~53ms) and dropping
 SetToplevel was smooth (0 spikes).
 
-FIX -- two parts, and BOTH are needed for a true zero:
-  1. Build movable windows on the SPARSE FULLSCREEN_DIALOG strata, where a raise
-     restacks almost nothing (~50ms) instead of the whole crowded HIGH list (~1s).
-  2. Do NOT call SetToplevel(true). Part 1 alone kills the big cold freeze but
-     leaves a ~50ms restack on EVERY click/drag, because a toplevel frame
-     re-raises every time it is grabbed. That is a repeatable micro-spike on any
-     window you reposition often -- measured in the field on a settings window,
-     and cured only by dropping the flag. With no toplevel there is no raise, so
-     the per-drag cost is zero, cold and warm.
+FIX -- do NOT call SetToplevel(true). That single rule is what buys the true zero.
+A toplevel frame re-raises every time it is grabbed, so even on a sparse strata it
+pays a ~50ms restack on EVERY click/drag -- a repeatable micro-spike on a window
+you reposition often, measured in the field on a settings window. With no toplevel
+there is no raise at all, so the cost is zero, cold and warm, on ANY strata.
 
-Dropping the flag is free here because these windows are singletons that never
-need click-to-raise: FULLSCREEN_DIALOG already renders them above the DIALOG-strata
-Interface Options panel by strata alone. What the flag did provide -- front-on-open
--- is kept explicitly via UI.raiseOnOpen() in each show path, which is one cheap
-restack in a near-empty strata on open rather than one on every drag.
+That last part is the important consequence: once the flag is gone, the strata is
+free to be a UI decision instead of a performance one. Variant B in the isolation
+test kept the crowded HIGH strata and was still perfectly smooth, because nothing
+ever raised. So WINDOW_STRATA below is chosen purely for layering, NOT for safety.
+If SetToplevel is ever added back, that stops being true immediately and the strata
+becomes load-bearing again -- which is the trap this file exists to prevent.
+
+Front-on-open, the one thing the flag did usefully provide, is kept explicitly via
+UI.raiseOnOpen() in each show path: one restack on open rather than one per drag.
 
 See docs/DRAG-FREEZE.md in the !ClientPerfProbe repo for the full write-up.
 
@@ -45,9 +45,28 @@ end
 local UI = {}
 ns.UI = UI
 
--- The drag-safe strata for movable toplevel windows (see file header). Pure data,
--- so it is offline-inspectable; applyWindowChrome() is the guarded WoW wrapper.
-UI.WINDOW_STRATA = "FULLSCREEN_DIALOG"
+-- Strata for the addon's movable windows. LOW deliberately: it renders above the
+-- 3D world but BELOW the default Blizzard panels (character sheet, bags, world map),
+-- which is the expected behaviour for custom UI -- Blizzard's own windows should
+-- come out on top. Same placement Details uses for its meters.
+--
+-- Strata order, low -> high:
+--   WORLD < BACKGROUND < LOW < MEDIUM < HIGH < DIALOG < FULLSCREEN < FULLSCREEN_DIALOG < TOOLTIP
+--
+-- This is a LAYERING choice, not a performance one, and it is only available
+-- because applyWindowChrome() does not set SetToplevel -- see the file header.
+-- A LOW + SetToplevel window would restack the LOW strata on every drag, the same
+-- mechanism as the HIGH freeze.
+--
+-- NOTE: this is for windows that are fine being covered by Blizzard panels. It is
+-- deliberately NOT used for two kinds of window in this addon:
+--   * the debug copy box (Core/Scanner.lua) -- a copy/paste popup you open to
+--     select text from, so it must float above whatever is on screen.
+--   * the upgrade Alert (Core/Alert.lua) -- a transient notification whose whole
+--     job is to be noticed; behind open bags while looting it would be missed.
+--
+-- Pure data, so it is offline-inspectable; applyWindowChrome() is the guarded wrapper.
+UI.WINDOW_STRATA = "LOW"
 
 -- Apply the drag-safe strata to a movable window. Use this instead of
 -- SetFrameStrata("HIGH") + SetToplevel(true) on any hand-rolled window -- that
@@ -71,9 +90,11 @@ end
 -- Guarded like applyWindowChrome, so it is inert where no real frames exist.
 --
 -- NOTE: only call this on a SPARSE strata. Raise() restacks the frame's strata,
--- which is cheap on FULLSCREEN_DIALOG but is the expensive ~1s pass on a crowded
--- one like HIGH. UI.WINDOW_STRATA is sparse, so windows built via
--- applyWindowChrome() are safe.
+-- which is cheap where few frames live but is the expensive ~1s pass on a crowded
+-- one like HIGH. UI.WINDOW_STRATA (LOW) is sparse -- most of the default UI and
+-- most addons sit on MEDIUM and above -- so windows built via applyWindowChrome()
+-- are safe. Raise() also cannot cross strata: it orders the window among its LOW
+-- siblings only, so it still stays under the Blizzard panels by design.
 function UI.raiseOnOpen(frame)
 	if not frame or type(frame.Raise) ~= "function" then return frame end
 	frame:Raise()
