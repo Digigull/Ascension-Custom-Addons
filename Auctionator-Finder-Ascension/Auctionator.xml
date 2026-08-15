@@ -67,7 +67,13 @@
 			
 
 
-	<Frame name="Atr_Confirm_Frame" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="DIALOG" hidden="true">
+	<!-- FULLSCREEN_DIALOG, not DIALOG: toplevel frames re-raise when clicked, and a -->
+	<!-- raise into a populated strata restacks the whole strata (the drag-freeze    -->
+	<!-- mechanism, docs/DRAG-FREEZE.md). This dialog is not movable so it never     -->
+	<!-- pays that per-drag, but it still pays per click; the sparse strata makes    -->
+	<!-- each raise cheap. toplevel is kept deliberately - these confirm dialogs     -->
+	<!-- stack with the other Atr_* dialogs and should order on click.               -->
+	<Frame name="Atr_Confirm_Frame" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="FULLSCREEN_DIALOG" hidden="true">
 		<Size><AbsDimension x="300" y="150" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="290" y="-190"/></Offset></Anchor></Anchors>
 	
@@ -1210,7 +1216,9 @@
 
    <!-- Confirm Cancel Auction screen --> 
 
-	<Frame name="Atr_CancelAuction_Confirm_Frame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="DIALOG" hidden="true">
+	<!-- FULLSCREEN_DIALOG, not DIALOG: a toplevel raise restacks its whole strata,  -->
+	<!-- so keep these dialogs on the sparse one (see Atr_Confirm_Frame above).      -->
+	<Frame name="Atr_CancelAuction_Confirm_Frame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" enableMouse="true" frameStrata="FULLSCREEN_DIALOG" hidden="true">
 		<Size><AbsDimension x="340" y="115" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-390"/></Offset></Anchor></Anchors>
 	
@@ -1247,7 +1255,9 @@
 	</Font>
 
 
-	<Frame name="Atr_FullScanFrame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" frameStrata="DIALOG" enableMouse="true" hidden="true">
+	<!-- FULLSCREEN_DIALOG, not DIALOG: a toplevel raise restacks its whole strata,  -->
+	<!-- so keep these dialogs on the sparse one (see Atr_Confirm_Frame above).      -->
+	<Frame name="Atr_FullScanFrame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" frameStrata="FULLSCREEN_DIALOG" enableMouse="true" hidden="true">
 		<Size><AbsDimension x="460" y="420" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="220" y="-130"/></Offset></Anchor></Anchors>
 
