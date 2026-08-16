@@ -464,6 +464,16 @@ function PasslootBiS:Create_RulesFrame()
 	Frame.Settings:SetParent(Frame)
 	Frame.Settings:SetPoint("TOP", Frame.List, "BOTTOM")
 
+	-- Advisor status (Core/AdvisorStatus.lua) in the dead column left of the rule
+	-- list. Blizzard SetAllPoints' this frame onto InterfaceOptionsFramePanelContainer
+	-- while List/Settings sit centred (anchored "TOP"), so that column is whatever
+	-- the container is wider than 413 — anchor BOTH edges rather than guessing a
+	-- width, and the panel fits it exactly at any UI scale.
+	Frame.Status = self:Create_AdvisorStatusFrame()
+	Frame.Status:SetParent(Frame)
+	Frame.Status:SetPoint("TOPLEFT", Frame, "TOPLEFT", 4, -8)
+	Frame.Status:SetPoint("TOPRIGHT", Frame.List, "TOPLEFT", -6, -8)
+
 	-- Blizzard Interface Options Panel stuff:
 	Frame.name = L["PasslootBiS"]
 

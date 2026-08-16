@@ -6,6 +6,7 @@
 	<Script file="RollRetry.lua"/>
 	<Script file="Constants.lua"/>
 	<Script file="MainGUI.lua"/>
+	<Script file="AdvisorStatus.lua"/>
 	<Script file="ModulesGUI.lua"/>
 	<Script file="ItemInfo.lua"/>
 	<Script file="Cache.lua"/>
