@@ -37,6 +37,19 @@ class, usable, …) this fork adds:
 - **Mythic Plus Level** — match on Mythic difficulty tier
 - **Item Price** — match against vendor value
 
+### Proficiency rule generation
+
+The **Proficiencies** options page reads what this character can actually equip and
+turns the *gaps* into auto-roll rules, so you stop rolling on gear you can't use.
+It writes two ordinary rules — `Proficiency: unusable armor` and
+`Proficiency: unusable weapons` — which you can then edit, reorder or delete like
+any others; generating again overwrites them in place.
+
+Cloaks, shirts and tabards are exempt from the armor rule: they are item subclass
+Cloth but need no proficiency. If detection can't read a family's proficiencies at
+all, **no rule is written for it** — a blank reading means the probe failed, not
+that you can equip nothing. `/plbisprof` prints the raw per-probe output.
+
 ### Roll advisor API
 
 A versioned `PasslootBiS.API` facade lets a companion addon register a roll
@@ -85,6 +98,7 @@ required. Disable stock PassLoot first.
 | `/plbisadvisor <name> <advisory\|held\|trust>` | Set an advisor's trust mode |
 | `/plbisadvisor on\|off` | Master switch for the advisor system |
 | `/plbismgr perf` | Opt-in perf probe for the BiS Manager window; `/plbismgr` reads the summary, `/plbismgr off` stops |
+| `/plbisprof` | Print this character's detected weapon/armor proficiencies, per probe |
 | `/plbisroll` | Passive roll-log tools: `summary` / `list` / `tips` / `sim <itemlink>` / `clear` |
 | `/plbisloot` | Loot-tracker diagnostics: `on` / `off` / `globals` / `dump` / `clear` |
 
