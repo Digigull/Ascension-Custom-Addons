@@ -333,6 +333,54 @@ function API:GetRollVerdict(rollID)
 	return Verdict.build(r.isUpgrade, r.delta, goldText)
 end
 
+-- Readiness snapshot for a host that wants to SHOW whether the scanner can
+-- actually advise -- PasslootBiS's rules page draws its advisor status panel from
+-- this (Core/AdvisorStatus.lua). Purely descriptive: it reports state, it never
+-- changes a roll, and it deliberately does NOT decide how any of it should read
+-- to a user (wording and colour are the host's business).
+--
+-- The two capabilities are independent, exactly as they are on the roll path:
+--   * gear    -- needs spec weights (upgrade scoring is idle without them).
+--   * value   -- needs the Auctionator fork AND at least one finished AH scan;
+--                the fork's price functions exist from login but answer nil
+--                until a scan has written gAtr_ScanDB.
+-- `version` lets a host tell this shape apart from a later one.
+function API:GetStatus()
+	local st = {
+		version     = 1,
+		loaded      = true,
+		enabled     = (db and db.enabled) and true or false,
+		placeholder = rawget(_G, "PLBiSScannerWeights_IsPlaceholder") and true or false,
+	}
+	if chardb then
+		st.class, st.spec = chardb.class, chardb.spec
+	end
+	if db then
+		st.threshold, st.goldThreshold = db.threshold, db.goldThreshold
+	end
+
+	-- currentWeights() is the same call the roll path makes, so "ready" here can
+	-- never disagree with what actually happens on a roll -- including its
+	-- inherit-spec-from-an-imported-BiS-list step (§5.4).
+	local ok, weights = pcall(currentWeights)
+	st.hasWeights = (ok and type(weights) == "table") or false
+	-- Class/spec may have just been adopted by that call; re-read so a host that
+	-- labels the row with the spec name shows the one actually in use.
+	if chardb then
+		st.class, st.spec = chardb.class, chardb.spec
+	end
+	st.gearReady = st.hasWeights and st.enabled
+
+	st.auctionator = (Auctionator and Auctionator.liveProvider() ~= nil) or false
+	if st.auctionator and Auctionator.liveScanCount then
+		st.scanCount, st.scanCapped = Auctionator.liveScanCount()
+	end
+	-- No enabled-gate on the count itself, but an off scanner advises nothing.
+	st.valueReady = st.auctionator and (st.scanCount or 0) > 0 and st.enabled
+
+	return st
+end
+
 ns.API = API   -- reachable as _G.PLBiSScanner.API:GetRollVerdict(rollID)
 
 -- Register ourselves as a PasslootBiS roll advisor when the host is present

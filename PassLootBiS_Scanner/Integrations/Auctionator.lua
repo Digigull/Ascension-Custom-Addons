@@ -104,4 +104,47 @@ function Auctionator.liveFlag(itemLink, goldThreshold, sellable)
 	return Auctionator.highValueFlag(provider, itemLink, goldThreshold, sellable)
 end
 
+----------------------------------------------------------------------
+-- "Has any scan actually run?" -- for status displays, not the roll path
+----------------------------------------------------------------------
+-- The price functions above exist as soon as the fork loads, which is NOT the
+-- same as having data: a fresh install answers every price query with nil until
+-- the user runs one AH scan. A host that wants to tell the user "high-value
+-- advice is ready" has to look at the DB itself.
+
+-- How many names the fork's price DB holds. `scanDB` is gAtr_ScanDB (a flat
+-- name -> copper table) or anything shaped like it. Counting stops at the cap --
+-- a busy realm holds tens of thousands of names and no caller needs an exact
+-- figure, only "none / some / lots". Returns count, capped(bool), or nil when
+-- the DB isn't a table (Auctionator's Atr_InitScanDB has not run yet). Pure.
+Auctionator.SCAN_COUNT_CAP = 2000
+
+function Auctionator.scanCount(scanDB)
+	if type(scanDB) ~= "table" then return nil end
+	local n = 0
+	for _ in pairs(scanDB) do
+		n = n + 1
+		if n >= Auctionator.SCAN_COUNT_CAP then return n, true end
+	end
+	return n, false
+end
+
+-- Live count off the fork's global, memoised for CACHE_SECS. The consumer is a
+-- panel that polls while it is open, and walking a large table on every tick
+-- would be pure waste -- price data only changes when an AH scan finishes.
+local CACHE_SECS = 10
+local cacheAt, cacheN, cacheCapped
+
+function Auctionator.liveScanCount()
+	local getTime = rawget(_G, "GetTime")
+	local now = getTime and getTime() or nil
+	if now and cacheAt and (now - cacheAt) < CACHE_SECS then
+		return cacheN, cacheCapped
+	end
+	local n, capped = Auctionator.scanCount(rawget(_G, "gAtr_ScanDB"))
+	-- Only memoise when there is a clock to expire against (offline there isn't).
+	cacheAt, cacheN, cacheCapped = now, n, capped
+	return n, capped
+end
+
 return Auctionator

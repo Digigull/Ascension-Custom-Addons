@@ -352,3 +352,49 @@ L["LootWindow_Empty"] = "No loot rolls yet. Rolls you see in a group show up her
 L["LootWindow_NeedStreak"] = "%s has needed %d times consecutively"
 L["LootWindow_NeedTotal"] = "%s has needed %d times total"
 L["LootWindow_FontSize"] = "Font size"
+
+-- The two rules a profile with no rules of its own starts with
+-- (Core/Constants.lua DefaultRules). Plain rule descriptions: they are copied
+-- into the profile once and are editable from the rules page afterwards.
+L["DefaultRule_NotUsable"] = "Not Usable"
+L["DefaultRule_CatchAll"] = "Catch All"
+
+-- Advisor status panel on the rules page (Core/AdvisorStatus.lua). Kept SHORT:
+-- the panel lives in the narrow column beside the rule list, so anything longer
+-- than about twenty characters wraps. Detail belongs in the _Tip lines, which
+-- show in the tooltip and have the whole screen to play with.
+L["AdvisorStatus_Title"] = "Advisor status"
+L["AdvisorStatus_Ready"] = "Ready"
+L["AdvisorStatus_Unavailable"] = "Unavailable"
+L["AdvisorStatus_NoScanner_Tip"] = "Needs the PassLootBiS Scanner addon, which is not loaded."
+L["AdvisorStatus_ScanningOff"] = "Scanning off"
+L["AdvisorStatus_ScanningOff_Tip"] = "The scanner is switched off. Turn it back on with /plbisscan on."
+-- Row 1: the PassLoot <-> Scanner link.
+L["AdvisorStatus_LinkLabel"] = "BiS Scanner"
+L["AdvisorStatus_LinkMissing"] = "Not installed"
+L["AdvisorStatus_LinkMissing_Tip"] = "PassLootBiS Scanner is not loaded, so no roll advice is available. Rules still roll normally."
+L["AdvisorStatus_LinkLoaded"] = "Loaded, not linked"
+L["AdvisorStatus_LinkLoaded_Tip"] = "The scanner is loaded but has not registered as a roll advisor. A /reload usually fixes it."
+L["AdvisorStatus_LinkGateOff"] = "Linked, gate off"
+L["AdvisorStatus_LinkGateOff_Tip"] = "Linked, but the advisor gate is switched off, so advice is ignored. Turn it on with /plbisadvisor on."
+L["AdvisorStatus_LinkOk"] = "Linked"
+L["AdvisorStatus_LinkOk_Tip"] = "The scanner is registered and the advisor gate is on."
+L["AdvisorStatus_AdvisorsLine"] = "Advisors: %s"
+-- Row 2: gear (stat upgrade) advice.
+L["AdvisorStatus_GearLabel"] = "Gear advice"
+L["AdvisorStatus_GearNoSpec"] = "No spec set"
+L["AdvisorStatus_GearNoSpec_Tip"] = "No stat weights are selected, so upgrade scoring is idle. Pick a spec with /plbisscan spec."
+L["AdvisorStatus_GearPlaceholder"] = "Ready, test weights"
+L["AdvisorStatus_GearPlaceholder_Tip"] = "The scanner is using PLACEHOLDER weights; scores will not be accurate until the real weights are baked in."
+L["AdvisorStatus_GearReady_Tip"] = "Stat weights are loaded, so rolled gear is scored against what you have equipped."
+L["AdvisorStatus_SpecLine"] = "Spec: %s / %s"
+L["AdvisorStatus_ThresholdLine"] = "Upgrade threshold: +%d%%"
+-- Row 3: high-value (Auctionator price) advice.
+L["AdvisorStatus_ValueLabel"] = "High value"
+L["AdvisorStatus_ValueNoAuctionator"] = "No Auctionator"
+L["AdvisorStatus_ValueNoAuctionator_Tip"] = "Auctionator is not loaded, so there are no auction prices to read."
+L["AdvisorStatus_ValueNoData"] = "No scan data"
+L["AdvisorStatus_ValueNoData_Tip"] = "Auctionator is loaded but has no prices yet. Run one Auction House scan and this turns green."
+L["AdvisorStatus_ValueReady_Tip"] = "Auction prices are available, so items worth gold are flagged even when they are not an upgrade."
+L["AdvisorStatus_PricesLine"] = "Prices known: %s items"
+L["AdvisorStatus_GoldLine"] = "Flags items worth %dg or more"

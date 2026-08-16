@@ -214,6 +214,22 @@ function API:UnregisterRollAdvisor(name)
   advisors[name] = nil
 end
 
+-- Read-only view of the registry, for status displays (the rules page's advisor
+-- panel, Core/AdvisorStatus.lua) and /plbisadvisor. Sorted so a polled display
+-- doesn't reshuffle between refreshes.
+function API:GetAdvisorNames()
+  local out = {}
+  for name in pairs(advisors) do
+    out[#out + 1] = name
+  end
+  table.sort(out)
+  return out
+end
+
+function API:HasAdvisor(name)
+  return advisors[name] ~= nil
+end
+
 -- Per-advisor trust mode, persisted in the profile (keyed by advisor name so you
 -- can trust your own scanner while keeping a stranger's addon on a tighter mode).
 local function trustStore()

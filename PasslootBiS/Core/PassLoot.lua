@@ -32,6 +32,10 @@ local defaults = {
 		["Quiet"] = false,
 		["AllowMultipleConfirmPopups"] = false,
 		["Rules"] = {},
+		-- Flipped by SeedDefaultRules() the first time a profile is loaded, so the
+		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
+		-- user who then deletes them does NOT get them back on the next login.
+		["DefaultRulesSeeded"] = false,
 		["Modules"] = {},
 		-- Per-item manager metadata captured from imported PLBIS1 strings' additive
 		-- `mgr` block (protocol §3.5), keyed by BiS list name (the rule Desc without
@@ -473,6 +477,11 @@ function PasslootBiS:OnInitialize()
 	-- self.MainFrame = self:Create_MainFrame()
 	self.RulesFrame = self:Create_RulesFrame()
 	InterfaceOptions_AddCategory(self.RulesFrame)
+	-- First paint of the advisor status panel (Core/AdvisorStatus.lua). It keeps
+	-- itself current from its own OnShow/OnUpdate afterwards; this is just so the
+	-- rows are never blank on the very first look, whatever order the panel's
+	-- OnShow and this assignment happen to land in.
+	self:RefreshAdvisorStatus()
 	self.Tooltip = self:Create_PasslootBiSTooltip()
 	-- self.BlizOptionsFrame = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("PasslootBiS", L["PasslootBiS"])
 	self.BlizOptionsFrames = {
@@ -1598,6 +1607,10 @@ function PasslootBiS:OnProfileChanged()
 	self.CurrentOptionFilter = { nil, 0 } -- Frame, line #
 	self:LoadModules()
 	self:SendMessage("PasslootBiS_OnProfileChanged")
+	-- A profile that has never held a rule gets the starter pair (Not Usable >
+	-- Greed, Catch All > Greed). Must run BEFORE CheckRuleTables so the seeded
+	-- rules go through the same DefaultTemplate fill-in as any other rule.
+	self:SeedDefaultRules()
 	-- Now we check our rules to see if all variables are set.
 	-- We could check profile variables, but some modules need more than just setting defaults, they need to act on them.
 	self:CheckRuleTables()
@@ -1955,6 +1968,31 @@ function PasslootBiS:CleanRules()
 		end
 	end
 	self.SkipRules = {}
+end
+
+-- Hand a profile the starter rules (Constants.lua PasslootBiS.DefaultRules) the
+-- first time we see it. Two guards, both deliberate:
+--   * `DefaultRulesSeeded` is set even when we DON'T seed, so this runs exactly
+--     once per profile. Delete the starter rules and they stay deleted.
+--   * we only seed a profile with NO rules at all, so an existing install (or a
+--     profile whose rules came from a BiS import) is never touched.
+-- Called from OnProfileChanged before CheckRuleTables, which then fills in any
+-- DefaultTemplate variable the seeded rules don't set. Resetting a profile from
+-- the Profiles tab clears the flag with the rules, so Defaults re-seeds — which is
+-- what "restore defaults" should do.
+function PasslootBiS:SeedDefaultRules()
+	local Profile = self.db.profile
+	Profile.Rules = Profile.Rules or {}
+	if (Profile.DefaultRulesSeeded) then
+		return
+	end
+	Profile.DefaultRulesSeeded = true
+	if (#Profile.Rules > 0) then
+		return
+	end
+	for _, Rule in ipairs(self.DefaultRules or {}) do
+		table.insert(Profile.Rules, self:CopyTable(Rule))
+	end
 end
 
 -- We make sure each rule has a default value
