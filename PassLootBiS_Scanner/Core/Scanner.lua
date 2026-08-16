@@ -17,8 +17,16 @@ touching the WoW API, so the pure cores still self-test.
 local _, ns = ...
 if type(ns) ~= "table" then
 	ns = rawget(_G, "PLBiSScanner") or {}
-	_G.PLBiSScanner = ns
 end
+-- Publish the namespace UNCONDITIONALLY. In-game `...` hands every file of an
+-- addon the same private addon table, so `type(ns) == "table"` is always true and
+-- the assignment used to sit inside the branch above -- meaning _G.PLBiSScanner
+-- only ever existed under bare lua5.1, where `...` carries no table. Everything
+-- documented as "reachable as _G.PLBiSScanner..." (this file's API, the host's
+-- status panel) was therefore invisible to other addons in the client and only
+-- worked offline. Every file shares this one table, so publishing it here covers
+-- the whole addon.
+_G.PLBiSScanner = ns
 
 -- Under bare lua5.1 there is no client; stop before any API use.
 if not rawget(_G, "CreateFrame") then

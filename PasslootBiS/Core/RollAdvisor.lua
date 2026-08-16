@@ -230,6 +230,16 @@ function API:HasAdvisor(name)
   return advisors[name] ~= nil
 end
 
+-- The object an advisor registered with (nil for a plain-function advisor, or if
+-- the name isn't registered). This is the ONE handle on a companion addon that
+-- needs nothing from the global namespace: an addon's `...` table is private, so
+-- a companion that never publishes a global is still reachable here. The status
+-- panel reads the scanner's GetStatus through it.
+function API:GetAdvisor(name)
+  local entry = advisors[name]
+  return entry and entry.obj or nil
+end
+
 -- Per-advisor trust mode, persisted in the profile (keyed by advisor name so you
 -- can trust your own scanner while keeping a stranger's addon on a tighter mode).
 local function trustStore()
