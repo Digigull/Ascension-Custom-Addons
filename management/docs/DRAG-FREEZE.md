@@ -213,9 +213,6 @@ If you ever restore the flag, the strata becomes load-bearing again.
 - **BiS Scanner alert + all copy/paste boxes** stay high (rule 5).
 - **Auctionator** keeps its own layering — it attaches to the Blizzard auction house window and
   should follow that chrome.
-- **`DragTest.lua` / `BackdropTest.lua`** keep `SetToplevel` — they are the reproducers, and
-  removing it would destroy the isolation. Their comments no longer claim to mirror the shipping
-  windows.
 
 ## How to verify
 
@@ -227,8 +224,10 @@ Cold client (or `/reload`), then drag the window once, then drag it a few more t
 - **Option 2 (no toplevel):** nothing logs on any drag — 0 spikes, cold or warm.
 
 With ClientPerfProbe, watch `/cpp`: Option 1 logs a small `sus=DRAG` spike each drag; Option 2 logs
-none. The four-way isolation reproducer lives in `Digigull/BiS-Scanner`
-(`/plbisscan dragtest`, `Core/DragTest.lua`).
+none. The four-way isolation harness that produced the numbers below (`/plbisscan dragtest`,
+`Core/DragTest.lua`) has been retired now that the cause is settled — this document is the record.
+If a future window ever needs re-isolating, rebuild it from the variant table above: four clones of
+the suspect window differing in exactly one axis each (strata, `SetToplevel`, children).
 
 For the rollout above, the layering changes also need an **eyeball** check that `/cpp` cannot give
 you: confirm the `LOW` windows really do sit under bags and the character panel, that the Honor
@@ -279,8 +278,8 @@ panels (which live inside the auction house frame) on their stock look.
 ---
 
 *Measured while building `!ClientPerfProbe` (a WoW 3.3.5 client-stutter measurement addon) and fixed
-in `Digigull/BiS-Scanner` and the PassLoot (BiS) addon. Isolation data: `/plbisscan dragtest`,
-Wetlands, cold `/reload` per variant. **The original three PassLoot windows are confirmed
+in `Digigull/BiS-Scanner` and the PassLoot (BiS) addon. Isolation data: the (since-retired)
+`/plbisscan dragtest` harness, Wetlands, cold `/reload` per variant. **The original three PassLoot windows are confirmed
 spike-free in-game.** The wider rollout across the other addons is applied and reasoned from the
 same mechanism, but is pending in-game verification — the tables above mark which is which. Full
 record in the BiS-Scanner repo's `docs/FINDINGS.md`.*

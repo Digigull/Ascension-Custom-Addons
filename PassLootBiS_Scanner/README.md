@@ -60,9 +60,9 @@ there's no clean talent-to-spec identity to read in-game.
 Copy the `PassLootBiS_Scanner` folder into `Interface\AddOns`. LibStub and
 LibScaledStats-1.0 are bundled.
 
-Optional but recommended: `PasslootBiS` (roll-advisor integration),
-`Auctionator-Finder-Ascension` (gold-value flag), `!ClientPerfProbe` (cooperative
-CPU attribution). All are read through guarded global checks — none is required.
+Optional but recommended: `PasslootBiS` (roll-advisor integration) and
+`Auctionator-Finder-Ascension` (gold-value flag). Both are read through guarded
+global checks — neither is required.
 
 **Set your spec before first use**; nothing is scored until one is picked.
 
@@ -82,7 +82,6 @@ CPU attribution). All are read through guarded global checks — none is require
 | `/plbs chat` / `frame` / `sound` / `tooltip` | Toggle each output surface |
 | `/plbs price <item>` | Probe the Auctionator fork's last-scanned price for one item |
 | `/plbs debug` | Dump the raw stat lines the scorer sees into a copyable box |
-| `/plbs dragtest` | Drag-freeze isolation harness (debug) |
 
 ## Saved variables
 

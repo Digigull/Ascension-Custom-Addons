@@ -9,10 +9,11 @@ the WHOLE client for ~0.8-1.3s the FIRST time it is dragged each session. The
 first drag RAISES the toplevel frame, and raising into the crowded HIGH strata
 (where most default UI + addons live) restacks the whole strata in a one-time
 engine-side pass. It is pure engine CPU (no addon Lua on the stack) and re-colds
-on /reload. Proven single-variable via /plbisscan dragtest (Core/DragTest.lua):
-an EMPTY HIGH+toplevel frame still froze 1273ms (so it is NOT the backdrop or the
-children), while FULLSCREEN_DIALOG + toplevel was smooth (~53ms) and dropping
-SetToplevel was smooth (0 spikes).
+on /reload. Proven single-variable by a four-frame isolation harness (since
+retired, once the cause was confirmed -- management/docs/DRAG-FREEZE.md): an EMPTY
+HIGH+toplevel frame still froze 1273ms (so it is NOT the backdrop or the children),
+while FULLSCREEN_DIALOG + toplevel was smooth (~53ms) and dropping SetToplevel was
+smooth (0 spikes).
 
 FIX -- do NOT call SetToplevel(true). That single rule is what buys the true zero.
 A toplevel frame re-raises every time it is grabbed, so even on a sparse strata it

@@ -390,12 +390,7 @@ local function scannerOnEvent(_, event, arg1)
 	end
 end
 
--- Opt into ClientPerfProbe per-handler timing when that measuring addon is present
--- (github.com/Digigull/Ascension-Stutter). Guarded + pass-through: probe absent =>
--- ClientPerfProbe is nil => the bare handler is used and nothing changes. Times the
--- START_LOOT_ROLL scoring path as a P^ row (BiSScanner:OnEvent) in /cpp.
-ef:SetScript("OnEvent",
-	(ClientPerfProbe and ClientPerfProbe.Wrap("BiSScanner:OnEvent", scannerOnEvent)) or scannerOnEvent)
+ef:SetScript("OnEvent", scannerOnEvent)
 
 ----------------------------------------------------------------------
 -- Debug dump (/plbisscan debug) -- diagnose why items score 0
@@ -644,21 +639,6 @@ SlashCmdList["PLBISSCAN"] = function(msg)
 			ns.Options.ToggleFilter()
 		else
 			chat("filter window unavailable.")
-		end
-	elseif cmd == "dragtest" then
-		-- Spawn four movable frames that isolate the window-drag-freeze cause
-		-- (Core/DragTest.lua). Cold client, then drag each ONE at a time.
-		if ns.DragTest and ns.DragTest.toggle then
-			local shown = ns.DragTest.toggle()
-			if shown then
-				chat("drag-freeze isolation frames |cff44ff44shown|r. Cold (or |cffffffff/reload|r) first, then drag each ONE at a time:")
-				chat("  |cffffffffA|r repro (should freeze) · |cffffffffB|r no toplevel · |cffffffffC|r lighter strata · |cffffffffD|r no children")
-				chat("Note which HITCH. With ClientPerfProbe on: |cffffffff/cpp clear|r, drag one, |cffffffff/cpp|r reads a sus=DRAG spike per frame.")
-			else
-				chat("drag-freeze isolation frames hidden.")
-			end
-		else
-			chat("dragtest harness unavailable.")
 		end
 	elseif cmd == "debug" then
 		-- Dump the raw stat-line data the scorer sees into a copyable popup, to

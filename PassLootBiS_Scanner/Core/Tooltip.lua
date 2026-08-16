@@ -319,17 +319,10 @@ local function onTooltipHide(tt)
 	tt.plbisAnnotatedLink = nil
 end
 
--- Opt into ClientPerfProbe per-hover timing when that measuring addon is present
--- (github.com/Digigull/Ascension-Stutter). Guarded + pass-through: probe absent =>
--- the bare handler is used. Times the per-mouseover annotate/score cost as a P^ row
--- (BiSScanner:OnTooltipSetItem) in /cpp -- the visible-tooltip render cost (README
--- Section 2). OnHide is trivial, left untimed.
-local tipHandler =
-	(ClientPerfProbe and ClientPerfProbe.Wrap("BiSScanner:OnTooltipSetItem", onTooltipSetItem)) or onTooltipSetItem
-GameTooltip:HookScript("OnTooltipSetItem", tipHandler)
+GameTooltip:HookScript("OnTooltipSetItem", onTooltipSetItem)
 GameTooltip:HookScript("OnHide", onTooltipHide)
 if _G.ItemRefTooltip then
-	ItemRefTooltip:HookScript("OnTooltipSetItem", tipHandler)
+	ItemRefTooltip:HookScript("OnTooltipSetItem", onTooltipSetItem)
 	ItemRefTooltip:HookScript("OnHide", onTooltipHide)
 end
 

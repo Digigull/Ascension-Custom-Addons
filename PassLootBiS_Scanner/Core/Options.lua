@@ -167,7 +167,8 @@ local function build()
 	-- HIGH + SetToplevel(true) froze the client ~1s on first drag; FULLSCREEN_DIALOG
 	-- alone still cost ~50ms on EVERY drag while the toplevel flag remained, so the
 	-- flag is gone too and Options.Show() calls UI.raiseOnOpen() instead. Measured
-	-- via /plbisscan dragtest; centralized so no window can drift back.
+	-- single-variable (management/docs/DRAG-FREEZE.md); centralized here so no
+	-- window can drift back.
 	ns.UI.applyWindowChrome(frame)
 	ns.UI.applyDarkBackdrop(frame)
 	frame:EnableMouse(true)

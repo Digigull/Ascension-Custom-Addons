@@ -6,12 +6,12 @@
      WIRE FORMAT (schema "CPP1"): pipe-delimited, one record per line, so a
      pasted blob is parseable without guesswork. Documented in CLAUDE.md.
        Header : CPP1|ver=..|build=..|iface=..|realm=..|zone=..|char=..|
-                win=..|thr=..|prof=..|spikes=..|shown=..|gen=..[|page=i/n]
+                win=..|thr=..|attr=..|spikes=..|shown=..|gen=..[|page=i/n]
        Matrix : M|api=<name>|st=<ok|missing|zero|off|n/a>|d=<detail>
        Load-T : T|pre=<ms>|login=<ms>|world=<ms>|addons=<n>|cap=<ms>|capkb=<KB>
        Load-A : L|r=..|addon=<name>|ms=<loadMs>|heap=<KB>
-       Spike  : S|i=..|t=..|dt=..|cmb=..|cleu=..|dh=..|sus=<CODE>|zone=..|ev=..|cpu=..[|open=<frame>][|mouse=held][|net=in/out/lat][|str=n][|old=1]
-       Offend : O|r=..|addon=..|cpu=..|mem=..|ev=..
+       Spike  : S|i=..|t=..|dt=..|cmb=..|cleu=..|dh=..|sus=<CODE>|zone=..|ev=..[|open=<frame>][|mouse=held][|net=in/out/lat][|str=n][|old=1]
+       Offend : O|r=..|addon=..|mem=..|ev=..
        Blocked: B|r=..|addon=<name>|func=<protected fn>|n=<count>|ps=<perSec>
        MemSum : WM|kb=<estTotal>|tbls=<visited>|roots=<n>|cap=<0/1>|shown=<n>
        MemTop : W|r=..|name=<global>|kb=<estKB>|tbls=<tableCount>
@@ -34,7 +34,6 @@ local Report = {}
 Report.HEAP_FREED_KB   = 64    -- heap dropped >= this in the spike frame => a GC collection likely ran
 Report.HEAP_ALLOC_KB   = 512   -- heap grew >= this (KB) in one frame => allocation-heavy (cause-B pressure)
 Report.CLEU_HOT_PS     = 300   -- CLEU events/sec at/above this is a "firehose" signal
-Report.ADDON_DOMINATES = 0.50  -- one addon >= this fraction of frame CPU => name it
 Report.ZONE_WINDOW_SEC = 5     -- a spike within this many seconds of a zone-in is a
                                -- loading-screen first-render (ZONE) even when the zone
                                -- event was flooded out of the recent-event ring
@@ -43,7 +42,6 @@ Report.ZONE_WINDOW_SEC = 5     -- a spike within this many seconds of a zone-in 
 Report.MAX_SPIKES    = 20
 Report.MAX_OFFENDERS = 15
 Report.MAX_EVENTS    = 15
-Report.MAX_PROFILED  = 20
 Report.MAX_LOADADDONS = 20
 Report.MAX_BLOCKED   = 10
 Report.MAX_MEM       = 12    -- top-N memory globals in the /cpp mem walk
@@ -87,7 +85,6 @@ end
 --   spike.cleuPS    COMBAT_LOG_EVENT_UNFILTERED events/sec at the spike
 --   spike.heapDelta KB change in collectgarbage("count") across the spike frame
 --   spike.events    array of recent event names (newest first)
---   spike.topCPU    array of { name=, ms= } for the sample window (desc)
 -- Returns a short CODE and the list of human reasons that fired.
 local ZONE_EVENTS = {
     PLAYER_ENTERING_WORLD = true,
@@ -147,7 +144,7 @@ Report.FRAMEOPEN_LABEL = FRAMEOPEN_LABEL
 -- dh=+2057KB => ALLOC, ev carries AUCTION_HOUSE_SHOW). Reporting the trigger next
 -- to the mechanism names WHAT the owner did without demoting the measured cause of
 -- HOW it stalled. Still a recent-event CORRELATION, not a measured mechanism — same
--- honesty caveat as OPEN: (a non-cooperating addon hooking that event could own it).
+-- honesty caveat as OPEN: (an addon hooking that event could own it).
 function Report.frameOpenTag(spike)
     if type(spike) == "table" and type(spike.events) == "table" then
         for _, e in ipairs(spike.events) do
@@ -244,8 +241,8 @@ function Report.classify(spike)
     local code = "?"
 
     -- E/A: a zone/loading transition in the recent event window -> first-exercise
-    -- warm-up or first-see I/O (README §3 A/E). Checked first: these are the
-    -- login/zone-in spikes that frontloading actually targets.
+    -- warm-up or first-see I/O (README §3 A/E). Checked first: a zone-in owns its
+    -- frame outright, so it must win over the weaker heap/rate signals below.
     local zoneHit
     if type(spike.events) == "table" then
         for _, e in ipairs(spike.events) do
@@ -278,16 +275,6 @@ function Report.classify(spike)
         code = "ALLOC"
         reasons[#reasons + 1] = string.format("heap grew %dKB in the frame (allocation pressure)",
             math.floor(spike.heapDelta))
-    end
-
-    -- C (attribution): one addon dominates the frame's measured CPU.
-    if type(spike.topCPU) == "table" and spike.topCPU[1] and type(spike.dt) == "number" and spike.dt > 0 then
-        local top = spike.topCPU[1]
-        if type(top.ms) == "number" and top.ms >= Report.ADDON_DOMINATES * spike.dt then
-            if code == "?" or code == "CLEU" then code = "ADDON:" .. clean(top.name) end
-            reasons[#reasons + 1] = string.format("%s used %sms of %sms frame",
-                clean(top.name), f1(top.ms), f1(spike.dt))
-        end
     end
 
     -- E/A (zone-in backstop): a loading screen suspends the frame loop, then the
@@ -335,8 +322,8 @@ function Report.classify(spike)
     -- event window. LOWEST priority — only when nothing measured fired (code still
     -- "?") — because it is a recent-event correlation, not a measured mechanism.
     -- It turns the pervasive unattributed cause-E spike into a named probable cause
-    -- (OPEN:vendor / OPEN:loot / ...) instead of a bare "?". Still heuristic: a
-    -- non-cooperating addon hooking that same event could be the real owner.
+    -- (OPEN:vendor / OPEN:loot / ...) instead of a bare "?". Still heuristic: an
+    -- addon hooking that same event could be the real owner.
     if code == "?" then
         local tag, ev = Report.frameOpenTag(spike)
         if tag then
@@ -363,7 +350,6 @@ function Report.suspectLabel(code)
     if code == "STREAM" then return "Loading players" end
     if code == "DRAG"  then return "Window drag (addon strata)" end
     local kind, rest = code:match("^(%u+):(.+)$")
-    if kind == "ADDON" then return "Addon: " .. rest end
     if kind == "OPEN"  then return "First-open: " .. (FRAMEOPEN_LABEL[rest] or rest) end
     return code
 end
@@ -379,10 +365,8 @@ function Report.explain(spike)
     if kind == "OPEN" then
         return string.format(
             "Probable: first open of the %s this session (first-exercise — one-time cost, cheap on later opens). "
-            .. "No cooperating addon self-attributed this frame; a non-cooperating addon that hooks this event may own "
-            .. "it — wrap it with ClientPerfProbe to confirm.", FRAMEOPEN_LABEL[rest] or rest)
-    elseif kind == "ADDON" then
-        return rest .. " owned this frame — measured directly via the cooperative Meter."
+            .. "The window's own setup and any addon that hooks this event both land on this frame; this client gives Lua "
+            .. "no way to split them, so the trigger is named, not the culprit.", FRAMEOPEN_LABEL[rest] or rest)
     elseif code == "GC" then
         return "The game paused to clean up unused memory (garbage collection). It can't be tuned from Lua here, and a bigger memory pile makes every cleanup longer."
     elseif code == "ALLOC" then
@@ -419,7 +403,7 @@ Report.GLOSSARY = {
     { group = "How to read this",
       term = "What a spike (stutter) actually is",
       plain = "A spike is a single frame where the game froze for a moment - what you feel as a stutter. The main thread was busy and could not draw. The probe catches every frame longer than the threshold (50 ms by default) and tries to name what kept it busy.",
-      tech = "Each frame is timed with debugprofilestop(). A frame over the threshold is saved with its context (memory change, combat-log rate, recent events, cooperating-addon time, new-player loads) and run through classify() to pick a probable cause." },
+      tech = "Each frame is timed with debugprofilestop(). A frame over the threshold is saved with its context (memory change, combat-log rate, recent events, new-player loads) and run through classify() to pick a probable cause." },
     { group = "How to read this",
       term = "Why ping is never the cause",
       plain = "High ping or a laggy server does NOT freeze a frame - the game keeps drawing, it just shows slightly old information. The network only causes a spike indirectly, when data arrives and forces the game to do work right then: process a burst of combat log, or load players streaming into view. So we name those two things - never 'server lag'.",
@@ -441,15 +425,11 @@ Report.GLOSSARY = {
     { group = "What caused a spike", code = "ZONE",
       term = "Zoning in",
       plain = "You were entering or loading a new area. The first frames after a loading screen do a lot of one-time setup, so a hitch there is expected and happens once per zone-in.",
-      tech = "From recent event names: PLAYER_ENTERING_WORLD, the LOADING_SCREEN events, ZONE_CHANGED*, NEW_WMO_CHUNK. Highest-priority tag - these are the load spikes a pre-warm fix would target." },
+      tech = "From recent event names: PLAYER_ENTERING_WORLD, the LOADING_SCREEN events, ZONE_CHANGED*, NEW_WMO_CHUNK. Highest-priority tag - a zone-in owns its frame, so it wins over the weaker heap/rate signals." },
     { group = "What caused a spike", code = "OPEN:vendor",
       term = "First-open (vendor / loot / ...)",
       plain = "The first time you open a particular window this session - a vendor, a loot window, NPC chat, the map - the game and your addons build it for the first time, which costs a moment. Open it again and it is cheap. A one-time warm-up cost.",
-      tech = "Lowest-priority tag, used only when nothing measurable owned the frame. Matches a window-open event in the recent-event ring (LOOT_OPENED, MERCHANT_SHOW, GOSSIP_SHOW, quest/bank/mail/...). It names the TRIGGER, not the culprit - a non-cooperating addon hooking that event could be the real owner. Ambiguous events like the map update are deliberately excluded." },
-    { group = "What caused a spike", code = "ADDON:example",
-      term = "Addon: <name>",
-      plain = "One specific addon's code ran long enough to own this frame - and because that addon cooperates with the probe, we can name it directly. This is the most trustworthy label: it is measured, not guessed.",
-      tech = "Only cooperating addons (those calling ClientPerfProbe.Wrap/Enter/Leave) are timed, via debugprofilestop. If one tag used at least 50% of the frame it is named. Example: BiSScanner:OnTooltipSetItem owned a loot-window frame in Stratholme." },
+      tech = "Lowest-priority tag, used only when nothing measurable owned the frame. Matches a window-open event in the recent-event ring (LOOT_OPENED, MERCHANT_SHOW, GOSSIP_SHOW, quest/bank/mail/...). It names the TRIGGER, not the culprit - an addon hooking that event could be the real owner. Ambiguous events like the map update are deliberately excluded." },
     { group = "What caused a spike", code = "STREAM",
       term = "Loading players",
       plain = "A batch of new players (or their gear and mounts) just came into view and the game had to load their character models and textures right then. In a 40v40 this happens constantly as people stream into range, and each load can cause a brief hitch. This is the closest thing to a 'network-caused' spike - but it is the loading work that costs time, not the connection itself.",
@@ -457,11 +437,11 @@ Report.GLOSSARY = {
     { group = "What caused a spike", code = "DRAG",
       term = "Window drag (addon strata)",
       plain = "You were holding the mouse button when the game froze - almost always dragging a movable addon window around (the long-standing 'window drag lag'). This one has a CONFIRMED cause on this client: a hand-rolled addon window that is set 'always on top' (SetToplevel) while sitting on a crowded UI layer. Grabbing it re-raises the window and the game has to re-sort that whole layer, which freezes the first drag of each session (~0.6 to 2.6 s); afterwards it is cheap. It is fixable - in the offending addon, not the game.",
-      tech = "The driver samples IsMouseButtonDown('LeftButton') on the spike frame - a drag is a frame script the event system cannot see, and in a busy city the mouse-down event is flooded out of the recent-event ring before the snapshot. A big unattributed pure-CPU frame (cpu= empty, heap ~0) with the button held is the window-drag first-layout class. CONFIRMED cause (single-variable isolation, management/docs/DRAG-FREEZE.md): a frame that pairs SetToplevel(true) with a populated strata (e.g. HIGH). The click/drag raises the toplevel frame, which restacks the entire strata in one ~1 s engine pass; an EMPTY HIGH+toplevel frame still froze 1273 ms, so it is the raise/restack, not the backdrop or children. Fix lives in the addon: drop SetToplevel(true) (a singleton or non-overlapping window never needs click-to-raise) and/or move it to a near-empty strata like FULLSCREEN_DIALOG, then Raise() once on open. Verified in-game: all three of this addon-family's hand-rolled windows now log no sus=DRAG spike, cold or warm. A held button could also be a camera turn, but the window-drag freeze is by far the common case." },
+      tech = "The driver samples IsMouseButtonDown('LeftButton') on the spike frame - a drag is a frame script the event system cannot see, and in a busy city the mouse-down event is flooded out of the recent-event ring before the snapshot. A big unattributed frame (no measured cause, heap ~0) with the button held is the window-drag first-layout class. CONFIRMED cause (single-variable isolation, management/docs/DRAG-FREEZE.md): a frame that pairs SetToplevel(true) with a populated strata (e.g. HIGH). The click/drag raises the toplevel frame, which restacks the entire strata in one ~1 s engine pass; an EMPTY HIGH+toplevel frame still froze 1273 ms, so it is the raise/restack, not the backdrop or children. Fix lives in the addon: drop SetToplevel(true) (a singleton or non-overlapping window never needs click-to-raise) and/or move it to a near-empty strata like FULLSCREEN_DIALOG, then Raise() once on open. Verified in-game: all three of this addon-family's hand-rolled windows now log no sus=DRAG spike, cold or warm. A held button could also be a camera turn, but the window-drag freeze is by far the common case." },
     { group = "What caused a spike", code = "?",
       term = "Unknown (likely the game engine)",
       plain = "None of the probe's measurements owned this frame - no addon, no memory cleanup, no combat flood, no window-open. That usually means the cost is inside the game engine itself (its own rendering / first-layout work), which addons cannot see or fix. These are the honest 'we cannot name it' stalls.",
-      tech = "The fallback when every signal is weak: no cooperating-addon time, memory change near zero, combat-log rate below the line, no zone or window-open event. This client gives Lua only aggregate signals, so a purely engine-side cost cannot be split further." },
+      tech = "The fallback when every signal is weak: memory change near zero, combat-log rate below the line, no zone or window-open event. This client gives Lua only aggregate signals, so a purely engine-side cost cannot be split further." },
 
     -- per-spike fields --------------------------------------------------------
     { group = "The numbers on each spike", field = "dt",
@@ -480,10 +460,6 @@ Report.GLOSSARY = {
       term = "In combat",
       plain = "Whether you were in combat when the spike happened. Helps tell a combat-driven hitch from a UI or loading one.",
       tech = "InCombatLockdown() at capture time; shown as yes/no (1/0 in the export)." },
-    { group = "The numbers on each spike", field = "cpu",
-      term = "Addon time",
-      plain = "Time spent inside cooperating addons' code during that frame. Empty for most spikes, because most addons (and the game engine) do not report their time on this client.",
-      tech = "Per-tag debugprofilestop totals for the spike frame only (folded in from the cooperative Meter). This is the only per-addon channel this client allows - the stock CPU API is locked." },
     { group = "The numbers on each spike", field = "net",
       term = "Network snapshot",
       plain = "A reading of your connection at the moment of the spike - download and upload speed, and ping. Useful as background context, but it cannot prove a spike was network-caused (see 'Why ping is never the cause').",
@@ -511,16 +487,14 @@ function Report.glossary() return Report.GLOSSARY end
 
 --------------------------------------------------------------------------------
 -- rankOffenders(samples, n) -> sorted top-n copy
--- samples: array of { name=, cpuMs=, memKb=, events= }. Sort by cpuMs desc,
--- tie-break memKb desc, then name asc for determinism.
+-- samples: array of { name=, memKb=, events= }. Sort by memKb desc, then name
+-- asc for determinism (per-addon CPU is unavailable on this client — see Attrib).
 function Report.rankOffenders(samples, n)
     local out = {}
     if type(samples) == "table" then
         for _, s in ipairs(samples) do out[#out + 1] = s end
     end
     table.sort(out, function(a, b)
-        local ac, bc = a.cpuMs or 0, b.cpuMs or 0
-        if ac ~= bc then return ac > bc end
         local am, bm = a.memKb or 0, b.memKb or 0
         if am ~= bm then return am > bm end
         return tostring(a.name) < tostring(b.name)
@@ -545,7 +519,6 @@ local function headerLine(meta, page, npages)
         "char=" .. clean(meta.char or "?"),
         "win=" .. clean(meta.windowSec or "?"),
         "thr=" .. clean(meta.thresholdMs or "?"),
-        "prof=" .. (meta.profileOn and "1" or "0"),
         "attr=" .. clean(meta.attr or "none"),
         "spikes=" .. inum(meta.totalSpikes or 0),
         "shown=" .. inum(meta.shownSpikes or 0),
@@ -561,7 +534,7 @@ end
 --   meta      = header fields (see headerLine),
 --   matrix    = array of { name=, status=, detail= },   -- API support matrix
 --   spikes    = array of spike records (newest first),
---   offenders = array of { name=, cpuMs=, memKb=, events= },
+--   offenders = array of { name=, memKb=, events= },
 --   blocked   = array of { addon=, func=, count=, perSec= } (misbehaving-addon namer),
 --   mem       = MemWalk.estimate result { ranked={name,bytes,nodes}, totalBytes, totalNodes, capHit, roots },
 --   rates     = array of { name=, count=, perSec= },
@@ -600,8 +573,8 @@ function Report.build(data)
         }, SEP)
     end
 
-    -- LOAD PROFILE (initial-load lag). The per-addon load cost is a real per-addon
-    -- CPU+memory channel that Ascension's runtime locks (scriptProfile,
+    -- LOAD PROFILE (initial-load lag). The per-addon load cost is the one real
+    -- per-addon CPU+memory channel that Ascension's runtime locks (scriptProfile,
     -- GetAddOnMemoryUsage) do NOT block: it comes from debugprofilestop /
     -- collectgarbage deltas across the serial ADDON_LOADED cascade. `T` is the
     -- login timeline (the floor + milestone gaps), `L` the per-addon ranking.
@@ -682,15 +655,6 @@ function Report.build(data)
                 for i = 1, math.min(4, #sp.events) do ev[i] = clean(sp.events[i]) end
                 evStr = table.concat(ev, ",")
             end
-            local cpuStr = ""
-            if type(sp.topCPU) == "table" then
-                local cp = {}
-                for i = 1, math.min(3, #sp.topCPU) do
-                    local t = sp.topCPU[i]
-                    cp[i] = clean(t.name) .. ":" .. f1(t.ms)
-                end
-                cpuStr = table.concat(cp, ";")
-            end
             local srow = {
                 "S",
                 "i=" .. inum(sp.index or shown),
@@ -702,7 +666,6 @@ function Report.build(data)
                 "sus=" .. code,
                 "zone=" .. clean(sp.zone or ""),
                 "ev=" .. evStr,
-                "cpu=" .. cpuStr,
             }
             -- Frame-open TRIGGER context (open=<tag>). Complementary to sus=: names
             -- the interaction-frame first-open the spike coincided with, even when a
@@ -741,7 +704,7 @@ function Report.build(data)
             -- GetNetStats snapshot at the spike (down KB/s / up KB/s / world latency
             -- ms). Present only when the driver could read GetNetStats. This is the
             -- channel that separates an I/O/streaming stall (cause A/D) from engine
-            -- CPU on a big UNATTRIBUTED frame (cpu= empty, dh~0, cleu=0). It does NOT
+            -- CPU on a big UNATTRIBUTED frame (sus=?, dh~0, cleu=0). It does NOT
             -- feed classify() yet: GetNetStats returns coarse rolling rates, and the
             -- "elevated" thresholds must be tuned from a real capture, not guessed
             -- (same discipline that added ALLOC only after seeing +1961KB live).
@@ -775,28 +738,8 @@ function Report.build(data)
                 "O",
                 "r=" .. r,
                 "addon=" .. clean(o.name),
-                "cpu=" .. f1(o.cpuMs),
                 "mem=" .. f1(o.memKb),
                 "ev=" .. inum(o.events or 0),
-            }, SEP)
-        end
-    end
-
-    -- PROFILED (cooperative Meter participants): real per-tag CPU via
-    -- debugprofilestop, the one route that survives Ascension's lockdown. Caller
-    -- passes Meter:ranked(). Empty on a client with no participating addons.
-    if type(data.profiled) == "table" then
-        local shown = 0
-        for r, p in ipairs(data.profiled) do
-            if shown >= Report.MAX_PROFILED then break end
-            shown = shown + 1
-            body[#body + 1] = table.concat({
-                "P",
-                "r=" .. r,
-                "tag=" .. clean(p.tag),
-                "ms=" .. f1(p.ms),
-                "calls=" .. inum(p.calls or 0),
-                "pms=" .. f1(p.perMs or 0),
             }, SEP)
         end
     end
@@ -806,7 +749,7 @@ function Report.build(data)
     -- it retried under combat lockdown. Ranked by count — a live capture named
     -- ExadTweaks (TargetFrameToT:Show) at 45/s this way with no hooks/scriptProfile.
     -- This is HONEST attribution (the event carries the name), not a heuristic
-    -- suspect tag — so it names a NON-cooperating addon, unlike the P^ Meter rows.
+    -- suspect tag — the one channel on this client that names an addon outright.
     if type(data.blocked) == "table" then
         local shown = 0
         for r, b in ipairs(data.blocked) do
@@ -922,9 +865,10 @@ if _SELFTEST then
     c = Report.classify({ heapDelta = -11717 })
     eq(c, "GC", "classify gc beats alloc")
 
-    -- classify: a dominant addon names itself, overriding a bare CLEU tag
-    c = Report.classify({ inCombat = true, cleuPS = 500, dt = 60, topCPU = { { name = "BigAddon", ms = 40 } } })
-    eq(c, "ADDON:BigAddon", "classify dominant addon")
+    -- classify: a combat flood stands on its own — there is no per-addon CPU
+    -- channel on this client to override it with (see Attrib / the removed meter)
+    c = Report.classify({ inCombat = true, cleuPS = 500, dt = 60 })
+    eq(c, "CLEU", "classify combat flood")
 
     -- classify: weak/absent signals -> unattributed (small +dh below ALLOC thr)
     c = Report.classify({ dt = 55, cleuPS = 10, heapDelta = 263 })
@@ -962,7 +906,7 @@ if _SELFTEST then
 
     -- classify: WINDOW-DRAG. A big unattributed pure-CPU frame with the mouse button
     -- held is the documented window-drag stutter (the live cpp-window drag: dt=855,
-    -- dh~0, cleu below the line, cpu= empty, no mouse event in ev= because the city
+    -- dh~0, cleu below the line, no measured cause, no mouse event in ev= because the city
     -- firehose flooded GLOBAL_MOUSE_DOWN out of the ring). The driver's spike-frame
     -- button sample (spike.mouseHeld) catches what ev= can't.
     c = Report.classify({ dt = 855, heapDelta = 77, cleuPS = 28, mouseHeld = true,
@@ -1021,8 +965,6 @@ if _SELFTEST then
     -- suspectLabel: friendly names for the UI (the owner-approved plain-English set)
     eq(Report.suspectLabel("?"), "Unknown (likely the game engine)", "label ?")
     eq(Report.suspectLabel("OPEN:vendor"), "First-open: vendor window", "label OPEN:vendor")
-    eq(Report.suspectLabel("ADDON:BiSScanner:OnTooltipSetItem"),
-       "Addon: BiSScanner:OnTooltipSetItem", "label ADDON")
     eq(Report.suspectLabel("GC"), "Memory cleanup pause", "label GC")
     eq(Report.suspectLabel("CLEU"), "Combat data flood", "label CLEU")
     eq(Report.suspectLabel("ALLOC"), "Heavy memory churn", "label ALLOC")
@@ -1033,9 +975,7 @@ if _SELFTEST then
     -- explain: prose probable-cause for the at-a-glance window
     local ex = Report.explain({ events = { "MERCHANT_SHOW" } })
     has(ex, "first open of the vendor window", "explain frame-open names the window")
-    has(ex, "wrap it with ClientPerfProbe", "explain frame-open gives the next step")
-    ex = Report.explain({ dt = 60, topCPU = { { name = "BiSScanner:X", ms = 40 } } })
-    has(ex, "owned this frame", "explain addon attribution")
+    has(ex, "the trigger is named, not the culprit", "explain frame-open states the honesty caveat")
     ex = Report.explain({ heapDelta = 10, events = { "UNIT_AURA" } })
     has(ex, "Unknown", "explain unknown fallback")
     ex = Report.explain({ dt = 855, mouseHeld = true, events = { "UNIT_AURA" } })
@@ -1057,7 +997,6 @@ if _SELFTEST then
             assert(byCode[code], "glossary missing an entry for classifier code " .. code)
         end
         assert(byCode["OPEN:vendor"], "glossary missing the OPEN: family entry")
-        assert(byCode["ADDON:example"], "glossary missing the ADDON: family entry")
     end
 
     -- build: a frame-open spike lands OPEN:<tag> in the wire sus= field
@@ -1183,27 +1122,26 @@ if _SELFTEST then
 
     -- rankOffenders: sort + tie-break + top-n
     local ranked = Report.rankOffenders({
-        { name = "b", cpuMs = 5, memKb = 100 },
-        { name = "a", cpuMs = 5, memKb = 200 },  -- ties cpu, higher mem -> first
-        { name = "c", cpuMs = 9, memKb = 10 },
+        { name = "b", memKb = 100 },
+        { name = "a", memKb = 900 },
+        { name = "c", memKb = 100 },   -- ties b on mem -> name asc puts b first
     }, 2)
     eq(#ranked, 2, "rank top-n length")
-    eq(ranked[1].name, "c", "rank highest cpu first")
-    eq(ranked[2].name, "a", "rank tie-break by mem")
+    eq(ranked[1].name, "a", "rank highest mem first")
+    eq(ranked[2].name, "b", "rank tie-break by name")
 
     -- build: header self-describing + all section tags present
     local out = Report.build({
         meta = { version = "0.2.0", build = "12340", iface = "30300",
                  realm = "TestRealm", zone = "Ragefire Chasm", char = "Probey",
-                 windowSec = 30, thresholdMs = 50, profileOn = true,
+                 windowSec = 30, thresholdMs = 50, attr = "mem",
                  totalSpikes = 3, shownSpikes = 1, generatedAt = 123.4 },
         matrix = { { name = "debugprofilestop", status = "ok", detail = "confirmed" },
-                   { name = "GetAddOnCPUUsage", status = "off", detail = "scriptProfile=0" } },
+                   { name = "GetAddOnMemoryUsage", status = "zero", detail = "returns 0" } },
         spikes = { { index = 1, t = 100.0, dt = 62.5, inCombat = true, cleuPS = 480,
                      heapDelta = -128, zone = "Ragefire Chasm",
-                     events = { "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_ENTERING_WORLD" },
-                     topCPU = { { name = "BigAddon", ms = 40.0 } } } },
-        offenders = { { name = "BigAddon", cpuMs = 40.0, memKb = 2048.0, events = 999 } },
+                     events = { "COMBAT_LOG_EVENT_UNFILTERED", "PLAYER_ENTERING_WORLD" } } },
+        offenders = { { name = "BigAddon", memKb = 2048.0, events = 999 } },
         rates = { { name = "COMBAT_LOG_EVENT_UNFILTERED", count = 14400, perSec = 480.0 } },
     })
     has(out.text, "CPP1^ver=0.2.0", "build header")
@@ -1225,7 +1163,7 @@ if _SELFTEST then
         spikes = { { index = 9, t = 100.0, dt = 800.0, zone = "Ironforge", events = {} },
                    { index = 10, t = 200.0, dt = 90.0, zone = "Ironforge", events = {} } },
     })
-    has(rout.text, "S^i=9^t=100.0^dt=800.0^cmb=0^cleu=0^dh=0^sus=?^zone=Ironforge^ev=^cpu=^old=1",
+    has(rout.text, "S^i=9^t=100.0^dt=800.0^cmb=0^cleu=0^dh=0^sus=?^zone=Ironforge^ev=^old=1",
         "restored spike (t<boot) flagged old=1")
     has(rout.text, "S^i=10^t=200.0^", "this-session spike present")
     local _, oldCount = rout.text:gsub("old=1", "")
@@ -1247,12 +1185,6 @@ if _SELFTEST then
     has(lout.text, "T^login=700.0^world=3400.0^addons=2^cap=350.0^capkb=19500", "build load timeline row (probe-relative)")
     has(lout.text, "L^r=1^addon=HeavyAddon^ms=300.0^heap=18000", "build per-addon load row (heaviest)")
     has(lout.text, "L^r=2^addon=LightAddon^ms=50.0^heap=?", "build per-addon load row (nil heap -> ?)")
-
-    -- build: cooperative Meter participant rows
-    local pout = Report.build({ meta = { version = "1" },
-        profiled = { { tag = "MyAddon:OnUpdate", ms = 42.5, calls = 900, perMs = 0.047 },
-                     { tag = "MyAddon:OnEvent", ms = 3.1, calls = 12, perMs = 0.258 } } })
-    has(pout.text, "P^r=1^tag=MyAddon:OnUpdate^ms=42.5^calls=900", "build profiled participant row")
 
     -- build: BLOCKED namer rows (self-describing addon+function offenders, ranked)
     local bout = Report.build({ meta = { version = "1" },
@@ -1279,7 +1211,7 @@ if _SELFTEST then
     local nout = Report.build({ meta = { version = "1" },
         spikes = { { index = 5, t = 10.0, dt = 300.0, heapDelta = 1, zone = "Ironforge",
                      events = {}, net = { inKB = 8.0, outKB = 2.0, lat = 241 } } } })
-    has(nout.text, "^cpu=^net=8.0/2.0/241", "spike carries the GetNetStats snapshot (down/up/world-latency)")
+    has(nout.text, "^ev=^net=8.0/2.0/241", "spike carries the GetNetStats snapshot (down/up/world-latency)")
     -- a spike WITHOUT a net snapshot (API absent, or a record from before this
     -- field existed) simply omits net= — no fake 0/0/0 that reads as measured.
     local nnout = Report.build({ meta = { version = "1" },

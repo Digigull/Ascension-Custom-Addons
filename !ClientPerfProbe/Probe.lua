@@ -16,7 +16,7 @@ local Probe = {}
 -- status codes used in the report matrix (see Report wire format):
 --   ok      present and (where checkable) returning live data
 --   missing symbol absent on this client
---   off     present but gated OFF (CPU family without scriptProfile)
+--   off     present but gated OFF by a CVar
 --   zero    present but returning 0/empty (armed but no data yet)
 --   n/a     not applicable / not yet checked
 
@@ -112,7 +112,7 @@ function Probe.buildMatrix()
         add("GetAddOnMemoryUsage", "missing")
     end
 
-    -- scriptProfile CVar — the crux for CPU attribution.
+    -- scriptProfile CVar — kept as a RECORDED FINDING, not a lever.
     local prof = "n/a"
     if isFn("GetCVar") then
         local ok, v = pcall(GetCVar, "scriptProfile")
@@ -121,13 +121,17 @@ function Probe.buildMatrix()
     else
         add("cvar:scriptProfile", "missing", "no GetCVar")
     end
-    local profileOn = (prof == "1")
+    -- The whole per-addon CPU family (GetAddOnCPUUsage & friends) hangs off this
+    -- CVar, and this client resets it to 0 on load — confirmed live, Lua and
+    -- devconsole alike. That is why the probe carries no CPU channel at all; the
+    -- row above is the record of the finding, not a lever to pull.
 
     -- Input/display CVars that are CANDIDATE levers for the window-drag / mouse stall
     -- (sus=DRAG). REPORTED ONLY, never a recommendation: the owner A/B-tests them
     -- (toggle in Video > Display, re-capture the same drag, compare the DRAG spike) and
-    -- the data decides — measure-first (ground rule 1; README §2's killed pre-warm is the
-    -- cautionary tale). Names are PROBED across candidates, not asserted (ground rules
+    -- the data decides — measure-first (ground rule 1; every mitigation this tool has
+    -- shipped on a story rather than a capture has been killed by one). Names are
+    -- PROBED across candidates, not asserted (ground rules
     -- 2/5): the detail shows which CVar name actually matched on this client, so the
     -- owner's matrix confirms the real Ascension names instead of us hardcoding a story.
     -- reduceInputLag forces a per-frame GPU pipeline flush (latency vs frame stalls); the
@@ -157,21 +161,6 @@ function Probe.buildMatrix()
         reportCVar("tripleBuffer",   { "gxTripleBuffer", "tripleBuffer" })
     end
 
-    -- Per-addon / frame / event CPU (requires scriptProfile=1 + a reload to arm).
-    -- Present-but-off is reported as "off" so the owner knows to arm it.
-    local cpuFns = {
-        "UpdateAddOnCPUUsage", "GetAddOnCPUUsage", "ResetCPUUsage",
-        "GetFrameCPUUsage", "GetEventCPUUsage", "GetFunctionCPUUsage",
-        "GetScriptCPUUsage",
-    }
-    for _, name in ipairs(cpuFns) do
-        if isFn(name) then
-            add(name, profileOn and "ok" or "off", profileOn and "" or "needs scriptProfile=1 + reload")
-        else
-            add(name, "missing")
-        end
-    end
-
     -- Addon enumeration (needed to iterate offenders).
     add("GetNumAddOns", isFn("GetNumAddOns") and "ok" or "missing")
     add("GetAddOnInfo", isFn("GetAddOnInfo") and "ok" or "missing")
@@ -182,14 +171,11 @@ end
 -- Quick capability flags the rest of the addon branches on. Cheap; recomputed
 -- on demand so it reflects the live CVar state after an arming reload.
 function Probe.caps()
-    local prof = isFn("GetCVar") and (select(1, pcall(GetCVar, "scriptProfile")) and GetCVar("scriptProfile")) or nil
     return {
         clock      = isFn("debugprofilestop"),
         heap       = (select(1, pcall(collectgarbage, "count"))),
         addonMem   = isFn("GetAddOnMemoryUsage") and isFn("UpdateAddOnMemoryUsage"),
-        addonCPU   = isFn("GetAddOnCPUUsage") and isFn("UpdateAddOnCPUUsage"),
         enumAddons = isFn("GetNumAddOns") and isFn("GetAddOnInfo"),
-        profileOn  = (prof == "1"),
         cvar       = isFn("GetCVar") and isFn("SetCVar"),
         mouse      = isFn("IsMouseButtonDown"),   -- window-drag (DRAG) detection
     }
