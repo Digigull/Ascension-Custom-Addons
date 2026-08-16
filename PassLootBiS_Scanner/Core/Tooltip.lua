@@ -175,6 +175,16 @@ local function setTopRight(tt, text, r, g, b)
 	return true
 end
 
+-- Remember the annotation we last put on a tooltip, so a re-fire of
+-- OnTooltipSetItem for the SAME item can restore it without re-scoring. One
+-- table per tooltip frame, mutated in place (GameTooltip and ItemRefTooltip are
+-- annotated independently, so this cannot be a module-level single slot).
+local function rememberAnnotation(tt, link, text, r, g, b)
+	local memo = tt.plbisAnnotation
+	if not memo then memo = {}; tt.plbisAnnotation = memo end
+	memo.link, memo.text, memo.r, memo.g, memo.b = link, text, r, g, b
+end
+
 -- The hook body: score the hovered gear and annotate.
 local function annotate(tt)
 	local db = ns.db
@@ -188,15 +198,36 @@ local function annotate(tt)
 	local _, link = tt:GetItem()
 	if not link then return end
 
-	-- One annotation per mouseover. While the auction house is open, something
-	-- re-drives item tooltips every frame (re-firing OnTooltipSetItem and/or
-	-- re-Show()ing them); re-running our score + width recompute each frame makes
-	-- the tooltip visibly SHAKE and needlessly burns CPU. If we've already scored
-	-- this exact item on this tooltip, do nothing. The memo is set only after a
-	-- successful annotation (below) -- so a first hover where GetItemInfo hasn't
-	-- cached yet stays retryable -- and cleared when the tooltip hides (OnHide hook
-	-- below), so moving to another item re-scores.
-	if tt.plbisAnnotatedLink == link then return end
+	-- One *scoring pass* per item per mouseover. While the auction house is open,
+	-- something re-drives item tooltips every frame (re-firing OnTooltipSetItem
+	-- and/or re-Show()ing them); re-running our score + width recompute each frame
+	-- makes the tooltip visibly SHAKE and needlessly burns CPU. So if we've already
+	-- scored this exact item on this tooltip, reuse the annotation we composed.
+	--
+	-- Reuse, NOT skip. Some hosts re-drive the tooltip by calling its setter again
+	-- (GameTooltip:SetGuildBankItem, ContainerFrameItemButton_OnEnter, ...), and a
+	-- setter starts by CLEARING every line -- including the top-right FontString we
+	-- annotated -- before re-firing OnTooltipSetItem. Returning early there left the
+	-- score wiped for as long as the cursor stayed put: it appeared once and then
+	-- vanished. The web-shop "Personal Bank" (a personal vault rendered through the
+	-- stock guild-bank UI) does exactly this; a bag addon that sets the tooltip once
+	-- on enter does not, which is why the same item scored fine in the backpack.
+	--
+	-- Re-applying is cheap and stays shake-free because setTopRight is idempotent:
+	-- when the text survived it reports "no change" and we skip the tt:Show() width
+	-- recompute, so the AH case behaves exactly as before. Only an actual wipe costs
+	-- a re-layout, and there the host just rebuilt the whole tooltip anyway.
+	--
+	-- The memo is set only after a successful annotation (below) -- so a first hover
+	-- where GetItemInfo hasn't cached yet stays retryable -- and cleared when the
+	-- tooltip hides (OnHide hook below), so moving to another item re-scores.
+	local memo = tt.plbisAnnotation
+	if memo and memo.link == link and memo.text then
+		if setTopRight(tt, memo.text, memo.r, memo.g, memo.b) then
+			tt:Show()
+		end
+		return
+	end
 
 	local _, _, _, _, _, itemType, subType, _, equipLoc = GetItemInfo(link)
 	local slotIds = Slots.slotsFor(equipLoc)
@@ -240,8 +271,9 @@ local function annotate(tt)
 	if setTopRight(tt, text, r, g, b) then
 		tt:Show()   -- recompute width only when the annotation actually changed
 	end
-	-- Scored successfully: remember it so re-fires this mouseover are no-ops.
-	tt.plbisAnnotatedLink = link
+	-- Scored successfully: remember the composed annotation so re-fires this
+	-- mouseover re-apply it (idempotently) instead of re-scoring.
+	rememberAnnotation(tt, link, text, r, g, b)
 end
 
 -- Guard against re-entrancy from our own :Show()/SetText.
@@ -316,7 +348,7 @@ end
 -- (even of the same item) re-scores. Moving the cursor between items hides the
 -- tooltip in between, which is exactly the boundary we want.
 local function onTooltipHide(tt)
-	tt.plbisAnnotatedLink = nil
+	tt.plbisAnnotation = nil
 end
 
 GameTooltip:HookScript("OnTooltipSetItem", onTooltipSetItem)
