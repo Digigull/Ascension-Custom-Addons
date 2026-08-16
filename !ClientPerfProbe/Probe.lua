@@ -126,8 +126,9 @@ function Probe.buildMatrix()
     -- Input/display CVars that are CANDIDATE levers for the window-drag / mouse stall
     -- (sus=DRAG). REPORTED ONLY, never a recommendation: the owner A/B-tests them
     -- (toggle in Video > Display, re-capture the same drag, compare the DRAG spike) and
-    -- the data decides — measure-first (ground rule 1; README §2's killed pre-warm is the
-    -- cautionary tale). Names are PROBED across candidates, not asserted (ground rules
+    -- the data decides — measure-first (ground rule 1; every mitigation this tool has
+    -- shipped on a story rather than a capture has been killed by one). Names are
+    -- PROBED across candidates, not asserted (ground rules
     -- 2/5): the detail shows which CVar name actually matched on this client, so the
     -- owner's matrix confirms the real Ascension names instead of us hardcoding a story.
     -- reduceInputLag forces a per-frame GPU pipeline flush (latency vs frame stalls); the

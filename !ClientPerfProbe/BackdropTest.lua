@@ -14,9 +14,9 @@
         D = NO backdrop (a plain solid texture, the Details/WeakAuras-style bypass)
      If A/B/C spike but D does not, the default backdrop is the cause; whichever of
      B vs C spikes points at the border vs the tiled fill. The FIX that follows —
-     replace the heavy backdrop with a light one — is a real fix (eliminates the
-     cost), not a frontload (moves it). Read the drag spikes from the normal /cpp
-     log (sus=DRAG) and/or by feel, one frame at a time.
+     replace the heavy backdrop with a light one — eliminates the cost outright
+     rather than moving it elsewhere in the session. Read the drag spikes from the
+     normal /cpp log (sus=DRAG) and/or by feel, one frame at a time.
 
      WoW-facing; syntax-checked only. All CreateFrame/SetBackdrop calls are inside
      toggle()/build(), never at file scope.
