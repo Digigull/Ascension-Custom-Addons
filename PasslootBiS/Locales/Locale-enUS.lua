@@ -358,8 +358,8 @@ L["LootWindow_FontSize"] = "Font size"
 -- window, and anything longer wraps or clips.
 L["RollAdvisor_GearUpgrade"] = "Gear Upgrade"
 L["RollAdvisor_HighValue"] = "High Value"
--- Fake item name in the "Show Loot Advisor" preview popup.
-L["RollAdvisor_PreviewItem"] = "Test Item"
+-- The preview popup uses a REAL item (Thunderfury, id 19019) so it exercises the
+-- icon and tooltip path; its name comes from the client, not from here.
 
 -- The two rules a profile with no rules of its own starts with
 -- (Core/Constants.lua DefaultRules). Plain rule descriptions: they are copied

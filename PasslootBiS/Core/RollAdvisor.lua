@@ -391,10 +391,14 @@ local active  = {}   -- RollID -> frame currently showing
 
 -- Deliberately narrow: the popup interrupts a fight, so it says one thing in one
 -- glance. The user can stretch it from the corner grip and the size sticks.
-local DEFAULT_WIDTH, DEFAULT_HEIGHT = 220, 132
-local MIN_WIDTH, MIN_HEIGHT = 170, 112
+-- Height leaves room for a long item name to wrap beside the icon and still clear
+-- the countdown bar: the text block grows downward from the top while the bar and
+-- buttons are anchored up from the bottom, so too little height overlaps them.
+local DEFAULT_WIDTH, DEFAULT_HEIGHT = 220, 150
+local MIN_WIDTH, MIN_HEIGHT = 170, 120
 local MAX_WIDTH, MAX_HEIGHT = 600, 320
 local SLOT_GAP = 8          -- vertical space between stacked popups
+local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local BTN_HEIGHT = 22
 local BTN_BOTTOM = 16       -- clears the resize grip in the bottom-right corner
 
@@ -486,17 +490,50 @@ local function makeFrame()
     fr:StopMovingOrSizing()
     saveGeometry(fr)
   end)
+  -- Item icon, and the hover behaviour of a real loot roll button: the item
+  -- tooltip on mouseover, and modified-click to link it into chat or send it to
+  -- the dressing room. The tooltip comes from SetLootRollItem where possible —
+  -- that is the exact call Blizzard's GroupLootFrame makes, so it shows what the
+  -- stock roll window shows (including the red "can't use this" lines).
+  f.icon = CreateFrame("Button", nil, f)
+  f.icon:SetWidth(32)
+  f.icon:SetHeight(32)
+  f.icon:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -10)
+  f.icon:SetNormalTexture(FALLBACK_ICON)
+  local iconTex = f.icon:GetNormalTexture()
+  if iconTex then iconTex:SetTexCoord(0.07, 0.93, 0.07, 0.93) end   -- trim the stock border
+  f.icon:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+  f.icon:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  -- Reads f.rollID / f.itemLink / f.preview, which Show sets per roll: the frame
+  -- itself is pooled and reused, so nothing here may close over one roll's values.
+  f.icon:SetScript("OnEnter", function(btn)
+    GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+    local shown = false
+    if not f.preview and f.rollID and GameTooltip.SetLootRollItem then
+      shown = pcall(GameTooltip.SetLootRollItem, GameTooltip, f.rollID)
+    end
+    if not shown and f.itemLink then
+      shown = pcall(GameTooltip.SetHyperlink, GameTooltip, f.itemLink)
+    end
+    if shown then GameTooltip:Show() else GameTooltip:Hide() end
+  end)
+  f.icon:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  f.icon:SetScript("OnClick", function()
+    local handle = rawget(_G, "HandleModifiedItemClick")
+    if handle and f.itemLink then handle(f.itemLink) end
+  end)
+
   -- Verdict headline. Large and coloured; this is what you read.
   f.headline = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  f.headline:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -10)
+  f.headline:SetPoint("TOPLEFT", f.icon, "TOPRIGHT", 8, 0)
   f.headline:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -10)
-  f.headline:SetJustifyH("CENTER")
+  f.headline:SetJustifyH("LEFT")
 
   -- One supporting line: the item, plus the advisor's reason when there is one.
   f.item = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.item:SetPoint("TOPLEFT", f.headline, "BOTTOMLEFT", 0, -5)
-  f.item:SetPoint("TOPRIGHT", f.headline, "BOTTOMRIGHT", 0, -5)
-  f.item:SetJustifyH("CENTER")
+  f.item:SetPoint("TOPLEFT", f.headline, "BOTTOMLEFT", 0, -3)
+  f.item:SetPoint("TOPRIGHT", f.headline, "BOTTOMRIGHT", 0, -3)
+  f.item:SetJustifyH("LEFT")
 
   local function mkBtn(label)
     local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -560,6 +597,34 @@ local function applyHeadline(f, verdict)
   f.headline:SetTextColor(h.r, h.g, h.b)
 end
 
+-- The item's icon. GetLootRollItemInfo is asked FIRST for a live roll: it is the
+-- loot frame's own source and it answers on a first-see item, where GetItemInfo
+-- still returns nil until the client has cached it (Core/RollRetry.lua).
+local function resolveTexture(rollID, itemLink, isPreview)
+  if not isPreview and rollID then
+    local gi = rawget(_G, "GetLootRollItemInfo")
+    if gi then
+      local ok, texture = pcall(gi, rollID)
+      if ok and texture then return texture end
+    end
+  end
+  if itemLink and rawget(_G, "GetItemInfo") then
+    local ok, _, _, _, _, _, _, _, _, _, texture = pcall(GetItemInfo, itemLink)
+    if ok and texture then return texture end
+  end
+  return FALLBACK_ICON
+end
+
+-- Bind one roll's item to the pooled frame: icon, and the fields its permanently
+-- installed hover/click handlers read.
+local function applyItem(f, rollID, ctx, isPreview)
+  f.rollID = rollID
+  f.itemLink = ctx.itemLink
+  f.icon:SetNormalTexture(resolveTexture(rollID, ctx.itemLink, isPreview))
+  local tex = f.icon:GetNormalTexture()
+  if tex then tex:SetTexCoord(0.07, 0.93, 0.07, 0.93) end
+end
+
 -- Show a bounded-hold confirm for one roll. On a button click cast that choice;
 -- on timeout fall through to `fallbackMethod` (the rule-computed RollMethod, which
 -- may be nil = don't roll, exactly as PassLoot behaves today).
@@ -579,6 +644,7 @@ function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMet
   placeFrame(f, f.slot)
 
   applyHeadline(f, verdict)
+  applyItem(f, RollID, ctx, f.preview)
   local reason = verdict.reason
   f.item:SetText((ctx.itemLink or "?") .. (reason and ("\n|cff9d9d9d" .. reason .. "|r") or ""))
 
@@ -655,6 +721,25 @@ end
 local PREVIEW_ROLLID = -424242   -- can never collide with a live rollID
 local previewFlip = false        -- alternate the two headline styles per showing
 
+-- A real item, so the preview exercises the real icon and tooltip path rather
+-- than a placeholder: Thunderfury, Blessed Blade of the Windseeker.
+-- https://db.ascension.gg/?item=19019
+local PREVIEW_ITEM_ID = 19019
+local PREVIEW_ITEM_NAME = "Thunderfury, Blessed Blade of the Windseeker"
+
+-- The preview item's link. GetItemInfo returns nil until the client has cached
+-- the item, and asking is itself what starts the cache fill — so a first press on
+-- a cold cache falls back to a hand-built link (which still renders, and which
+-- SetHyperlink still resolves server-side), and a later press gets the real one.
+local function previewItemLink()
+  if rawget(_G, "GetItemInfo") then
+    local ok, _, link = pcall(GetItemInfo, PREVIEW_ITEM_ID)
+    if ok and link then return link end
+  end
+  return "|cffff8000|Hitem:" .. PREVIEW_ITEM_ID .. ":0:0:0:0:0:0:0:0|h[" ..
+    PREVIEW_ITEM_NAME .. "]|h|r"
+end
+
 function PasslootBiS:IsRollConfirmPreviewShown()
   return active[PREVIEW_ROLLID] ~= nil
 end
@@ -668,7 +753,7 @@ function PasslootBiS:ShowRollConfirmPreview()
     and { upgrade = true,  highValue = false, delta = 0.08, reason = "Upgrade +8%" }
     or  { upgrade = false, highValue = true,  delta = 0,    reason = "~250g -- worth Need" }
   local ctx = {
-    itemLink = "|cff0070dd[" .. L["RollAdvisor_PreviewItem"] .. "]|r",
+    itemLink = previewItemLink(),
     canNeed = true,
     canGreed = true,
   }
