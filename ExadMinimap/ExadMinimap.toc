@@ -1,0 +1,12 @@
+## Interface: 30300
+## Title: |cff009cffExadMinimap|r
+## Notes: Square minimap skin and minimap button collector, extracted from ExadTweaks.
+## Author: Exad
+## Version: 1.1
+## SavedVariablesPerCharacter: ExadMinimapDB
+## DefaultState: enabled
+
+core.lua
+minimap.lua
+buttons.lua
+options.lua
