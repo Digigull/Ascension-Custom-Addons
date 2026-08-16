@@ -21,9 +21,6 @@ local DEFAULTS = {
     thresholdMs = 50,     -- ~3 dropped frames at 60fps; tune from data
     capacity    = 200,    -- spike ring buffer size
     sampleSec   = 5,      -- Attrib interval (full addon scan is expensive)
-    prewarmOnLogin = false, -- PROTOTYPE: run the frontload pre-warm once at login
-                            -- (opt-in; default off so a normal session is never
-                            -- perturbed — measure-first, ground rule 1)
 }
 
 -- Sub-millisecond cooperating-handler slices are noise in a spike's cpu= field;
@@ -247,146 +244,6 @@ local function openExport(includeMatrix)
 end
 
 --------------------------------------------------------------------------------
--- frontload / pre-warm PROTOTYPE (README §7 / ROADMAP §1). The felt UI stutter is
--- deterministic engine FIRST-EXERCISE first-layout (~600-800ms per window's first
--- show/drag, warm across /reload, cold after restart). This pays that cost early,
--- on named non-protected windows, and self-measures via debugprofilestop so the
--- owner can compare the drag spike before/after (ground rule 1). The eligibility
--- policy is the PURE PreWarm.plan; only the Show/nudge/Hide is here.
-
--- Report a target frame's properties for PreWarm.plan. Feature-detects every method
--- (ground rule 2: IsProtected/IsMovable are standard 3.3.5 but not in the dumps) and
--- pcall-guards the reads so a hostile __index can't error the planner.
-local function inspectFrame(name)
-    local f = rawget(_G, name) or _G[name]
-    if type(f) ~= "table" then return { exists = false } end
-    local isFrame = type(f.Show) == "function" and type(f.Hide) == "function"
-    local function boolMethod(m)
-        if not (isFrame and type(f[m]) == "function") then return false end
-        local ok, v = pcall(f[m], f)
-        return ok and v and true or false
-    end
-    return {
-        exists    = true,
-        isFrame   = isFrame,
-        protected = boolMethod("IsProtected"),   -- taint / blocked-storm risk if warmed
-        shown     = boolMethod("IsShown"),
-        movable   = boolMethod("IsMovable"),
-    }
-end
-
--- Cross-frame SHAKE driver — the mechanism that actually reproduces the felt drag.
--- MEASURED (2026-08-14, FINDINGS): the drag first-layout is ONE-TIME per session, but a
--- move-and-restore inside a SINGLE frame nets zero and the engine coalesces it away (no
--- position change at frame-render → no relayout), so a one-shot nudge never trips it. The
--- stall only fires when the frame occupies DIFFERENT positions on CONSECUTIVE rendered
--- frames — a real drag. So we drive the frame through a short path over successive OnUpdate
--- ticks, then restore its exact anchor. Out-of-combat gated by the caller (SetPoint on a
--- protected frame would taint). The window visibly jitters for ~SHAKE_TICKS frames — that's
--- the point: the one-time cost is paid HERE (at login), where the user won't feel it, instead
--- of mid-play. StartMoving/StopMovingOrSizing is NOT used — it follows the cursor (no motion →
--- no move) and would need real mouse input; an explicit SetPoint path moves regardless.
-local SHAKE_TICKS = 14
-local SHAKE_PX = 40
-local SHAKE_PATTERN = {                        -- distinct offsets: every tick is a real move
-    { SHAKE_PX, 0 }, { SHAKE_PX, SHAKE_PX }, { 0, SHAKE_PX }, { -SHAKE_PX, SHAKE_PX },
-    { -SHAKE_PX, 0 }, { -SHAKE_PX, -SHAKE_PX }, { 0, -SHAKE_PX }, { SHAKE_PX, -SHAKE_PX },
-}
-local shakeDriver
-local shakeActive = {}
-
-local function stepShakes()
-    local still = {}
-    for _, s in ipairs(shakeActive) do
-        if s.tick < SHAKE_TICKS then
-            local off = SHAKE_PATTERN[(s.tick % #SHAKE_PATTERN) + 1]
-            pcall(function()
-                s.f:ClearAllPoints()
-                s.f:SetPoint(s.p, s.rel, s.rp, s.x + off[1], s.y + off[2])
-            end)
-            s.tick = s.tick + 1
-            still[#still + 1] = s
-        else                                    -- done: restore exact anchor + hide if we showed it
-            pcall(function()
-                s.f:ClearAllPoints()
-                s.f:SetPoint(s.p, s.rel, s.rp, s.x, s.y)
-                if not s.wasShown then s.f:Hide() end
-            end)
-        end
-    end
-    shakeActive = still
-    if #shakeActive == 0 and shakeDriver then shakeDriver:SetScript("OnUpdate", nil) end
-end
-
-local function enqueueShake(f, wasShown, p, rel, rp, x, y)
-    shakeActive[#shakeActive + 1] =
-        { f = f, wasShown = wasShown, p = p, rel = rel, rp = rp, x = x, y = y, tick = 0 }
-    if not shakeDriver then shakeDriver = CreateFrame("Frame", "ClientPerfProbePreWarmShaker") end
-    shakeDriver:SetScript("OnUpdate", stepShakes)
-end
-
--- Warm ONE frame: Show, then enqueue the cross-frame shake (which restores position +
--- visibility when it finishes). If the frame has no explicit anchor we can't move it
--- safely, so just restore visibility now. Guarded whole so an OnShow side effect or a
--- quirky frame degrades to a skip instead of erroring the run.
-local function warmFrame(f, wasShown)
-    return pcall(function()
-        f:Show()
-        local p, rel, rp, x, y
-        if type(f.GetPoint) == "function" then p, rel, rp, x, y = f:GetPoint(1) end
-        if p and type(x) == "number" and type(y) == "number"
-           and type(f.SetPoint) == "function" and type(f.ClearAllPoints) == "function" then
-            enqueueShake(f, wasShown, p, rel, rp, x, y)   -- defers restore + hide to the shaker
-        elseif not wasShown then
-            f:Hide()
-        end
-    end)
-end
-
--- Resolve the active target list (owner-persisted, else the curated default).
-local function prewarmTargets()
-    if db and type(db.settings.prewarmTargets) == "table" and #db.settings.prewarmTargets > 0 then
-        return db.settings.prewarmTargets
-    end
-    return (ns.PreWarm and ns.PreWarm.DEFAULT_TARGETS) or {}
-end
-
--- Execute a pre-warm pass. Returns (results, err). `results` is one entry per
--- target: { name, warmed=true, ms=<cost> } or { name, skipped=<reason> }. Gated
--- OUT of combat (warming taints frames; a protected poke in lockdown is the blocked
--- storm) — returns nil,"combat" if in combat. The `PreWarm:<name>` P^ row records only
--- the cheap synchronous Show+enqueue cost; the actual one-time first-layout stall lands
--- ASYNCHRONOUSLY during the cross-frame shake and is caught by the normal spike logger
--- (a `sus=DRAG` spike at prewarm time) — that moved-to-login spike is the real before/after
--- signal (ground rule 1), not the P^ number.
-local function doPreWarm(targets)
-    if not ns.PreWarm then return nil, "unavailable" end
-    if (type(InCombatLockdown) == "function") and InCombatLockdown() then
-        return nil, "combat"
-    end
-    local plan = ns.PreWarm.plan(targets, inspectFrame)
-    local results = {}
-    for _, step in ipairs(plan) do
-        if step.action == "warm" then
-            local f = rawget(_G, step.name) or _G[step.name]
-            local t0 = safe(debugprofilestop) or 0
-            local ok = warmFrame(f, step.wasShown)
-            local ms = (safe(debugprofilestop) or 0) - t0
-            if ok then
-                if meter then meter:add("PreWarm:" .. step.name, ms, 1) end
-                results[#results + 1] = { name = step.name, warmed = true, ms = ms }
-            else
-                results[#results + 1] = { name = step.name, skipped = "error" }
-            end
-        else
-            results[#results + 1] = { name = step.name, skipped = step.reason }
-        end
-    end
-    return results
-end
-Core.prewarm = doPreWarm   -- exposed for the offline sim
-
---------------------------------------------------------------------------------
 -- live inputs for the minimap storm notifier + the UI window. These are the
 -- SAME live objects the report is built from — the UI formats, never re-gathers,
 -- so it adds nothing to the driver's render hot path (README §4).
@@ -603,81 +460,12 @@ local function usage()
         tostring(db and db.settings.thresholdMs) .. "ms)")
     msg("  |cffffff00/cpp gc|r — force one full GC and measure the pause (sizes cause B)")
     msg("  |cffffff00/cpp mem|r — bounded _G walk: rank the top memory globals (on-contract memtables)")
-    msg("  |cffffff00/cpp prewarm|r — frontload PROTOTYPE: warm windows now (|cffffff00list|r/|cffffff00add <F>|r/|cffffff00on|r/|cffffff00off|r)")
     msg("  |cffffff00/cpp backdrop <Frame>|r — read a window's backdrop (compare a laggy one vs Details/WA)")
     msg("  |cffffff00/cpp backdroptest|r — spawn A/B/C/D drag frames to isolate the backdrop as the stutter cause")
     msg("  |cffffff00/cpp constructtest|r — E/F/G/H drag frames (backdrop constant) to isolate the dropdown children")
     msg("  |cffffff00/cpp save|r — stamp report into SavedVariables, then /reload + attach the file")
     msg("  |cffffff00/cpp clear|r — wipe captured spikes + counters (|cffffff00/cpp clear <min>|r trims recent spikes only)")
 end
-
--- Run a pre-warm pass now and report each window's cost/skip in chat. The felt
--- payoff (the drag spike moving/vanishing) is read from the normal /cpp spike log,
--- not here — this just confirms the warm ran and sizes its cost.
-local function runPreWarmNow()
-    local results, err = doPreWarm(prewarmTargets())
-    if not results then
-        if err == "combat" then
-            msg("|cffff4444can't pre-warm in combat|r — showing frames taints them; try again out of combat.")
-        else
-            msg("|cffff4444pre-warm unavailable|r on this client.")
-        end
-        return
-    end
-    local t = ns.PreWarm.tally(results)
-    msg(("frontload: warmed |cff44ff44%d|r window(s), skipped %d |cff888888(prototype)|r"):format(
-        t.warmed, t.skipped))
-    for _, r in ipairs(results) do
-        if r.warmed then
-            msg(("  |cff44ff44warmed|r %s |cffffff00%.1f ms|r"):format(r.name, r.ms or 0))
-        else
-            msg(("  |cff888888skip|r %s |cffff8800(%s)|r"):format(r.name, tostring(r.skipped)))
-        end
-    end
-    if t.warmed > 0 then
-        msg("now drag those windows and run |cffffff00/cpp|r — the first-drag spike should be gone if the warm paid the cost.")
-    end
-    openExport(false)   -- surface the PreWarm:<name> P^ rows in the copyable window
-end
-
--- List the current targets and whether each resolves right now (so the owner can
--- fix names before a capture). Uses the same inspect/plan the run uses.
-local function printPreWarmList()
-    local targets = prewarmTargets()
-    msg(("frontload targets (%d)%s:"):format(#targets,
-        (db and db.settings.prewarmOnLogin) and " — |cff44ff44auto on login|r" or " — auto off"))
-    local plan = ns.PreWarm.plan(targets, inspectFrame)
-    if #plan == 0 then
-        msg("  |cff888888(none — add one with /cpp prewarm add <FrameName>)|r")
-        return
-    end
-    for _, s in ipairs(plan) do
-        if s.action == "warm" then
-            msg(("  |cff44ff44ready|r %s%s"):format(s.name, s.wasShown and " |cff888888(open)|r" or ""))
-        else
-            msg(("  |cffff8800skip|r %s (%s)"):format(s.name, tostring(s.reason)))
-        end
-    end
-    msg("names are GLOBAL frame names — find one with |cffffff00/framestack|r (hover a window).")
-end
-
--- Login auto-run (opt-in). Fires once per session at PLAYER_ENTERING_WORLD when
--- db.settings.prewarmOnLogin is set — pays the first-layout cost during/after the
--- loading screen. Quiet (one summary line): login is not the moment for a wall of
--- text. The warm cost intentionally shows as a spike near login in the ring — that
--- IS the point (cost moved off the play path); compare to a no-prewarm session.
-local prewarmedThisSession
-local function maybePreWarmOnLogin()
-    if prewarmedThisSession then return end
-    if not (db and db.settings.prewarmOnLogin) then return end
-    prewarmedThisSession = true
-    local results = doPreWarm(prewarmTargets())
-    if results then
-        local t = ns.PreWarm.tally(results)
-        msg(("frontload on login: warmed |cff44ff44%d|r window(s) |cff888888(prototype; /cpp prewarm list)|r"):format(t.warmed))
-    end
-end
-Core.maybePreWarmOnLogin = maybePreWarmOnLogin   -- exposed for the offline sim
 
 local function handler(input)
     input = (input or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -772,36 +560,6 @@ local function handler(input)
             end
             openExport(false)   -- surface the ranked WM/W rows in the copyable window
         end
-    elseif cmd == "prewarm" or cmd == "frontload" then
-        if not ns.PreWarm then msg("pre-warm module not available."); return end
-        local sub, arg2 = rest:match("^(%S*)%s*(.*)$")
-        sub = (sub or ""):lower()
-        if sub == "on" or sub == "off" then
-            db.settings.prewarmOnLogin = (sub == "on")
-            msg("frontload on login " ..
-                (db.settings.prewarmOnLogin and "|cff44ff44ENABLED|r" or "|cffff8800disabled|r") ..
-                ". |cff888888(prototype — self-measure the drag spike before/after; ground rule 1)|r")
-        elseif sub == "add" then
-            if arg2 == nil or arg2 == "" then
-                msg("usage: /cpp prewarm add <GlobalFrameName>")
-                return
-            end
-            if type(db.settings.prewarmTargets) ~= "table" then
-                db.settings.prewarmTargets = {}
-                for _, n in ipairs((ns.PreWarm and ns.PreWarm.DEFAULT_TARGETS) or {}) do
-                    db.settings.prewarmTargets[#db.settings.prewarmTargets + 1] = n
-                end
-            end
-            db.settings.prewarmTargets[#db.settings.prewarmTargets + 1] = arg2
-            msg(("added |cffffff00%s|r to the frontload list (%d targets). |cffffff00/cpp prewarm list|r to check."):format(
-                arg2, #db.settings.prewarmTargets))
-        elseif sub == "list" then
-            printPreWarmList()
-        elseif sub == "" or sub == "run" or sub == "now" then
-            runPreWarmNow()
-        else
-            msg("usage: /cpp prewarm [run|list|add <F>|on|off]")
-        end
     elseif cmd == "backdrop" then
         if not ns.BackdropTest then msg("backdrop inspector unavailable."); return end
         if rest == "" then
@@ -878,6 +636,11 @@ local function initDB()
     for k, v in pairs(DEFAULTS) do
         if db.settings[k] == nil then db.settings[k] = v end
     end
+    -- Drop settings left behind by the removed frontload/pre-warm prototype so an
+    -- existing SavedVariables file doesn't carry dead keys forever. Cheap and
+    -- idempotent; delete this once no live DB can still hold them.
+    db.settings.prewarmOnLogin = nil
+    db.settings.prewarmTargets = nil
     -- Stamp this session's load time. The spike ring persists across /reload (ground
     -- rule 6: so /cpp save can flush it to disk), which means a capture taken without
     -- a /cpp clear mixes THIS session's spikes with restored ones from a prior play
@@ -1019,9 +782,6 @@ boot:SetScript("OnEvent", function(self, event, name)
         markMilestone("PLAYER_LOGIN")
     elseif event == "PLAYER_ENTERING_WORLD" then
         markMilestone("PLAYER_ENTERING_WORLD")
-        -- frontload PROTOTYPE: pay the first-layout cost now, during/after the
-        -- loading screen, if the owner opted in (default off). See maybePreWarmOnLogin.
-        maybePreWarmOnLogin()
         self:UnregisterEvent("ADDON_LOADED")   -- close the initial-load window
         self:UnregisterEvent("PLAYER_ENTERING_WORLD")
     end

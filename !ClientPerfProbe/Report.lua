@@ -244,8 +244,8 @@ function Report.classify(spike)
     local code = "?"
 
     -- E/A: a zone/loading transition in the recent event window -> first-exercise
-    -- warm-up or first-see I/O (README §3 A/E). Checked first: these are the
-    -- login/zone-in spikes that frontloading actually targets.
+    -- warm-up or first-see I/O (README §3 A/E). Checked first: a zone-in owns its
+    -- frame outright, so it must win over the weaker heap/rate signals below.
     local zoneHit
     if type(spike.events) == "table" then
         for _, e in ipairs(spike.events) do
@@ -441,7 +441,7 @@ Report.GLOSSARY = {
     { group = "What caused a spike", code = "ZONE",
       term = "Zoning in",
       plain = "You were entering or loading a new area. The first frames after a loading screen do a lot of one-time setup, so a hitch there is expected and happens once per zone-in.",
-      tech = "From recent event names: PLAYER_ENTERING_WORLD, the LOADING_SCREEN events, ZONE_CHANGED*, NEW_WMO_CHUNK. Highest-priority tag - these are the load spikes a pre-warm fix would target." },
+      tech = "From recent event names: PLAYER_ENTERING_WORLD, the LOADING_SCREEN events, ZONE_CHANGED*, NEW_WMO_CHUNK. Highest-priority tag - a zone-in owns its frame, so it wins over the weaker heap/rate signals." },
     { group = "What caused a spike", code = "OPEN:vendor",
       term = "First-open (vendor / loot / ...)",
       plain = "The first time you open a particular window this session - a vendor, a loot window, NPC chat, the map - the game and your addons build it for the first time, which costs a moment. Open it again and it is cheap. A one-time warm-up cost.",

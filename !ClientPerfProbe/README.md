@@ -49,7 +49,6 @@ addon count means it got there early.
 | `/cpp gc` | Force one full GC and measure the pause |
 | `/cpp mem` | Bounded `_G` walk ranking the largest memory globals |
 | `/cpp profile on\|off` | Arm/disarm `scriptProfile` (reloads the UI) |
-| `/cpp prewarm` | Frontload prototype — warm windows now (`list` / `add <Frame>` / `on` / `off`) |
 | `/cpp backdrop <Frame>` | Read a window's backdrop, to compare a laggy one against a smooth one |
 | `/cpp backdroptest` | Spawn A/B/C/D drag frames to isolate a backdrop as the stutter cause |
 | `/cpp constructtest` | E/F/G/H drag frames (backdrop constant) to isolate dropdown children |
@@ -83,5 +82,6 @@ marked `old=1` so a report is never misread.
 - `scriptProfile` is locked from Lua on Ascension — the client resets it to 0 on
   load. The addon detects this once, records it, and commits to the memory-delta
   and event-rate fallbacks rather than retrying. That's a finding, not a failure.
-- This is a **measurement** tool. The pre-warm feature is an explicit prototype
-  and is off by default, so a normal session is never perturbed. Measure first.
+- This is a **measurement** tool: nothing here changes client behaviour on its
+  own, so a normal session is never perturbed. Measure first, then fix in the
+  addon the capture names.
