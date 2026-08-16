@@ -60,9 +60,9 @@ there's no clean talent-to-spec identity to read in-game.
 Copy the `PassLootBiS_Scanner` folder into `Interface\AddOns`. LibStub and
 LibScaledStats-1.0 are bundled.
 
-Optional but recommended: `PasslootBiS` (roll-advisor integration),
-`Auctionator-Finder-Ascension` (gold-value flag), `!ClientPerfProbe` (cooperative
-CPU attribution). All are read through guarded global checks — none is required.
+Optional but recommended: `PasslootBiS` (roll-advisor integration) and
+`Auctionator-Finder-Ascension` (gold-value flag). Both are read through guarded
+global checks — neither is required.
 
 **Set your spec before first use**; nothing is scored until one is picked.
 

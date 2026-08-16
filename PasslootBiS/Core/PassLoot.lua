@@ -1563,20 +1563,6 @@ function PasslootBiS:OnEnable()
 	-- events that require the event details and also fire with BAG_UPDATE
 	C_Hook:Register(self, "BAG_ITEM_REMOVED, BAG_ITEM_COUNT_CHANGED")
 
-	-- Opt into ClientPerfProbe per-handler timing when that measuring addon is
-	-- present (github.com/Digigull/Ascension-Stutter). Fully guarded and
-	-- pass-through: with the probe absent, ClientPerfProbe is nil and nothing
-	-- changes. Wrapping the addon-object methods here shadows them for every
-	-- caller (all go through PasslootBiS:Method), so the loot-roll + item-eval
-	-- cost surfaces as P^ rows in /cpp. Inclusive wall time via debugprofilestop.
-	if ClientPerfProbe then
-		local W = ClientPerfProbe.Wrap
-		self.START_LOOT_ROLL = W("PLBiS:START_LOOT_ROLL", self.START_LOOT_ROLL)
-		self.EvaluateItem    = W("PLBiS:EvaluateItem",    self.EvaluateItem)
-		self.InitItem        = W("PLBiS:InitItem",        self.InitItem)
-		self.UpdateBags      = W("PLBiS:UpdateBags",      self.UpdateBags)
-	end
-
 	self:SetupModulesOptionsTables() -- Creates Module header frames and lays them out in the scroll frame
 	self:OnProfileChanged()
 	self.LastRolls = {}           -- Last 10 rolls.

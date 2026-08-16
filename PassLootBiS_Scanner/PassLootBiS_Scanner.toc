@@ -5,7 +5,7 @@
 ## Version: 0.1.0-alpha
 ## SavedVariables: PassLootBiS_ScannerDB
 ## SavedVariablesPerCharacter: PassLootBiS_ScannerCharDB
-## OptionalDeps: PasslootBiS, Auctionator-Finder-Ascension, Auctionator, ClientPerfProbe
+## OptionalDeps: PasslootBiS, Auctionator-Finder-Ascension, Auctionator
 ## X-Category: Loot
 ## X-Website: https://github.com/Digigull/BiS-Scanner
 
