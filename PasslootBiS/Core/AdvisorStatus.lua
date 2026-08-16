@@ -50,6 +50,9 @@ local SCANNER_ADVISOR = "PLScanner"
 -- anything, which is what lets the panel tell "not installed" apart from
 -- "installed but switched off in the AddOns list" and from "loaded but silent".
 local SCANNER_ADDON = "PassLootBiS_Scanner"
+-- Shared by the two stacked buttons at the foot of the panel and by the height
+-- arithmetic in RefreshAdvisorStatus, which has to add them back by hand.
+local BUTTON_HEIGHT = 21
 
 --=============================================================================
 -- 1. Reading the scanner's state
@@ -96,6 +99,24 @@ local function scannerAPI(HostAPI)
 	if (type(Scanner) == "table" and type(Scanner.API) == "table") then
 		return Scanner.API
 	end
+	return nil
+end
+
+-- The scanner's Options module and the function to open it, or nil. This one
+-- genuinely needs the published namespace: the advisor registry only ever holds
+-- the API table, which carries the verdict/status functions and no UI at all.
+--
+-- Show is preferred over Toggle and that is not a detail. The window sits on LOW
+-- strata, so it renders UNDER the Interface Options panel: open it from the
+-- minimap, leave it up, come here and click the cog, and Toggle would HIDE the
+-- window you were asking to see — indistinguishable from a dead button. A button
+-- that says "settings" must only ever open them.
+local function scannerOptions()
+	local Scanner = rawget(_G, "PLBiSScanner")
+	local Options = (type(Scanner) == "table") and Scanner.Options or nil
+	if (type(Options) ~= "table") then return nil end
+	if (type(Options.Show) == "function") then return Options, Options.Show end
+	if (type(Options.Toggle) == "function") then return Options, Options.Toggle end
 	return nil
 end
 
@@ -265,7 +286,57 @@ function PasslootBiS:GetAdvisorStatus()
 		end
 	end
 
+	-- Each capability row carries a checkbox that switches that advice source off
+	-- for the loot advisor (Core/RollAdvisor.lua ApplySources). A switched-off
+	-- source OVERRIDES its readiness line: a green "Ready" beside an unticked box
+	-- reads as a contradiction. What the row would otherwise say moves to the tip.
+	local function applyToggle(Row, Key)
+		Row.Source = Key
+		Row.Enabled = (not API or not API.IsSourceEnabled) or API:IsSourceEnabled(Key)
+		if (not Row.Enabled) then
+			local Underlying = Row.Text
+			Row.Color, Row.Text = self.FontGray, L["AdvisorStatus_SourceOff"]
+			Row.Tip = {
+				Row.Label,
+				L["AdvisorStatus_SourceOff_Tip"],
+				string.format(L["AdvisorStatus_SourceOff_State"], Underlying),
+			}
+		end
+	end
+	applyToggle(Gear, "gear")
+	applyToggle(Value, "value")
+
+	-- Row 1 gets the shortcut to the scanner's own settings window instead. Offered
+	-- only when that window actually exists: an older scanner, or one loaded far
+	-- enough to register but not to build its UI, would give a button that does
+	-- nothing but apologise.
+	Link.OpensScanner = scannerOptions() ~= nil
+
 	return { Link, Gear, Value }
+end
+
+-- Open the scanner's settings window — the same one its minimap button opens.
+-- Reached through the published namespace; the advisor registry only ever carries
+-- the API table, which has no UI on it. Returns false if there is nothing to open.
+function PasslootBiS:OpenScannerOptions()
+	local Options, Open = scannerOptions()
+	if (not Options) then
+		self:Print(L["AdvisorStatus_OpenScannerFailed"])
+		return false
+	end
+	-- The scanner's window is on LOW strata, so it would open BEHIND the Interface
+	-- Options panel and look like nothing happened. Close the panel first.
+	if (rawget(_G, "InterfaceOptionsFrame") and InterfaceOptionsFrame:IsShown()) then
+		InterfaceOptionsFrame:Hide()
+	end
+	-- pcall so a companion addon's error can't break this panel — but REPORT it.
+	-- Swallowing it silently is what made the first version of this button
+	-- indistinguishable from one that was never wired up.
+	local Ok, Err = pcall(Open)
+	if (not Ok) then
+		self:Print(L["AdvisorStatus_OpenScannerFailed"] .. " (" .. tostring(Err) .. ")")
+	end
+	return Ok
 end
 
 --=============================================================================
@@ -350,6 +421,53 @@ function PasslootBiS:Create_AdvisorStatusFrame()
 		end)
 		Row.Hit:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+		-- Row controls sit at the right end of the LABEL line, overlapping nothing:
+		-- the labels are two short words and the column has room for a 16px control
+		-- beside them. (A much longer translated label could crowd it.)
+		if (Index == 1) then
+			-- Shortcut to the scanner's settings window, the one its minimap button
+			-- opens. Hidden entirely when there is no scanner to open.
+			Row.Open = CreateFrame("Button", nil, Frame)
+			Row.Open:SetWidth(16)
+			Row.Open:SetHeight(16)
+			Row.Open:SetPoint("TOPRIGHT", Row.Label, "TOPRIGHT", 0, 2)
+			Row.Open:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
+			Row.Open:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+			Row.Open:SetScript("OnClick", function() self:OpenScannerOptions() end)
+			Row.Open:SetScript("OnEnter", function()
+				self:ShowTooltip(L["AdvisorStatus_OpenScanner"], L["AdvisorStatus_OpenScanner_Tip"])
+			end)
+			Row.Open:SetScript("OnLeave", function() GameTooltip:Hide() end)
+			Row.Open:Hide()
+		else
+			-- Switches this advice source off for the loot advisor. On by default.
+			Row.Check = self:Create_CheckBox()
+			Row.Check:SetParent(Frame)
+			Row.Check:SetPoint("TOPRIGHT", Row.Label, "TOPRIGHT", 2, 3)
+			-- Create_CheckBox widens the hit rect 30px to the right for a text label
+			-- it does not have here; left as-is it would eat clicks past the panel.
+			Row.Check:SetHitRectInsets(0, 0, 0, 0)
+			Row.Check:SetScript("OnClick", function(check)
+				if (Row.Source and self.API and self.API.SetSourceEnabled) then
+					self.API:SetSourceEnabled(Row.Source, check:GetChecked() and true or false)
+				end
+				self:RefreshAdvisorStatus()
+			end)
+			Row.Check:SetScript("OnEnter", function()
+				self:ShowTooltip(L["AdvisorStatus_UseSource"], L["AdvisorStatus_UseSource_Tip"])
+			end)
+			Row.Check:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		end
+
+		-- Row.Hit spans the whole row INCLUDING the control, and a mouse-enabled
+		-- frame eats clicks meant for anything at or below its level. Both are
+		-- children of the same parent, so their default levels are identical and
+		-- which one wins is left to creation order — lift the control clear of it
+		-- explicitly rather than relying on that.
+		local Lift = Row.Hit:GetFrameLevel() + 2
+		if (Row.Open) then Row.Open:SetFrameLevel(Lift) end
+		if (Row.Check) then Row.Check:SetFrameLevel(Lift) end
+
 		Frame.Rows[Index] = Row
 		Anchor = Row.Value
 	end
@@ -359,17 +477,54 @@ function PasslootBiS:Create_AdvisorStatusFrame()
 	-- finishing an AH scan), so a timer would spend all day re-reading a state
 	-- nobody changed. Opening the page still refreshes for free via OnShow; this
 	-- button covers the rest.
+	-- UIPanelButtonTemplate labels in GameFontNormal, which overflows a button this
+	-- narrow. The small face fits "Show Loot Advisor" inside the column.
+	local function shrinkLabel(Button)
+		local FontString = Button.GetFontString and Button:GetFontString()
+		if (FontString) then
+			FontString:SetFontObject("GameFontNormalSmall")
+		end
+	end
+
 	Frame.Refresh = CreateFrame("Button", nil, Frame, "UIPanelButtonTemplate")
 	Frame.Refresh:SetPoint("TOPLEFT", Anchor, "BOTTOMLEFT", 0, -8)
 	Frame.Refresh:SetPoint("TOPRIGHT", Anchor, "BOTTOMRIGHT", 0, -8)
-	Frame.Refresh:SetHeight(21)
+	Frame.Refresh:SetHeight(BUTTON_HEIGHT)
 	Frame.Refresh:SetText(L["AdvisorStatus_Refresh"])
+	shrinkLabel(Frame.Refresh)
 	Frame.Refresh:SetScript("OnClick", function() self:RefreshAdvisorStatus() end)
 	Frame.Refresh:SetScript("OnEnter",
 		function() self:ShowTooltip(L["AdvisorStatus_Refresh"], L["AdvisorStatus_Refresh_Tip"]) end)
 	Frame.Refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-	Frame:SetScript("OnShow", function() self:RefreshAdvisorStatus() end)
+	-- Pops the real held-confirm window on a fake roll so it can be dragged and
+	-- resized out of combat (Core/RollAdvisor.lua). Clicking it again dismisses the
+	-- preview, but the LABEL never changes: a button whose text rewrites itself on
+	-- press reads as the panel having changed state, when all that happened is a
+	-- test window opened somewhere else on the screen.
+	Frame.Preview = CreateFrame("Button", nil, Frame, "UIPanelButtonTemplate")
+	Frame.Preview:SetPoint("TOPLEFT", Frame.Refresh, "BOTTOMLEFT", 0, -4)
+	Frame.Preview:SetPoint("TOPRIGHT", Frame.Refresh, "BOTTOMRIGHT", 0, -4)
+	Frame.Preview:SetHeight(BUTTON_HEIGHT)
+	Frame.Preview:SetText(L["AdvisorStatus_ShowAdvisor"])
+	shrinkLabel(Frame.Preview)
+	Frame.Preview:SetScript("OnClick", function()
+		self:ToggleRollConfirmPreview()
+		self:RefreshAdvisorStatus()
+	end)
+	Frame.Preview:SetScript("OnEnter",
+		function() self:ShowTooltip(L["AdvisorStatus_ShowAdvisor"], L["AdvisorStatus_ShowAdvisor_Tip"]) end)
+	Frame.Preview:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+	Frame:SetScript("OnShow", function()
+		self:RefreshAdvisorStatus()
+		-- Opening this page is the earliest reliable warning that the preview button
+		-- might be pressed. Warming the item cache now means its icon is ready when
+		-- it is (Core/RollAdvisor.lua explains why the first query can never be).
+		if (self.WarmRollConfirmPreview) then
+			self:WarmRollConfirmPreview()
+		end
+	end)
 
 	return Frame
 end
@@ -388,15 +543,26 @@ function PasslootBiS:RefreshAdvisorStatus()
 			Row.Label:SetText(Info.Label)
 			Row.Value:SetText((Info.Color or "") .. Info.Text .. "|r")
 			Row.Tip = Info.Tip
+			Row.Source = Info.Source
 			Row.Label:Show()
 			Row.Value:Show()
+			if (Row.Check) then
+				Row.Check:SetChecked(Info.Enabled and true or false)
+			end
+			if (Row.Open) then
+				-- Only offer the shortcut when there is a window behind it.
+				if (Info.OpensScanner) then Row.Open:Show() else Row.Open:Hide() end
+			end
 			Bottom = Bottom + 8 + stringHeight(Row.Label) + 1 + stringHeight(Row.Value)
 		else
 			Row.Label:Hide()
 			Row.Value:Hide()
 			Row.Tip = nil
+			if (Row.Check) then Row.Check:Hide() end
+			if (Row.Open) then Row.Open:Hide() end
 		end
 	end
-	-- + the Refresh button's own gap and height.
-	Frame:SetHeight(Bottom + 8 + 21 + 12)
+
+	-- + both buttons, their gaps, and the bottom margin.
+	Frame:SetHeight(Bottom + 8 + BUTTON_HEIGHT + 4 + BUTTON_HEIGHT + 12)
 end

@@ -353,6 +353,14 @@ L["LootWindow_NeedStreak"] = "%s has needed %d times consecutively"
 L["LootWindow_NeedTotal"] = "%s has needed %d times total"
 L["LootWindow_FontSize"] = "Font size"
 
+-- Loot advisor popup (Core/RollAdvisor.lua). The headline is the whole message,
+-- so keep it to two words: it is set in a large font in a deliberately narrow
+-- window, and anything longer wraps or clips.
+L["RollAdvisor_GearUpgrade"] = "Gear Upgrade"
+L["RollAdvisor_HighValue"] = "High Value"
+-- The preview popup uses a REAL item (Thunderfury, id 19019) so it exercises the
+-- icon and tooltip path; its name comes from the client, not from here.
+
 -- The two rules a profile with no rules of its own starts with
 -- (Core/Constants.lua DefaultRules). Plain rule descriptions: they are copied
 -- into the profile once and are editable from the rules page afterwards.
@@ -370,6 +378,20 @@ L["AdvisorStatus_NoScanner_Tip"] = "Needs the PassLootBiS Scanner addon, which i
 L["AdvisorStatus_NoStatus_Tip"] = "The scanner is loaded but did not report its state. It is probably an older build; /plbisscan status still works."
 L["AdvisorStatus_Refresh"] = "Refresh"
 L["AdvisorStatus_Refresh_Tip"] = "Re-check the scanner. Nothing here is polled, so use this after loading the scanner, picking a spec, or finishing an Auction House scan."
+-- Per-source checkboxes on the Gear advice / High value rows.
+L["AdvisorStatus_UseSource"] = "Use this advice"
+L["AdvisorStatus_UseSource_Tip"] = "Tick to let the loot advisor prompt on this kind of find. Unticked, it is ignored and your rules roll as usual. Both are on by default."
+L["AdvisorStatus_SourceOff"] = "Off"
+L["AdvisorStatus_SourceOff_Tip"] = "Switched off: the loot advisor will not prompt on this."
+L["AdvisorStatus_SourceOff_State"] = "Would otherwise be: %s"
+-- Shortcut icon on the BiS Scanner row.
+L["AdvisorStatus_OpenScanner"] = "Scanner settings"
+L["AdvisorStatus_OpenScanner_Tip"] = "Open the BiS Scanner's settings window, the same one its minimap button opens. This closes the Interface panel so the window is not hidden behind it."
+L["AdvisorStatus_OpenScannerFailed"] = "Could not open the BiS Scanner settings window."
+-- "Show Loot Advisor" preview button.
+-- Label stays put when the preview is up; see the note in Core/AdvisorStatus.lua.
+L["AdvisorStatus_ShowAdvisor"] = "Show Advisor"
+L["AdvisorStatus_ShowAdvisor_Tip"] = "Pop a test roll prompt so you can drag it where you want it and stretch it from the bottom-right corner. Position and size are remembered. Let the timer run out, pick a button, or click this again to dismiss it. Nothing is rolled."
 L["AdvisorStatus_ScanningOff"] = "Scanning off"
 L["AdvisorStatus_ScanningOff_Tip"] = "The scanner is switched off. Turn it back on with /plbisscan on."
 -- Row 1: the PassLoot <-> Scanner link.
