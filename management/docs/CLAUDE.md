@@ -113,7 +113,7 @@ a 1px `WHITE8X8` border, `SetBackdropColor(0.05, 0.05, 0.07, 0.95)`,
 | `!ClientPerfProbe` | 4 spaces | The measurement addon. `darkBackdrop()` in `UI.lua` is its house helper. |
 | `AscensionHonorTracker` | 4 spaces | Small. Panel attaches to the character panel; strata matches it. |
 | `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. Vendor pricing: `management/addons/auctionator/VENDOR-PRICE-RESEARCH.md` — read before touching the price estimator or the shipped seed. |
-| `PasslootBiS` | tabs | Ace3. Load order in `Core/Core.xml`; `PassLoot.lua` loads first, so shared helpers go there. Proficiency-driven rule generation: `management/addons/passlootbis/PROFICIENCY-RULES.md` — read before touching the proficiency probes or the rules they emit. |
+| `PasslootBiS` | tabs | Ace3. Load order in `Core/Core.xml`; `PassLoot.lua` loads first, so shared helpers go there. |
 | `PassLootBiS_Scanner` | tabs | Load order in the `.toc`; `Core/UI.lua` loads before its consumers. Files guard on `rawget(_G, "CreateFrame")` so they stay loadable under bare lua5.1 — **preserve that**, it is what makes helpers testable offline. |
 
 The two PassLoot addons are a designed pair (Scanner advises, PassLoot rolls). Changes to
