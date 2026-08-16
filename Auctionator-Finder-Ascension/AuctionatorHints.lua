@@ -1458,6 +1458,13 @@ local function Atr_VendorRecordSale (ps, bprice, bqty)
 		rec.seed = nil;					-- promoted: a real sale outranks the shipped guess
 		local smp = { id=ps.itemID, il=ps.ilvl, rq=ps.req, bil=ps.baseIlvl, brq=ps.baseReq, bp=ps.basePrice, qual=ps.qual, cls=ps.cls, sub=ps.sub, slot=ps.slot, p=rec.p, q=ps.count };
 		smp.pp = pp; smp.pt = pt;		-- what the predictor said, and which tier said it
+		-- Seller level.  Not part of the tuple key, and deliberately so: the
+		-- premise is that price is a function of (itemID, ilvl, req) alone.  But
+		-- that is the premise, not a proven fact, and without this field nothing
+		-- in the record could test it -- the same tuple sold by a level 39 and a
+		-- level 60 produced two identical rows.  When x/sx fires, this is the
+		-- first thing to check.  Log-only: the log never ships in the seed.
+		smp.lv = UnitLevel ("player");
 
 		-- SELF-HEALING TRACK CORRECTION: remember the highest multiplier this
 		-- item has ever actually been seen to reach, as a floor on its cap.

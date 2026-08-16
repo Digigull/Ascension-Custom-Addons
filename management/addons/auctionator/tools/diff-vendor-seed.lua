@@ -381,6 +381,28 @@ for n = 1, math.min (#confirmConflict, opt.all and #confirmConflict or opt.sampl
 end
 io.write (string.format ("   seed-tier accuracy (pt=seed)    %s\n", tierLine ("seed")))
 io.write (string.format ("   estimator fallback (pt=est)     %s\n", tierLine ("est")))
+
+-- "No conflicts" is only evidence against a level-dependent price if the sales
+-- behind it actually came from characters at different levels.  A dump whose
+-- log sits at a single level has not tested the hypothesis at all, however
+-- clean its conflict counters look.
+local lvMin, lvMax, lvRows = nil, nil, 0
+for _, e in ipairs (learned.log or {}) do
+	if (type (e.lv) == "number") then
+		lvRows = lvRows + 1
+		if (lvMin == nil or e.lv < lvMin) then lvMin = e.lv end
+		if (lvMax == nil or e.lv > lvMax) then lvMax = e.lv end
+	end
+end
+local lvNote
+if (lvRows == 0) then
+	lvNote = "not recorded (dump predates the lv field) -- conflict counts cannot speak to seller level"
+elseif (lvMin == lvMax) then
+	lvNote = string.format ("%d row(s), all at level %d -- single level, hypothesis untested", lvRows, lvMin)
+else
+	lvNote = string.format ("%d row(s), levels %d-%d", lvRows, lvMin, lvMax)
+end
+io.write (string.format ("   seller level spread             %s\n", lvNote))
 io.write (string.format ("   ilvl monotonicity               %d item(s) with >1 tuple, %d inversion(s)\n",
                         multiItem, #inversions))
 for n = 1, math.min (#inversions, opt.all and #inversions or opt.sample) do
