@@ -58,6 +58,32 @@ function RollAdvisor.NormalizeVerdict(v)
   }
 end
 
+-- Mask a verdict by which ADVICE SOURCES the user has left switched on (the two
+-- checkboxes on the rules page's advisor status panel). An advisor reports two
+-- independent reasons to prompt — a stat upgrade and a high auction value — and
+-- either can be turned off without touching the other, or the scanner's own
+-- settings, or the trust mode.
+--
+-- The `reason` is dropped when masking actually suppresses a flag: it is a single
+-- human string built by the ADVISOR ("Upgrade +8% / ~120g -- worth Need"), so with
+-- one half switched off we cannot honestly attribute the halves without parsing a
+-- format that belongs to another addon. Better a headline with no detail than a
+-- detail line describing advice the user turned off. Untouched when nothing is
+-- masked, which is the default and the common case.
+function RollAdvisor.ApplySources(v, useGear, useValue)
+  if type(v) ~= "table" then return v end
+  -- nil means "not configured" and defaults ON, so only an explicit false hides.
+  local upgrade   = (useGear  ~= false) and (v.upgrade == true)
+  local highValue = (useValue ~= false) and (v.highValue == true)
+  local masked = (v.upgrade == true and not upgrade) or (v.highValue == true and not highValue)
+  return {
+    upgrade   = upgrade,
+    highValue = highValue,
+    delta     = upgrade and (tonumber(v.delta) or 0) or 0,
+    reason    = (not masked) and v.reason or nil,
+  }
+end
+
 -- How long to hold the roll, in SECONDS. The design is half the roll window
 -- (rollTimeMs / 2), floored so a fast window is still long enough to react to,
 -- and capped a `margin` short of the full window so we ALWAYS fall through to
@@ -125,6 +151,29 @@ if rawget(_G, "ROLLADVISOR_SELFTEST") then
   ok(n4.upgrade == false, "normalize non-boolean upgrade coerced to false")
   near(n4.delta, 0, "normalize non-number delta -> 0")
 
+  -- ApplySources
+  local both = { upgrade = true, highValue = true, delta = 0.08, reason = "Upgrade +8% / ~120g" }
+  local s1 = RollAdvisor.ApplySources(both, true, true)
+  ok(s1.upgrade and s1.highValue, "sources both on -> both flags kept")
+  ok(s1.reason == "Upgrade +8% / ~120g", "nothing masked -> reason kept")
+  near(s1.delta, 0.08, "nothing masked -> delta kept")
+  local s2 = RollAdvisor.ApplySources(both, false, true)
+  ok(not s2.upgrade and s2.highValue, "gear off -> only high value survives")
+  ok(s2.reason == nil, "masked -> advisor's combined reason dropped")
+  near(s2.delta, 0, "gear off -> delta zeroed")
+  local s3 = RollAdvisor.ApplySources(both, true, false)
+  ok(s3.upgrade and not s3.highValue, "value off -> only upgrade survives")
+  local s4 = RollAdvisor.ApplySources(both, false, false)
+  ok(not RollAdvisor.IsActionable(s4), "both off -> verdict is not actionable")
+  -- nil = unconfigured, which must behave as ON (that is the shipped default).
+  local s5 = RollAdvisor.ApplySources(both, nil, nil)
+  ok(s5.upgrade and s5.highValue and s5.reason == both.reason, "nil sources default to on")
+  -- Masking a flag the verdict never set is not "masking" -- the reason stays.
+  local onlyValue = { highValue = true, reason = "~120g" }
+  local s6 = RollAdvisor.ApplySources(onlyValue, false, true)
+  ok(s6.highValue and s6.reason == "~120g", "turning off an unset flag keeps the reason")
+  ok(RollAdvisor.ApplySources(nil, true, true) == nil, "non-table passes through")
+
   -- ResolveHoldSeconds
   near(RollAdvisor.ResolveHoldSeconds(60000, 4, 1), 30, "60s window -> 30s hold")
   near(RollAdvisor.ResolveHoldSeconds(6000, 4, 1), 4, "6s window floored to 4s")
@@ -148,6 +197,7 @@ if not rawget(_G, "LibStub") then
 end
 
 local PasslootBiS = LibStub("AceAddon-3.0"):GetAddon("PasslootBiS")
+local L = LibStub("AceLocale-3.0"):GetLocale("PasslootBiS")
 
 -- Expose the pure core on the addon (handy for debugging / a future test hook).
 PasslootBiS.RollAdvisorCore = RollAdvisor
@@ -266,6 +316,45 @@ function API:SetTrustMode(name, mode)
   return true
 end
 
+-- The two advice sources the user can switch off independently, from the
+-- checkboxes on the rules page's status panel. Both default ON: an absent key
+-- means "never configured", not "off", so an existing profile keeps behaving
+-- exactly as it did before these toggles existed.
+API.SOURCES = { gear = true, value = true }
+
+local function sourceStore()
+  local p = PasslootBiS.db and PasslootBiS.db.profile
+  if not p then return nil end
+  if type(p.RollAdvisor) ~= "table" then p.RollAdvisor = {} end
+  if type(p.RollAdvisor.sources) ~= "table" then p.RollAdvisor.sources = {} end
+  return p.RollAdvisor.sources
+end
+
+function API:IsSourceEnabled(key)
+  if not API.SOURCES[key] then return false end
+  local store = sourceStore()
+  return not (store and store[key] == false)
+end
+
+function API:SetSourceEnabled(key, on)
+  if not API.SOURCES[key] then return false end
+  local store = sourceStore()
+  if not store then return false end
+  store[key] = on and true or false
+  return true
+end
+
+-- Saved geometry for the held-confirm popup: where the user dragged it and what
+-- size they stretched it to. Lives in the profile so it travels with the rest of
+-- the rule setup. Empty until the window is first moved or resized.
+local function windowStore()
+  local p = PasslootBiS.db and PasslootBiS.db.profile
+  if not p then return nil end
+  if type(p.RollAdvisor) ~= "table" then p.RollAdvisor = {} end
+  if type(p.RollAdvisor.window) ~= "table" then p.RollAdvisor.window = {} end
+  return p.RollAdvisor.window
+end
+
 -- Consult every registered advisor (each pcall-guarded — one that errors, blocks
 -- returning, or abstains is skipped and never breaks the roll). Returns the first
 -- ACTIONABLE verdict plus the name of the advisor that produced it, or nil.
@@ -278,7 +367,12 @@ function API:ConsultAdvisors(ctx)
       ok, raw = pcall(entry.obj.GetRollVerdict, entry.obj, ctx.rollID)
     end
     if ok then
-      local v = RollAdvisor.NormalizeVerdict(raw)
+      -- Mask by the user's source toggles BEFORE the actionable test, so a verdict
+      -- whose only reason was switched off abstains here and the next advisor still
+      -- gets its turn (rather than this one claiming the roll and then prompting
+      -- with nothing to say).
+      local v = RollAdvisor.ApplySources(RollAdvisor.NormalizeVerdict(raw),
+        self:IsSourceEnabled("gear"), self:IsSourceEnabled("value"))
       if RollAdvisor.IsActionable(v) then
         return v, name
       end
@@ -295,6 +389,20 @@ local POOL    = {}   -- reusable frames (a roll window can have several open at 
 local occupied = {}  -- slot index -> true, for vertical stacking
 local active  = {}   -- RollID -> frame currently showing
 
+-- Deliberately narrow: the popup interrupts a fight, so it says one thing in one
+-- glance. The user can stretch it from the corner grip and the size sticks.
+local DEFAULT_WIDTH, DEFAULT_HEIGHT = 220, 132
+local MIN_WIDTH, MIN_HEIGHT = 170, 112
+local MAX_WIDTH, MAX_HEIGHT = 600, 320
+local SLOT_GAP = 8          -- vertical space between stacked popups
+local BTN_HEIGHT = 22
+local BTN_BOTTOM = 16       -- clears the resize grip in the bottom-right corner
+
+-- The verdict headline: the whole point of the window, so it is large, coloured,
+-- and says which KIND of advice this is. Green for a stat upgrade, gold for gold.
+local HEADLINE_UPGRADE = { text = L["RollAdvisor_GearUpgrade"], r = 0.1, g = 1.0, b = 0.4 }
+local HEADLINE_VALUE   = { text = L["RollAdvisor_HighValue"],   r = 1.0, g = 0.82, b = 0.0 }
+
 local function acquireSlot()
   local i = 1
   while occupied[i] do i = i + 1 end
@@ -302,10 +410,63 @@ local function acquireSlot()
   return i
 end
 
+-- Buttons share the width evenly, so the row still fits when the frame is shrunk
+-- to MIN_WIDTH and spreads out when it is stretched. Everything else takes its
+-- width from edge anchors and needs no help here.
+local function layoutFrame(f)
+  if not f.needBtn then return end   -- called before the row exists; nothing to lay out
+  local w = f:GetWidth() or DEFAULT_WIDTH
+  local btnW = math.floor((w - 24 - 12) / 3)   -- 12px margins, two 6px gaps
+  if btnW < 40 then btnW = 40 end
+  f.needBtn:SetWidth(btnW)
+  f.greedBtn:SetWidth(btnW)
+  f.passBtn:SetWidth(btnW)
+end
+
+-- Persist where the user put the window and how big they made it.
+local function saveGeometry(f)
+  local store = windowStore()
+  if not store then return end
+  local point, _, relPoint, x, y = f:GetPoint()
+  if point then
+    -- Store where SLOT 1 would sit. Dragging the second popup of a busy roll
+    -- otherwise saves a position one slot lower and walks the window down the
+    -- screen a little further on every subsequent multi-roll.
+    local step = (f:GetHeight() or DEFAULT_HEIGHT) + SLOT_GAP
+    store.point, store.relPoint, store.x = point, relPoint, x
+    store.y = y + (((f.slot or 1) - 1) * step)
+  end
+  store.width, store.height = f:GetWidth(), f:GetHeight()
+end
+
+local function applyGeometry(f)
+  local store = windowStore()
+  local w = (store and tonumber(store.width)) or DEFAULT_WIDTH
+  local h = (store and tonumber(store.height)) or DEFAULT_HEIGHT
+  if w < MIN_WIDTH then w = MIN_WIDTH elseif w > MAX_WIDTH then w = MAX_WIDTH end
+  if h < MIN_HEIGHT then h = MIN_HEIGHT elseif h > MAX_HEIGHT then h = MAX_HEIGHT end
+  f:SetWidth(w)
+  f:SetHeight(h)
+  layoutFrame(f)
+end
+
+-- Place the frame at its saved anchor, offset downward by its stacking slot.
+local function placeFrame(f, slot)
+  local store = windowStore()
+  local step = (f:GetHeight() or DEFAULT_HEIGHT) + SLOT_GAP
+  local dy = -((slot - 1) * step)
+  f:ClearAllPoints()
+  if store and store.point and tonumber(store.x) and tonumber(store.y) then
+    f:SetPoint(store.point, UIParent, store.relPoint or store.point, store.x, store.y + dy)
+  else
+    f:SetPoint("TOP", UIParent, "TOP", 0, -200 + dy)
+  end
+end
+
 local function makeFrame()
   local f = CreateFrame("Frame", nil, UIParent)
-  f:SetWidth(320)
-  f:SetHeight(120)
+  f:SetWidth(DEFAULT_WIDTH)
+  f:SetHeight(DEFAULT_HEIGHT)
   -- FULLSCREEN_DIALOG, and deliberately NO SetToplevel: on Ascension 3.3.5 a
   -- SetToplevel(true) frame re-raises on every click/drag and each raise
   -- restacks the strata, spiking the client. These popups are placed at
@@ -316,24 +477,49 @@ local function makeFrame()
   PasslootBiS:ApplyDarkBackdrop(f)   -- shared house chrome (Core/PassLoot.lua)
   f:EnableMouse(true)
   f:SetMovable(true)
+  f:SetResizable(true)
+  f:SetMinResize(MIN_WIDTH, MIN_HEIGHT)
+  f:SetMaxResize(MAX_WIDTH, MAX_HEIGHT)
   f:RegisterForDrag("LeftButton")
   f:SetScript("OnDragStart", function(fr) fr:StartMoving() end)
-  f:SetScript("OnDragStop", function(fr) fr:StopMovingOrSizing() end)
+  f:SetScript("OnDragStop", function(fr)
+    fr:StopMovingOrSizing()
+    saveGeometry(fr)
+  end)
+  -- Verdict headline. Large and coloured; this is what you read.
+  f.headline = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  f.headline:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -10)
+  f.headline:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -10)
+  f.headline:SetJustifyH("CENTER")
 
-  f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  f.title:SetPoint("TOP", f, "TOP", 0, -12)
-
+  -- One supporting line: the item, plus the advisor's reason when there is one.
   f.item = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.item:SetPoint("TOP", f.title, "BOTTOM", 0, -6)
-  f.item:SetWidth(292)
+  f.item:SetPoint("TOPLEFT", f.headline, "BOTTOMLEFT", 0, -5)
+  f.item:SetPoint("TOPRIGHT", f.headline, "BOTTOMRIGHT", 0, -5)
   f.item:SetJustifyH("CENTER")
 
+  local function mkBtn(label)
+    local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    b:SetWidth(60)
+    b:SetHeight(BTN_HEIGHT)
+    b:SetText(label)
+    return b
+  end
+  f.needBtn  = mkBtn(rawget(_G, "NEED") or "Need")
+  f.greedBtn = mkBtn(rawget(_G, "GREED") or "Greed")
+  f.passBtn  = mkBtn(rawget(_G, "PASS") or "Pass")
+  f.needBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, BTN_BOTTOM)
+  f.greedBtn:SetPoint("LEFT", f.needBtn, "RIGHT", 6, 0)
+  f.passBtn:SetPoint("LEFT", f.greedBtn, "RIGHT", 6, 0)
+
+  -- Countdown bar, sitting on top of the button row so it tracks a resize from
+  -- the bottom up while the text above tracks from the top down.
   f.bar = CreateFrame("StatusBar", nil, f)
   f.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
   f.bar:SetStatusBarColor(0.25, 0.6, 1)
   f.bar:SetHeight(10)
-  f.bar:SetWidth(280)
-  f.bar:SetPoint("TOP", f.item, "BOTTOM", 0, -6)
+  f.bar:SetPoint("BOTTOMLEFT", f.needBtn, "TOPLEFT", 0, 6)
+  f.bar:SetPoint("BOTTOMRIGHT", f.passBtn, "TOPRIGHT", 0, 6)
   f.bar:SetBackdrop({
     ["bgFile"] = "Interface\\TargetingFrame\\UI-StatusBar",
     ["edgeFile"] = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -343,35 +529,56 @@ local function makeFrame()
   f.timeText = f.bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   f.timeText:SetPoint("CENTER", f.bar, "CENTER", 0, 0)
 
-  local function mkBtn(label)
-    local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    b:SetWidth(92)
-    b:SetHeight(22)
-    b:SetText(label)
-    return b
-  end
-  f.needBtn  = mkBtn(rawget(_G, "NEED") or "Need")
-  f.greedBtn = mkBtn(rawget(_G, "GREED") or "Greed")
-  f.passBtn  = mkBtn(rawget(_G, "PASS") or "Pass")
-  f.needBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 12)
-  f.greedBtn:SetPoint("LEFT", f.needBtn, "RIGHT", 6, 0)
-  f.passBtn:SetPoint("LEFT", f.greedBtn, "RIGHT", 6, 0)
+  -- Corner grip: drag to stretch or shrink. Sits below the button row (they end
+  -- at BTN_BOTTOM = the grip's height) so the two never fight over a click.
+  f.grip = CreateFrame("Button", nil, f)
+  f.grip:SetWidth(16)
+  f.grip:SetHeight(16)
+  f.grip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -1, -1)
+  f.grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  f.grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  f.grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  f.grip:SetScript("OnMouseDown", function() f:StartSizing("BOTTOMRIGHT") end)
+  f.grip:SetScript("OnMouseUp", function()
+    f:StopMovingOrSizing()
+    layoutFrame(f)
+    saveGeometry(f)
+  end)
+
+  -- Wired LAST, deliberately: OnSizeChanged fires during a live drag-resize and
+  -- reaches for the buttons, which only exist from here on.
+  f:SetScript("OnSizeChanged", function(fr) layoutFrame(fr) end)
+
   return f
+end
+
+-- Point the headline at the right verdict. Upgrade wins when both apply: it is
+-- the stronger claim, and the value half still shows in the reason line.
+local function applyHeadline(f, verdict)
+  local h = verdict.upgrade and HEADLINE_UPGRADE or HEADLINE_VALUE
+  f.headline:SetText(h.text)
+  f.headline:SetTextColor(h.r, h.g, h.b)
 end
 
 -- Show a bounded-hold confirm for one roll. On a button click cast that choice;
 -- on timeout fall through to `fallbackMethod` (the rule-computed RollMethod, which
 -- may be nil = don't roll, exactly as PassLoot behaves today).
-function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMethod, advisorName)
+--
+-- `isPreview` drives the "Show Loot Advisor" button on the rules page: an
+-- identical window, on a fake roll, that never queues a roll when it resolves.
+-- It exists so the geometry above can be set up out of combat instead of during
+-- the few seconds of a real roll.
+function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMethod, advisorName, isPreview)
   if active[RollID] then return end   -- already prompting this roll
 
   local f = table.remove(POOL) or makeFrame()
   f.slot = acquireSlot()
   f.resolved = false
-  f:ClearAllPoints()
-  f:SetPoint("TOP", UIParent, "TOP", 0, -200 - (f.slot - 1) * 132)
+  f.preview = isPreview and true or false
+  applyGeometry(f)
+  placeFrame(f, f.slot)
 
-  f.title:SetText("|cffffcc00PLBiS|r " .. (advisorName or "advisor") .. " suggests a roll")
+  applyHeadline(f, verdict)
   local reason = verdict.reason
   f.item:SetText((ctx.itemLink or "?") .. (reason and ("\n|cff9d9d9d" .. reason .. "|r") or ""))
 
@@ -397,8 +604,9 @@ function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMet
     if remain < 0 then remain = 0 end
     fr.bar:SetValue(remain)
     fr.timeText:SetText(string.format("%.0fs", remain))
-    -- Throttled live eligibility re-check (~3/sec) until resolved.
-    if not fr.resolved and now >= fr.nextElig then
+    -- Throttled live eligibility re-check (~3/sec) until resolved. Skipped for the
+    -- preview, whose RollID is a sentinel the client knows nothing about.
+    if not fr.resolved and not fr.preview and now >= fr.nextElig then
       fr.nextElig = now + 0.3
       local gi = rawget(_G, "GetLootRollItemInfo")
       if gi then
@@ -413,11 +621,17 @@ function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMet
     f.resolved = true
     if f.timer then PasslootBiS:CancelTimer(f.timer); f.timer = nil end
     f:SetScript("OnUpdate", nil)
+    -- Keep whatever the user dragged/stretched it to while it was on screen.
+    saveGeometry(f)
     f:Hide()
     active[RollID] = nil
     occupied[f.slot] = nil
     POOL[#POOL + 1] = f
-    PasslootBiS:QueueRoll(RollID, method)
+    -- A preview resolves exactly like the real thing, minus the one line that
+    -- matters: it never casts a roll.
+    if not f.preview then
+      PasslootBiS:QueueRoll(RollID, method)
+    end
   end
 
   f.needBtn:SetScript("OnClick", function() resolve(PasslootBiS.RollMethod.need) end)
@@ -429,6 +643,53 @@ function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMet
 
   -- The bounded hold: half the roll window (floored), then fall through.
   f.timer = PasslootBiS:ScheduleTimer(function() resolve(fallbackMethod) end, holdSecs)
+end
+
+--------------------------------------------------------------------------------
+-- 2b-ii. The preview ("Show Loot Advisor" on the rules page)
+--------------------------------------------------------------------------------
+-- A real roll gives you a handful of seconds to notice the popup, which is no
+-- time at all to decide where you want it to live. This shows the same window on
+-- a fake roll so it can be dragged, stretched and dismissed at leisure.
+
+local PREVIEW_ROLLID = -424242   -- can never collide with a live rollID
+local previewFlip = false        -- alternate the two headline styles per showing
+
+function PasslootBiS:IsRollConfirmPreviewShown()
+  return active[PREVIEW_ROLLID] ~= nil
+end
+
+function PasslootBiS:ShowRollConfirmPreview()
+  if self:IsRollConfirmPreviewShown() then return end
+  -- Alternate green "Gear Upgrade" and gold "High Value" on successive showings,
+  -- so both looks can be checked without contriving a real roll of each kind.
+  previewFlip = not previewFlip
+  local verdict = previewFlip
+    and { upgrade = true,  highValue = false, delta = 0.08, reason = "Upgrade +8%" }
+    or  { upgrade = false, highValue = true,  delta = 0,    reason = "~250g -- worth Need" }
+  local ctx = {
+    itemLink = "|cff0070dd[" .. L["RollAdvisor_PreviewItem"] .. "]|r",
+    canNeed = true,
+    canGreed = true,
+  }
+  self:ShowRollConfirm(PREVIEW_ROLLID, ctx, verdict, 20, nil, "preview", true)
+end
+
+function PasslootBiS:HideRollConfirmPreview()
+  local f = active[PREVIEW_ROLLID]
+  if not f then return end
+  -- Route through the frame's own Pass button so teardown takes exactly the same
+  -- path as a real dismissal (timer cancelled, slot released, frame pooled).
+  f.passBtn:Click()
+end
+
+function PasslootBiS:ToggleRollConfirmPreview()
+  if self:IsRollConfirmPreviewShown() then
+    self:HideRollConfirmPreview()
+  else
+    self:ShowRollConfirmPreview()
+  end
+  return self:IsRollConfirmPreviewShown()
 end
 
 --------------------------------------------------------------------------------
