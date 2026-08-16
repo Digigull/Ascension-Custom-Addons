@@ -10,12 +10,12 @@ per-event frame-time spike attribution, with a copy/paste report.
 A driver frame's `OnUpdate` diffs `debugprofilestop()` to get true whole-frame
 time. When a frame exceeds the threshold (50 ms by default, ~3 dropped frames at
 60 fps) the spike is recorded into a ring buffer along with its context — recent
-events, heap delta, combat-log and streaming rates, zone-in proximity, whether
-you were dragging a window, and per-tag CPU from any addon that opted into the
-cooperative meter.
+events, heap delta, combat-log and streaming rates, zone-in proximity, and
+whether you were dragging a window.
 
-Attribution of *who* comes from a periodic sampler, not from scanning inside the
-spike, so the hot path stays lean — measurement perturbs what it measures.
+Context comes from a periodic sampler and from cheap reads on the spike frame
+itself, never from scanning inside the spike — the hot path stays lean, because
+measurement perturbs what it measures.
 
 It also profiles the login cascade: every `ADDON_LOADED` is stamped in ms and KB,
 giving a per-addon initial-load cost and a login timeline.
@@ -48,27 +48,11 @@ addon count means it got there early.
 | `/cpp thr <ms>` | Set the spike threshold |
 | `/cpp gc` | Force one full GC and measure the pause |
 | `/cpp mem` | Bounded `_G` walk ranking the largest memory globals |
-| `/cpp profile on\|off` | Arm/disarm `scriptProfile` (reloads the UI) |
 | `/cpp backdrop <Frame>` | Read a window's backdrop, to compare a laggy one against a smooth one |
 | `/cpp backdroptest` | Spawn A/B/C/D drag frames to isolate a backdrop as the stutter cause |
 | `/cpp constructtest` | E/F/G/H drag frames (backdrop constant) to isolate dropdown children |
 | `/cpp save` | Stamp the report into SavedVariables, then `/reload` and attach the file |
 | `/cpp clear [min]` | Wipe captured spikes and counters (`clear <min>` trims recent spikes only) |
-
-## Cooperative profiling API
-
-Any addon can opt into per-tag CPU attribution with no dependency, via the global
-`ClientPerfProbe`:
-
-```lua
-local CPP = ClientPerfProbe
-if CPP then
-    frame:SetScript("OnEvent", CPP.Wrap("MyAddon:OnEvent", handler))
-end
-```
-
-`Wrap`, `Measure`, `Enter`, `Leave` and `Add` are available. The API shape is v0
-(proposed) — treat it as unstable until the ergonomics settle.
 
 ## Saved variables
 
@@ -79,9 +63,14 @@ marked `old=1` so a report is never misread.
 
 ## Notes
 
-- `scriptProfile` is locked from Lua on Ascension — the client resets it to 0 on
-  load. The addon detects this once, records it, and commits to the memory-delta
-  and event-rate fallbacks rather than retrying. That's a finding, not a failure.
+- **There is no CPU attribution, by design.** `scriptProfile` is locked from Lua
+  on Ascension — the client resets it to 0 on load — which takes the whole
+  `GetAddOnCPUUsage` family with it. The only way around that was a cooperative
+  meter every addon had to be hand-instrumented for; that isn't feasible to
+  maintain, so it's gone. The matrix still reports `cvar:scriptProfile` as the
+  record of the finding. Spikes are attributed by what they coincided with
+  (memory, combat-log rate, zone-in, window-open, drag) and by the load profile,
+  which is the one genuine per-addon channel this client leaves open.
 - This is a **measurement** tool: nothing here changes client behaviour on its
   own, so a normal session is never perturbed. Measure first, then fix in the
   addon the capture names.

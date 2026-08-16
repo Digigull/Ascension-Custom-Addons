@@ -23,10 +23,6 @@ local DEFAULTS = {
     sampleSec   = 5,      -- Attrib interval (full addon scan is expensive)
 }
 
--- Sub-millisecond cooperating-handler slices are noise in a spike's cpu= field;
--- only fold in Meter deltas at/above this. Tune from data, not stories.
-local SPIKE_CPU_MIN_MS = 1.0
-
 local db                  -- ClientPerfProbeDB
 local ring                -- RingBuffer of spike records
 local driver              -- OnUpdate frame
@@ -47,8 +43,6 @@ local lastEnterWorld      -- GetTime() at the most recent zone-in (PLAYER_ENTERI
                           -- zone-in event burst evicts the very marker classify keys on).
 local lastGC              -- last /cpp gc measurement { collectMs, freedKB, beforeKB, afterKB }
 local lastMem             -- last /cpp mem walk (MemWalk.estimate result); on-demand only
-local meter               -- cooperative Meter (per-tag CPU via debugprofilestop)
-local meterSnap = {}      -- {tag -> ms} snapshot: per-frame Meter attribution baseline
 local loadProf            -- LoadProfile: per-addon initial-load cost + login timeline
 local started            -- guard so start() runs once
 
@@ -63,7 +57,7 @@ local function safe(fn, ...)
 end
 
 -- GetNetStats snapshot for a spike frame. This is the one channel that can tell a
--- big UNATTRIBUTED pure-CPU stall (cpu= empty, dh~0, cleu=0 — the ~300ms Ironforge
+-- big UNATTRIBUTED pure-CPU stall (sus=?, dh~0, cleu=0 — the ~300ms Ironforge
 -- class the addon-toggle A/B test isolated) apart from an I/O / streaming / server
 -- stall (README causes A/D): if inbound bandwidth or WORLD latency is elevated on
 -- the spike frame, the stall smells like network/streaming, not engine CPU.
@@ -135,7 +129,6 @@ local function currentMeta()
         char       = char,
         windowSec  = string.format("%.0f", runLen or 0),
         thresholdMs = db and db.settings.thresholdMs or DEFAULTS.thresholdMs,
-        profileOn  = ns.Probe and ns.Probe.caps().profileOn or false,
         attr       = ns.Attrib and ns.Attrib.attrMode() or "none",
         totalSpikes = spikeSeq,
         shownSpikes = ring and math.min(ring:count(), ns.Report.MAX_SPIKES) or 0,
@@ -154,7 +147,6 @@ local function buildReportData(includeMatrix)
         rates     = rates,
         gc        = lastGC,
         mem       = lastMem,
-        profiled  = meter and meter:ranked(ns.Report.MAX_PROFILED) or nil,
         blocked   = ns.Events and ns.Events.blockedRanked(ns.Report.MAX_BLOCKED) or nil,
     }
     if loadProf and loadProf:hasData() then
@@ -289,8 +281,6 @@ local function doClear()
     if ring then ring:clear(); if db then db.spikes = ring:serialize() end end
     if ns.Events then ns.Events.reset() end
     if ns.Attrib then ns.Attrib.reset() end
-    if meter then meter:reset() end
-    meterSnap = {}
     spikeSeq = 0
     lastCleu = 0
     lastStream = 0
@@ -319,7 +309,7 @@ end
 --------------------------------------------------------------------------------
 -- spike recording
 
-local function recordSpike(dt, heapDelta, cleuPS, cpu, net, streamN, mouseHeld)
+local function recordSpike(dt, heapDelta, cleuPS, net, streamN, mouseHeld)
     spikeSeq = spikeSeq + 1
     local rec = {
         index    = spikeSeq,
@@ -341,11 +331,6 @@ local function recordSpike(dt, heapDelta, cleuPS, cpu, net, streamN, mouseHeld)
         -- streaming fingerprint that survives the UNIT_AURA firehose flooding ev=.
         -- Reported as the str= field; not (yet) a classifier input (measure-first).
         streamN  = streamN,
-        -- Per-frame per-handler CPU for COOPERATING addons (the Meter's frame
-        -- delta), which the stock CPU APIs lock. Falls back to the Attrib
-        -- sampler when no cooperating handler spent time this frame.
-        topCPU   = (cpu and cpu[1]) and cpu
-                   or (ns.Attrib and ns.Attrib.topForSpike(3)) or {},
         -- GetNetStats snapshot at the spike ({inKB,outKB,lat}, nil if API absent):
         -- separates an I/O/streaming stall (cause A/D) from engine CPU on a big
         -- unattributed frame. Coarse (rolling rates) — see netSnapshot().
@@ -373,7 +358,6 @@ local function onUpdate(_, elapsed)
         lastHeap = safe(collectgarbage, "count")
         lastCleu = ns.Events and ns.Events.cleuCount() or 0
         lastStream = ns.Events and ns.Events.streamCount() or 0
-        if meter then meter:frameDeltas(meterSnap, false) end   -- prime the baseline
         return
     end
 
@@ -393,9 +377,6 @@ local function onUpdate(_, elapsed)
         lastHeap = safe(collectgarbage, "count") or lastHeap
         lastCleu = ns.Events and ns.Events.cleuCount() or lastCleu
         lastStream = ns.Events and ns.Events.streamCount() or lastStream
-        -- refresh the Meter snapshot every frame so a spike's delta spans exactly
-        -- the spiking frame. No allocation on this hot path (collect=false).
-        if meter then meter:frameDeltas(meterSnap, false) end
         return
     end
 
@@ -416,9 +397,6 @@ local function onUpdate(_, elapsed)
     local streamN = streamNow - lastStream
     lastStream = streamNow
 
-    -- cooperating-addon per-frame CPU (folds the Meter's deltas into cpu=/topCPU)
-    local cpu = meter and meter:frameDeltas(meterSnap, true, SPIKE_CPU_MIN_MS, 3) or nil
-
     -- net snapshot: only read on the spike frame (lean hot path); lets a big
     -- unattributed pure-CPU stall self-classify I/O (cause A/D) vs engine CPU.
     local net = netSnapshot()
@@ -427,7 +405,7 @@ local function onUpdate(_, elapsed)
     -- (sampled here on the spike frame only, lean hot path).
     local mouseHeld = mouseSnapshot()
 
-    recordSpike(dt, heapDelta, cleuPS, cpu, net, streamN, mouseHeld)
+    recordSpike(dt, heapDelta, cleuPS, net, streamN, mouseHeld)
 end
 
 --------------------------------------------------------------------------------
@@ -437,14 +415,11 @@ local function msg(s) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffCPP|r " .. s) end
 
 local function printStat()
     local m = currentMeta()
-    msg(("v%s build %s | zone %s | run %ss | thr %sms | profile %s"):format(
+    msg(("v%s build %s | zone %s | run %ss | thr %sms | attr %s"):format(
         m.version, tostring(m.build), m.zone, m.windowSec, tostring(m.thresholdMs),
-        m.profileOn and "ON" or "off"))
+        tostring(m.attr)))
     msg(("spikes captured: %d (showing up to %d) | CLEU total: %d"):format(
         spikeSeq, ns.Report.MAX_SPIKES, ns.Events and ns.Events.cleuCount() or 0))
-    if not m.profileOn then
-        msg("CPU attribution is OFF. Run |cffffff00/cpp profile on|r to arm scriptProfile (reloads UI).")
-    end
 end
 
 local function usage()
@@ -455,7 +430,6 @@ local function usage()
     msg("  |cffffff00/cpp matrix|r — API support matrix only")
     msg("  |cffffff00/cpp load|r — initial-load timeline + per-addon load cost")
     msg("  |cffffff00/cpp stat|r — quick summary in chat")
-    msg("  |cffffff00/cpp profile on|off|r — arm/disarm scriptProfile (reloads UI)")
     msg("  |cffffff00/cpp thr <ms>|r — set spike threshold (now " ..
         tostring(db and db.settings.thresholdMs) .. "ms)")
     msg("  |cffffff00/cpp gc|r — force one full GC and measure the pause (sizes cause B)")
@@ -493,41 +467,6 @@ local function handler(input)
                 load = { summary = loadProf:summary(), ranked = loadProf:ranked(ns.Report.MAX_LOADADDONS) },
             }))
         end
-    elseif cmd == "profile" then
-        local caps = ns.Probe and ns.Probe.caps() or {}
-        if not caps.cvar then msg("SetCVar/GetCVar unavailable — cannot toggle scriptProfile."); return end
-        local want = rest:lower()
-        if want ~= "on" and want ~= "off" then
-            msg("scriptProfile reads |cffffff00" .. tostring(safe(GetCVar, "scriptProfile")) ..
-                "|r. usage: /cpp profile on|off")
-            if db and db.settings.profileLocked then
-                msg("this client |cffff4444locks scriptProfile from Lua|r — CPU attribution off; using memory + rates.")
-            end
-            return
-        end
-        if want == "off" then
-            pcall(SetCVar, "scriptProfile", "0")
-            if db then db.settings.profileArming = nil end
-            msg("scriptProfile set to 0 — |cffffff00reloading to disarm...|r")
-            if type(ReloadUI) == "function" then ReloadUI() end
-            return
-        end
-        -- want == "on"
-        pcall(SetCVar, "scriptProfile", "1")
-        local got = tostring(safe(GetCVar, "scriptProfile"))
-        if got ~= "1" then
-            -- rejected even in-session: locked outright.
-            if db then db.settings.profileLocked = true; db.settings.profileArming = nil end
-            msg("|cffff4444SetCVar('scriptProfile','1') did not take|r — reads back '" .. got .. "'.")
-            msg("scriptProfile is locked from Lua on this client. |cff66ccffCPU attribution stays off|r; using memory + rates.")
-            return
-        end
-        -- accepted in-session; profiling only arms after a reload. Flag it so the
-        -- next load VERIFIES whether the value survived — the confirmed failure
-        -- mode here is the client resetting it to 0 on load.
-        if db then db.settings.profileArming = true end
-        msg("scriptProfile=1 accepted in-session — |cffffff00reloading; I'll verify on reload...|r")
-        if type(ReloadUI) == "function" then ReloadUI() end
     elseif cmd == "gc" then
         msg("testing collectgarbage with a canary (allocates + frees, stalls one frame)...")
         local g = measureGC()
@@ -636,11 +575,14 @@ local function initDB()
     for k, v in pairs(DEFAULTS) do
         if db.settings[k] == nil then db.settings[k] = v end
     end
-    -- Drop settings left behind by the removed frontload/pre-warm prototype so an
+    -- Drop settings left behind by removed features (the frontload/pre-warm
+    -- prototype; the scriptProfile arming that went with CPU attribution) so an
     -- existing SavedVariables file doesn't carry dead keys forever. Cheap and
     -- idempotent; delete this once no live DB can still hold them.
     db.settings.prewarmOnLogin = nil
     db.settings.prewarmTargets = nil
+    db.settings.profileArming  = nil
+    db.settings.profileLocked  = nil
     -- Stamp this session's load time. The spike ring persists across /reload (ground
     -- rule 6: so /cpp save can flush it to disk), which means a capture taken without
     -- a /cpp clear mixes THIS session's spikes with restored ones from a prior play
@@ -657,45 +599,6 @@ local function initDB()
         db.spikes = ring:serialize()
     end
     spikeSeq = ring:count()
-end
-
--- Called once per load: if the previous session tried to arm scriptProfile,
--- check whether the value survived the reload. The confirmed failure mode on
--- Ascension is the client resetting it to 0 on load — detect that and commit to
--- the memory + rates fallback (recording profileLocked so we stop retrying).
-local function verifyArming()
-    if not (db and db.settings.profileArming) then return end
-    db.settings.profileArming = nil
-    local v = tostring(safe(GetCVar, "scriptProfile"))
-    if v == "1" then
-        db.settings.profileLocked = nil
-        msg("|cff44ff44scriptProfile armed|r — per-addon CPU attribution is live. Run |cffffff00/cpp matrix|r to confirm.")
-    else
-        db.settings.profileLocked = true
-        msg("scriptProfile |cffff4444reset to 0 on load|r — confirmed locked on this client (Lua and /devconsole alike).")
-        msg("Committing to |cffffff00memory deltas + event rates|r. That's a finding, not a failure.")
-    end
-end
-Core.verifyArming = verifyArming   -- exposed for the offline sim
-
--- Public cooperative-profiling API (the "library other addons use"). Exposed as
--- the global `ClientPerfProbe` so any addon can opt in with no dependency:
---   local CPP = ClientPerfProbe
---   if CPP then frame:SetScript("OnEvent", CPP.Wrap("MyAddon:OnEvent", handler)) end
--- Timing uses debugprofilestop (the one primitive Ascension leaves us). NOTE:
--- API shape is v0 / proposed — pin it only once the ergonomics are agreed.
-local function exposeLibrary()
-    meter = ns.Meter.new(debugprofilestop)
-    local api = _G.ClientPerfProbe or {}
-    api.Meter = meter
-    api.apiVersion = 0
-    function api.Wrap(tag, fn) return meter:wrap(tag, fn) end
-    function api.Measure(tag, fn, ...) return meter:measure(tag, fn, ...) end
-    function api.Enter(tag) return meter:enter(tag) end
-    function api.Leave(tag) return meter:leave(tag) end
-    function api.Add(tag, ms, calls) return meter:add(tag, ms, calls) end
-    _G.ClientPerfProbe = api
-    ns.CPP = api
 end
 
 -- Feed the LoadProfile one ADDON_LOADED mark: the delta from the previous mark
@@ -716,8 +619,6 @@ local function start()
     if started then return end
     started = true
     initDB()
-    verifyArming()
-    exposeLibrary()
     if ns.LoadProfile then loadProf = ns.LoadProfile.new() end
     if ns.Events then ns.Events.init() end
 
@@ -730,7 +631,7 @@ local function start()
     if ns.UI then
         ns.UI.init(db, {
             -- matrix is only computed when the caller asks (it scans all addons);
-            -- the throttled panel refresh skips it except on the API Matrix tab.
+            -- the throttled panel refresh skips it except on the System Info tab.
             snapshot   = function(withMatrix) return buildReportData(withMatrix == true) end,
             openReport = function() openExport(true) end,
             runMemWalk = runMemWalk,
@@ -755,13 +656,6 @@ local function start()
     local caps = ns.Probe and ns.Probe.caps() or {}
     if not caps.clock then
         msg("|cffff4444WARNING|r debugprofilestop() not found — spike timing is unavailable on this client.")
-    end
-    if not caps.profileOn then
-        if db and db.settings.profileLocked then
-            msg("scriptProfile is |cffff4444locked from Lua|r on this client — CPU attribution off; using memory + event rates.")
-        else
-            msg("CPU attribution off. |cffffff00/cpp profile on|r arms scriptProfile (reloads).")
-        end
     end
 end
 

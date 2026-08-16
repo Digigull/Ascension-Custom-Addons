@@ -19,7 +19,6 @@
 # Load order within this addon: pure/dependency-free modules first, driver last.
 RingBuffer.lua
 Report.lua
-Meter.lua
 LoadProfile.lua
 MemWalk.lua
 Storm.lua

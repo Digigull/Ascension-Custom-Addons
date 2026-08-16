@@ -1,10 +1,10 @@
---[[ Attrib.lua — per-addon CPU + memory attribution sampler (README §6 step 4).
+--[[ Attrib.lua — per-addon MEMORY attribution sampler (README §6 step 4).
 
-     Answers the "WHO" the community wants: which addon spent the CPU/memory in
-     the last window. CPU requires scriptProfile=1 (armed via a reload); memory
-     does not. Everything is feature-gated through Probe.caps() — if the CPU
-     family is stripped on Ascension, attribution degrades to memory deltas only
-     and the report still stands on event rates.
+     Answers the "WHO" the community wants: which addon moved memory in the last
+     window. The CPU half is gone: it required scriptProfile=1, which this client
+     resets to 0 on load, so GetAddOnCPUUsage only ever returned zeros here.
+     Feature-gated through Probe.caps() — with GetAddOnMemoryUsage locked too, this
+     degrades to nothing and the report stands on event rates and the load profile.
 
      Cost control (§4, measurement perturbs): a FULL addon scan is expensive, so
      it runs on an interval (default 5s), NOT per frame. Spike records borrow the
@@ -17,11 +17,9 @@ local ADDON, ns = ...
 
 local Attrib = {}
 
-local prevCPU = {}     -- addon name -> cumulative ms at last snapshot
 local prevMem = {}     -- addon name -> cumulative KB at last snapshot
-local lastRanked = {}  -- most recent ranked delta list (for spike records)
+local lastRanked = {}  -- most recent ranked delta list
 local haveBaseline = false
-local cpuSeen = false  -- have we ever read a nonzero per-addon CPU value?
 local memSeen = false  -- have we ever read a nonzero per-addon memory value?
 
 -- Take a snapshot of all loaded addons and return per-addon DELTAS since the
@@ -33,9 +31,6 @@ function Attrib.sample()
         return lastRanked
     end
 
-    if caps.addonCPU and caps.profileOn and type(UpdateAddOnCPUUsage) == "function" then
-        UpdateAddOnCPUUsage()
-    end
     if caps.addonMem and type(UpdateAddOnMemoryUsage) == "function" then
         UpdateAddOnMemoryUsage()
     end
@@ -45,26 +40,19 @@ function Attrib.sample()
     for i = 1, n do
         local name = GetAddOnInfo(i)
         if name then
-            local cpu = (caps.addonCPU and caps.profileOn) and (GetAddOnCPUUsage(i) or 0) or nil
             local mem = caps.addonMem and (GetAddOnMemoryUsage(i) or 0) or nil
-            if cpu and cpu > 0 then cpuSeen = true end
             if mem and mem > 0 then memSeen = true end
 
-            local cpuDelta, memDelta = 0, 0
-            if cpu ~= nil then
-                cpuDelta = cpu - (prevCPU[name] or cpu)  -- 0 on first sight
-                prevCPU[name] = cpu
-            end
+            local memDelta = 0
             if mem ~= nil then
-                memDelta = mem - (prevMem[name] or mem)
+                memDelta = mem - (prevMem[name] or mem)  -- 0 on first sight
                 prevMem[name] = mem
             end
 
             -- keep only addons that did something this window (or, on baseline, all)
-            if not haveBaseline or cpuDelta > 0 or memDelta ~= 0 then
+            if not haveBaseline or memDelta ~= 0 then
                 out[#out + 1] = {
                     name = name,
-                    cpuMs = cpuDelta > 0 and cpuDelta or 0,
                     memKb = memDelta,
                     events = 0,
                 }
@@ -77,33 +65,21 @@ function Attrib.sample()
     return lastRanked
 end
 
--- Cheap accessor for spike records: the top few offenders from the last
--- interval sample, shaped as { name=, ms= } for Report.classify / spike rows.
-function Attrib.topForSpike(limit)
-    local out = {}
-    for i = 1, math.min(limit or 3, #lastRanked) do
-        out[i] = { name = lastRanked[i].name, ms = lastRanked[i].cpuMs }
-    end
-    return out
-end
-
 function Attrib.lastRanked() return lastRanked end
 
 -- Attribution capability actually observed live: "none" is the Ascension case
--- (both CPU and memory return 0). Drives the report header's attr= field so a
+-- (per-addon memory reads back 0). Drives the report header's attr= field so a
 -- pasted capture is honest about why offender rows are empty.
 function Attrib.attrMode()
-    if cpuSeen and memSeen then return "cpu+mem" end
-    if cpuSeen then return "cpu" end
     if memSeen then return "mem" end
     return "none"
 end
 
 function Attrib.reset()
-    prevCPU, prevMem, lastRanked = {}, {}, {}
+    prevMem, lastRanked = {}, {}
     haveBaseline = false
-    -- deliberately DON'T reset cpuSeen/memSeen: capability is a client fact, not
-    -- a per-window one, and clear/reset shouldn't relitigate it.
+    -- deliberately DON'T reset memSeen: capability is a client fact, not a
+    -- per-window one, and clear/reset shouldn't relitigate it.
 end
 
 ns.Attrib = Attrib

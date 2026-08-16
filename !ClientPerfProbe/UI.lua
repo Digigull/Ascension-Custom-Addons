@@ -4,10 +4,9 @@
      A large, draggable, resizable window that shows the data as a ranked list of
      horizontal BARS (name on the bar, value on the right, width = value / the top
      value) — the Details! breakdown look. A dropdown at the top switches the
-     measurement (Memory / Spikes / CPU / Events / Addon Storm / Load / API Matrix /
-     Overview). Data that isn't a natural ranked-number list (API rows, overview
-     facts) is shown as a FULL bar; clicking any bar opens a popup with that item's
-     detail.
+     measurement (Spikes / Events / Addon Storm / Load Time / Memory / System Info).
+     Data that isn't a natural ranked-number list (session facts, API rows) is shown
+     as a FULL bar; clicking any bar opens a popup with that item's detail.
 
      This is a *convenience view* over the same live data the report collects — it
      formats only, never re-gathers or perturbs; a refresh is itself a frame cost
@@ -95,14 +94,12 @@ end
 --                       accent={r,g,b}, note= }.  value=nil => a FULL bar.
 
 local ACCENT = {
-    overview = { 0.80, 0.80, 0.80 },
     spikes   = { 0.90, 0.35, 0.35 },
-    cpu      = { 1.00, 0.70, 0.20 },
     events   = { 0.30, 0.75, 0.70 },
     storm    = { 0.90, 0.30, 0.30 },
     memory   = { 0.35, 0.60, 1.00 },
     load     = { 0.70, 0.50, 0.90 },
-    matrix   = { 0.55, 0.55, 0.60 },
+    system   = { 0.80, 0.80, 0.80 },
 }
 
 -- Title-case a friendly frame-open label ("auction house" -> "Auction House") for
@@ -180,9 +177,6 @@ local function spikeDetail(sp, boot)
     if type(sp.t) == "number" and boot and sp.t < boot then
         lines[#lines + 1] = "NOTE: restored from a prior session (old=1)"
     end
-    if type(sp.topCPU) == "table" and sp.topCPU[1] and sp.topCPU[1].name then
-        lines[#lines + 1] = ("Attributed CPU: %s = %s ms"):format(sp.topCPU[1].name, ms1(sp.topCPU[1].ms or 0))
-    end
     if type(sp.events) == "table" and sp.events[1] then
         lines[#lines + 1] = "Recent events: " .. table.concat(sp.events, ", ")
     end
@@ -237,28 +231,6 @@ local function pMemory(d)
         }
     end
     return { title = "Per-global Lua memory (estimate)", rows = rows, accent = ACCENT.memory, note = note }
-end
-
-local function pCPU(d)
-    local rows, prof = {}, d.profiled or {}
-    if prof[1] then
-        for i, p in ipairs(prof) do
-            rows[#rows + 1] = {
-                label = i .. ". " .. tostring(p.tag),
-                value = p.ms or 0,
-                valueText = ms1(p.ms) .. " ms",
-                detail = ("%s\nTotal: %s ms over %d calls\nPer call: %s ms\n\nMeasured via the cooperative ClientPerfProbe library (debugprofilestop) — accurate but only for addons that opt in."):format(
-                    tostring(p.tag), ms1(p.ms), p.calls or 0, ms1(p.perMs)),
-            }
-        end
-    else
-        rows[1] = {
-            label = "No cooperating addons have opted in",
-            value = nil, valueText = "",
-            detail = "The stock per-addon CPU API (scriptProfile) is locked on Ascension, so per-handler CPU can only be measured for addons that call ClientPerfProbe.Wrap(). None have reported cost yet.",
-        }
-    end
-    return { title = "Per-handler CPU (cooperating addons)", rows = rows, accent = ACCENT.cpu }
 end
 
 local function pSpikes(d)
@@ -348,27 +320,11 @@ local function pLoad(d)
     return { title = "Initial-load cost per addon", rows = rows, accent = ACCENT.load, note = note }
 end
 
-local function pMatrix(d)
-    local rows, mtx = {}, d.matrix or {}
-    if mtx[1] then
-        for _, r in ipairs(mtx) do
-            local st = r.status or "?"
-            local c = (st == "ok") and { 0.4, 0.85, 0.4 } or (st == "missing") and { 0.9, 0.35, 0.35 } or { 0.95, 0.8, 0.2 }
-            rows[#rows + 1] = {
-                label = tostring(r.name),
-                value = nil,                       -- not numeric -> full bar, coloured by status
-                valueText = st,
-                color = c,
-                detail = ("%s\nStatus: %s\n%s"):format(tostring(r.name), st, r.detail ~= "" and r.detail or "(no detail)"),
-            }
-        end
-    else
-        rows[1] = { label = "Matrix unavailable", value = nil, valueText = "", detail = "The API feature-detection matrix could not be built." }
-    end
-    return { title = "API support matrix", rows = rows, accent = ACCENT.matrix }
-end
-
-local function pOverview(d)
+-- System Info — this session's facts followed by the API feature-detection matrix.
+-- One view rather than two: both answer "what is this client, and what can the probe
+-- actually read on it", and neither filled a screen on its own. The matrix half needs
+-- d.matrix, which the snapshot only builds for this category (see render()).
+local function pSystem(d)
     local m = d.meta or {}
     local rows = {}
     local function fact(label, value, detail)
@@ -378,7 +334,7 @@ local function pOverview(d)
     fact("Character", (m.char or "?") .. " — " .. (m.realm or "?"))
     fact("Zone", m.zone or "?")
     fact("Run length", (m.windowSec or "?") .. " s")
-    fact("Attribution", m.attr or "none", "Which per-addon attribution the stock APIs give. 'none' on Ascension — scriptProfile + GetAddOnMemoryUsage are locked; cooperating addons still self-report CPU.")
+    fact("Attribution", m.attr or "none", "Which per-addon attribution the stock APIs give. 'none' on Ascension — GetAddOnMemoryUsage is locked, so a spike is attributed by what it coincided with, not by who spent the time.")
     if st then fact("Status", st.reason, "Storm monitor: " .. st.level:upper() .. ". " .. st.reason) end
     local spikes = d.spikes or {}
     local worst
@@ -387,26 +343,45 @@ local function pOverview(d)
     if worst then fact("Worst spike", ms(worst.dt) .. " ms  (" .. (ns.Report and ns.Report.classify(worst) or "?") .. ")", spikeDetail(worst, m.boot or 0)) end
     local okHeap, heapVal = pcall(collectgarbage, "count")
     if okHeap and type(heapVal) == "number" then fact("Lua heap", fmtKB(heapVal)) end
-    local prof = d.profiled or {}
-    if prof[1] then fact("Top CPU", tostring(prof[1].tag) .. "  " .. ms1(prof[1].ms) .. " ms") end
-    return { title = "Overview", rows = rows, accent = ACCENT.overview }
+
+    -- API support matrix, appended under a divider row so the two halves stay
+    -- readable as one scrolling list.
+    local mtx = d.matrix or {}
+    rows[#rows + 1] = { label = "|cffffd200API support on this client|r", value = nil, valueText = "",
+        detail = "Feature detection, run live: which of the APIs this probe depends on actually exist and answer on this client. Ground rule 2 — probe, never assume." }
+    if mtx[1] then
+        for _, r in ipairs(mtx) do
+            local status = r.status or "?"
+            local c = (status == "ok") and { 0.4, 0.85, 0.4 } or (status == "missing") and { 0.9, 0.35, 0.35 } or { 0.95, 0.8, 0.2 }
+            rows[#rows + 1] = {
+                label = tostring(r.name),
+                value = nil,                       -- not numeric -> full bar, coloured by status
+                valueText = status,
+                color = c,
+                detail = ("%s\nStatus: %s\n%s"):format(tostring(r.name), status, r.detail ~= "" and r.detail or "(no detail)"),
+            }
+        end
+    else
+        rows[#rows + 1] = { label = "Matrix unavailable", value = nil, valueText = "", detail = "The API feature-detection matrix could not be built." }
+    end
+    return { title = "System info", rows = rows, accent = ACCENT.system }
 end
 
 -- category registry (order = dropdown order); default lands on Spikes (see currentCat).
 -- Labels are kept short so the top header stays compact even at a tiny window width.
--- `hidden = true` entries keep their provider (still reachable via UI.Select, e.g. the
--- sim) but are omitted from the dropdown — flip the flag to bring one back.
+-- Every category is shown: the three formerly-hidden ones are resolved — CPU is gone
+-- with the cooperative meter, and Overview + Matrix merged into System Info.
 local CATS = {
-    { id = "spikes",   label = "Spikes",    provider = pSpikes   },
-    { id = "events",   label = "Events",    provider = pEvents   },
-    { id = "storm",    label = "Storm",     provider = pStorm    },
-    { id = "load",     label = "Load Time", provider = pLoad     },
-    { id = "memory",   label = "Memory",    provider = pMemory   },
-    { id = "cpu",      label = "CPU",      provider = pCPU,      hidden = true },
-    { id = "matrix",   label = "Matrix",   provider = pMatrix,   hidden = true },
-    { id = "overview", label = "Overview", provider = pOverview, hidden = true },
+    { id = "spikes",   label = "Spikes",      provider = pSpikes },
+    { id = "events",   label = "Events",      provider = pEvents },
+    { id = "storm",    label = "Storm",       provider = pStorm  },
+    { id = "load",     label = "Load Time",   provider = pLoad   },
+    { id = "memory",   label = "Memory",      provider = pMemory },
+    { id = "system",   label = "System Info", provider = pSystem },
 }
 
+-- Unknown ids fall back to the first category, which is what a UI.Select() call
+-- naming a retired category ("cpu"/"matrix"/"overview") now lands on.
 local function catById(id)
     for _, c in ipairs(CATS) do if c.id == id then return c end end
     return CATS[1]
@@ -481,7 +456,7 @@ end
 render = function()
     if not (frame and frame:IsShown()) then return end
     local cat = catById(currentCat)
-    local d = (type(api.snapshot) == "function") and api.snapshot(currentCat == "matrix") or {}
+    local d = (type(api.snapshot) == "function") and api.snapshot(currentCat == "system") or {}
 
     local ok, res = pcall(cat.provider, d)
     if not ok or type(res) ~= "table" then
@@ -971,15 +946,12 @@ local function buildDropdown()
     darkBackdrop(menu)
     menu:SetPoint("TOPLEFT", btn, "BOTTOMLEFT", 0, -2)
     menu:SetWidth(130)
-    local nVis = 0
-    for _, cat in ipairs(CATS) do if not cat.hidden then nVis = nVis + 1 end end
-    menu:SetHeight(nVis * 20 + 12)
+    menu:SetHeight(#CATS * 20 + 12)
     menu:Hide()
     frame.catMenu = menu
 
     local prev
     for _, cat in ipairs(CATS) do
-        if not cat.hidden then
         local mb = CreateFrame("Button", nil, menu)
         mb:SetHeight(20)
         mb:SetPoint("LEFT", 8, 0)
@@ -993,7 +965,6 @@ local function buildDropdown()
         txt:SetText(cat.label)
         mb:SetScript("OnClick", function() selectCat(cat.id) end)
         prev = mb
-        end
     end
 
     btn:SetScript("OnClick", function()
