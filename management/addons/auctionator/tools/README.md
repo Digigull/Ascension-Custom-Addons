@@ -75,6 +75,33 @@ it is the only thing that tests the premise the whole seed rests on — that a c
 `pt = "learned"` rows are repeat sales of a price already stored locally and prove nothing;
 both tools ignore them.
 
+## analyze-growth.lua — why the estimator is not fixable by bucketing
+
+```sh
+lua5.1 management/addons/auctionator/tools/analyze-growth.lua <dump.lua> [more dumps...] [-v]
+```
+
+Every log row carries both the cached unscaled sighting (`bil`, `brq`, `bp`) and what actually
+sold (`il`, `rq`, `p`), so each row spans two item levels of one item — and unlike `obs`, log
+rows carry `qual`/`cls`/`sub`/`slot`. That makes the log the right dataset for asking whether
+price growth clusters by item category. It doesn't:
+
+- Grouping by `cls`, `sub` or `slot` explains at most ~16% of the scatter, and reconstructing
+  prices from group-median growth (leave-one-out) scores *worse* than the predictor already
+  shipping. Only `qual` beat it, 27.2% vs 30.4% median error — a few points, not a fix.
+- The reason every variant plateaus around 27–35%: **growth per item level is the wrong model.**
+  The ratio `p / bp` spikes hard on exactly 1.00x (124 rows) and exactly 2.00x (52 rows) —
+  45% of samples — with stack size 1 throughout, so it is not a quantity artifact. It is a step
+  function, and no smooth per-ilvl curve fits a step function.
+- The multiplier is not a function of sale item level either: at ilvl 65, 55 rows sit at 1.00x
+  and 32 at 2.00x. Same level, different items, different multiplier.
+
+So the multiplier is a per-item property that cannot be derived from class, subclass, quality,
+slot or item level — it has to be observed. Which is what `obs`, `base` and `trk` already do,
+and why the seed is the architecture rather than a stopgap for a formula not yet found.
+
+Re-run it as dumps accumulate; the conclusion is only as good as 391 samples from two accounts.
+
 ## Conflict counters
 
 `obs` records carry `x` (two real sales of the same tuple disagreed) and `sx` (a real sale
