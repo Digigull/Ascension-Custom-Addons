@@ -1289,7 +1289,13 @@ if (SlashCmdList) then
 		local id = tonumber (msg:match ("item:(%d+)") or msg:match ("^%s*(%d+)"));
 		if (id == nil) then
 			local nobs, nbase, ncb, nseed = 0, 0, 0, 0;
-			for _, o in pairs (db.obs)  do nobs  = nobs  + 1; if (o.seed and (o.n or 0) == 0) then nseed = nseed + 1; end; end;
+			local nx, nsx = 0, 0;			-- tuples that ever sold for two different prices
+			for _, o in pairs (db.obs)  do
+				nobs  = nobs  + 1;
+				if (o.seed and (o.n or 0) == 0) then nseed = nseed + 1; end;
+				if ((o.x  or 0) > 0) then nx  = nx  + 1; end;
+				if ((o.sx or 0) > 0) then nsx = nsx + 1; end;
+			end
 			for _ in pairs (db.base) do nbase = nbase + 1; end;
 			for _ in pairs (db.cb)   do ncb   = ncb   + 1; end;
 			zc.msg_atr ("vendor-predict build "..ATR_VP_BUILD.."  |  obs "..nobs.."  base "..nbase.."  sighted items "..ncb);
@@ -1311,6 +1317,12 @@ if (SlashCmdList) then
 				smed = string.format ("%.1f%%", m * 100);
 			end
 			zc.msg_atr ("seed v"..tostring(db.seedver).."  |  "..nseed.." pending  "..npromoted.." field-tested  median err "..smed);
+			-- Silent while the price-is-a-server-fact premise holds, which is the
+			-- point: any number here is a tuple that sold for two different
+			-- prices, and worth chasing before the next seed regeneration.
+			if (nx > 0 or nsx > 0) then
+				zc.msg_atr ("|cffff8800conflicts|r  "..nx.." tuple(s) sold at two prices  "..nsx.." contradicting the shipped seed  (/atrvp <item> to inspect)");
+			end
 			zc.msg_atr ("usage: /atrvp <itemID or shift-clicked link> [il rq]");
 			return;
 		end
@@ -1423,6 +1435,24 @@ local function Atr_VendorRecordSale (ps, bprice, bqty)
 
 		local rec = db.obs[key];
 		if (rec == nil) then rec = { n = 0 }; db.obs[key] = rec; end;
+
+		-- CONFLICT ACCOUNTING.  The whole seed rests on one claim: a confirmed
+		-- (itemID, ilvl, req) price is a server fact, identical for every player
+		-- and every character.  A tuple that sells twice for two different
+		-- prices falsifies that claim for this item, and until now nothing
+		-- recorded it -- rec.p was overwritten in place, so n counted sales
+		-- rather than agreement and a contradiction left no trace at all.
+		-- db.base has had this check since it was written (majority vote, x
+		-- counts conflicts); obs is the table the seed actually ships, so it
+		-- needs it more.  Counters only: the price still takes the latest
+		-- reading, exactly as before.
+		--   x  two real sales of the same tuple disagreed
+		--   sx a real sale here contradicted the SHIPPED seed price
+		if (prior and prior.p and prior.p ~= unit) then
+			if (wasSeed) then rec.sx = (rec.sx or 0) + 1;
+			else              rec.x  = (rec.x  or 0) + 1; end
+		end
+
 		rec.p = unit;
 		rec.n = rec.n + 1;
 		rec.seed = nil;					-- promoted: a real sale outranks the shipped guess

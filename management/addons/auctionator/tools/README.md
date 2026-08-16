@@ -75,6 +75,19 @@ it is the only thing that tests the premise the whole seed rests on — that a c
 `pt = "learned"` rows are repeat sales of a price already stored locally and prove nothing;
 both tools ignore them.
 
+## Conflict counters
+
+`obs` records carry `x` (two real sales of the same tuple disagreed) and `sx` (a real sale
+contradicted the shipped seed price); `base` records have carried `x` since they were written.
+Either one is a direct refutation of the premise the seed rests on, so the diff surfaces them
+as `obs.contested` / `base.contested` and the verdict line fails on them.
+
+**Zero is only meaningful in a dump taken after the counters existed.** The obs counters were
+added alongside this tooling, so earlier dumps have no `x`/`sx` at all and report zero because
+nothing was watching — the write path used to overwrite `rec.p` in place, which means `n`
+counted sales rather than agreement and a contradiction left no trace. `base` conflict counts
+are trustworthy further back.
+
 ## Two things that will bite you
 
 **`meta.built` is load-bearing.** `Atr_VendorSeed_Merge` refreshes a seed-only entry only when

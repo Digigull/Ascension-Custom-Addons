@@ -119,6 +119,7 @@ bucket ("obs.disagree",    "in both, DIFFERENT price -- one of the two is wrong"
 bucket ("obs.new.real",    "not in seed, confirmed by a real sale here -- the payload")
 bucket ("obs.new.echo",    "not in seed, flagged seeded -- ghost from an OLDER seed")
 bucket ("obs.seedonly",    "in seed, absent from the dump -- carried forward unverified")
+bucket ("obs.contested",   "same tuple sold at two different prices (x/sx) -- premise broken for this item")
 bucket ("obs.malformed",   "unparseable key or non-integer price -- dropped")
 bucket ("base.agree",      "in both, same price")
 bucket ("base.disagree",   "in both, DIFFERENT price")
@@ -141,6 +142,13 @@ for k, rec in pairs (learned.obs or {}) do
 		local n    = rec.n or 0
 		local echo = (rec.seed == 1 and n == 0)		-- merge writes exactly this
 		if (echo) then nEcho = nEcho + 1 else nReal = nReal + 1 end
+
+		-- x/sx are written by the conflict accounting in Atr_VendorLearn_OnEvent.
+		-- Dumps taken before that existed simply have neither, which reads as
+		-- "no conflict recorded" -- absence of evidence, not evidence of absence.
+		if ((rec.x or 0) > 0 or (rec.sx or 0) > 0) then
+			put ("obs.contested", { k = k, p = rec.p, n = n, x = (rec.x or 0) + (rec.sx or 0) })
+		end
 
 		local sp = seedObs[k]
 		if (sp == nil) then
@@ -382,7 +390,7 @@ io.write ("\n")
 
 -- The verdict is about provenance, not counts: disagreements and ghosts are the
 -- two ways a regeneration can ship something worse than what it replaced.
-local bad = #B["obs.disagree"].rows + #B["base.disagree"].rows
+local bad = #B["obs.disagree"].rows + #B["base.disagree"].rows + #B["obs.contested"].rows
 local ghost = #B["obs.new.echo"].rows + #B["base.new.echo"].rows
 if (bad > 0)   then io.write (string.format ("WARN  %d price disagreement(s) -- reconcile before regenerating.\n", bad)) end
 if (ghost > 0) then io.write (string.format ("WARN  %d ghost entr(ies) from an older seed -- union mode would promote them.\n", ghost)) end
