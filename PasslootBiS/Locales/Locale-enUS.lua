@@ -389,9 +389,9 @@ L["AdvisorStatus_OpenScanner"] = "Scanner settings"
 L["AdvisorStatus_OpenScanner_Tip"] = "Open the BiS Scanner's settings window, the same one its minimap button opens. This closes the Interface panel so the window is not hidden behind it."
 L["AdvisorStatus_OpenScannerFailed"] = "Could not open the BiS Scanner settings window."
 -- "Show Loot Advisor" preview button.
-L["AdvisorStatus_ShowAdvisor"] = "Show Loot Advisor"
-L["AdvisorStatus_HideAdvisor"] = "Hide Loot Advisor"
-L["AdvisorStatus_ShowAdvisor_Tip"] = "Pop a test roll prompt so you can drag it where you want it and stretch it from the bottom-right corner. Position and size are remembered. Let the timer run out, pick a button, or click Hide to dismiss it. Nothing is rolled."
+-- Label stays put when the preview is up; see the note in Core/AdvisorStatus.lua.
+L["AdvisorStatus_ShowAdvisor"] = "Show Advisor"
+L["AdvisorStatus_ShowAdvisor_Tip"] = "Pop a test roll prompt so you can drag it where you want it and stretch it from the bottom-right corner. Position and size are remembered. Let the timer run out, pick a button, or click this again to dismiss it. Nothing is rolled."
 L["AdvisorStatus_ScanningOff"] = "Scanning off"
 L["AdvisorStatus_ScanningOff_Tip"] = "The scanner is switched off. Turn it back on with /plbisscan on."
 -- Row 1: the PassLoot <-> Scanner link.

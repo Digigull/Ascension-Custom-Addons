@@ -102,15 +102,21 @@ local function scannerAPI(HostAPI)
 	return nil
 end
 
--- The scanner's Options module, or nil. This one genuinely needs the published
--- namespace: the advisor registry only ever holds the API table, which carries
--- the verdict/status functions and no UI at all.
+-- The scanner's Options module and the function to open it, or nil. This one
+-- genuinely needs the published namespace: the advisor registry only ever holds
+-- the API table, which carries the verdict/status functions and no UI at all.
+--
+-- Show is preferred over Toggle and that is not a detail. The window sits on LOW
+-- strata, so it renders UNDER the Interface Options panel: open it from the
+-- minimap, leave it up, come here and click the cog, and Toggle would HIDE the
+-- window you were asking to see — indistinguishable from a dead button. A button
+-- that says "settings" must only ever open them.
 local function scannerOptions()
 	local Scanner = rawget(_G, "PLBiSScanner")
 	local Options = (type(Scanner) == "table") and Scanner.Options or nil
-	if (type(Options) == "table" and type(Options.Toggle) == "function") then
-		return Options
-	end
+	if (type(Options) ~= "table") then return nil end
+	if (type(Options.Show) == "function") then return Options, Options.Show end
+	if (type(Options.Toggle) == "function") then return Options, Options.Toggle end
 	return nil
 end
 
@@ -313,17 +319,23 @@ end
 -- Reached through the published namespace; the advisor registry only ever carries
 -- the API table, which has no UI on it. Returns false if there is nothing to open.
 function PasslootBiS:OpenScannerOptions()
-	local Options = scannerOptions()
+	local Options, Open = scannerOptions()
 	if (not Options) then
 		self:Print(L["AdvisorStatus_OpenScannerFailed"])
 		return false
 	end
-	-- The scanner's window is a plain floating frame, so it would open BEHIND the
-	-- Interface Options panel and look like nothing happened. Close the panel first.
+	-- The scanner's window is on LOW strata, so it would open BEHIND the Interface
+	-- Options panel and look like nothing happened. Close the panel first.
 	if (rawget(_G, "InterfaceOptionsFrame") and InterfaceOptionsFrame:IsShown()) then
 		InterfaceOptionsFrame:Hide()
 	end
-	local Ok = pcall(Options.Toggle)
+	-- pcall so a companion addon's error can't break this panel — but REPORT it.
+	-- Swallowing it silently is what made the first version of this button
+	-- indistinguishable from one that was never wired up.
+	local Ok, Err = pcall(Open)
+	if (not Ok) then
+		self:Print(L["AdvisorStatus_OpenScannerFailed"] .. " (" .. tostring(Err) .. ")")
+	end
 	return Ok
 end
 
@@ -447,6 +459,15 @@ function PasslootBiS:Create_AdvisorStatusFrame()
 			Row.Check:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		end
 
+		-- Row.Hit spans the whole row INCLUDING the control, and a mouse-enabled
+		-- frame eats clicks meant for anything at or below its level. Both are
+		-- children of the same parent, so their default levels are identical and
+		-- which one wins is left to creation order — lift the control clear of it
+		-- explicitly rather than relying on that.
+		local Lift = Row.Hit:GetFrameLevel() + 2
+		if (Row.Open) then Row.Open:SetFrameLevel(Lift) end
+		if (Row.Check) then Row.Check:SetFrameLevel(Lift) end
+
 		Frame.Rows[Index] = Row
 		Anchor = Row.Value
 	end
@@ -477,7 +498,10 @@ function PasslootBiS:Create_AdvisorStatusFrame()
 	Frame.Refresh:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 	-- Pops the real held-confirm window on a fake roll so it can be dragged and
-	-- resized out of combat. Toggles to "Hide" while it is up (Core/RollAdvisor.lua).
+	-- resized out of combat (Core/RollAdvisor.lua). Clicking it again dismisses the
+	-- preview, but the LABEL never changes: a button whose text rewrites itself on
+	-- press reads as the panel having changed state, when all that happened is a
+	-- test window opened somewhere else on the screen.
 	Frame.Preview = CreateFrame("Button", nil, Frame, "UIPanelButtonTemplate")
 	Frame.Preview:SetPoint("TOPLEFT", Frame.Refresh, "BOTTOMLEFT", 0, -4)
 	Frame.Preview:SetPoint("TOPRIGHT", Frame.Refresh, "BOTTOMRIGHT", 0, -4)
@@ -530,10 +554,6 @@ function PasslootBiS:RefreshAdvisorStatus()
 			if (Row.Open) then Row.Open:Hide() end
 		end
 	end
-
-	-- The preview button says what clicking it will do, not what is showing.
-	Frame.Preview:SetText(self:IsRollConfirmPreviewShown()
-		and L["AdvisorStatus_HideAdvisor"] or L["AdvisorStatus_ShowAdvisor"])
 
 	-- + both buttons, their gaps, and the bottom margin.
 	Frame:SetHeight(Bottom + 8 + BUTTON_HEIGHT + 4 + BUTTON_HEIGHT + 12)
