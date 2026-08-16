@@ -516,7 +516,15 @@ function PasslootBiS:Create_AdvisorStatusFrame()
 		function() self:ShowTooltip(L["AdvisorStatus_ShowAdvisor"], L["AdvisorStatus_ShowAdvisor_Tip"]) end)
 	Frame.Preview:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-	Frame:SetScript("OnShow", function() self:RefreshAdvisorStatus() end)
+	Frame:SetScript("OnShow", function()
+		self:RefreshAdvisorStatus()
+		-- Opening this page is the earliest reliable warning that the preview button
+		-- might be pressed. Warming the item cache now means its icon is ready when
+		-- it is (Core/RollAdvisor.lua explains why the first query can never be).
+		if (self.WarmRollConfirmPreview) then
+			self:WarmRollConfirmPreview()
+		end
+	end)
 
 	return Frame
 end

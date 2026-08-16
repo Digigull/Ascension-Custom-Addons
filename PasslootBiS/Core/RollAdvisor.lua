@@ -399,6 +399,10 @@ local MIN_WIDTH, MIN_HEIGHT = 170, 120
 local MAX_WIDTH, MAX_HEIGHT = 600, 320
 local SLOT_GAP = 8          -- vertical space between stacked popups
 local FALLBACK_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+-- Where the first popup sits until the user drags it somewhere else: centred at
+-- the top of the screen, clear of the very edge. High enough to be out of the way
+-- of the action, and the stacking offset runs downward from here into empty space.
+local DEFAULT_ANCHOR = { ["point"] = "TOP", ["relPoint"] = "TOP", ["x"] = 0, ["y"] = -20 }
 local BTN_HEIGHT = 22
 local BTN_BOTTOM = 16       -- clears the resize grip in the bottom-right corner
 
@@ -463,7 +467,8 @@ local function placeFrame(f, slot)
   if store and store.point and tonumber(store.x) and tonumber(store.y) then
     f:SetPoint(store.point, UIParent, store.relPoint or store.point, store.x, store.y + dy)
   else
-    f:SetPoint("TOP", UIParent, "TOP", 0, -200 + dy)
+    f:SetPoint(DEFAULT_ANCHOR.point, UIParent, DEFAULT_ANCHOR.relPoint,
+      DEFAULT_ANCHOR.x, DEFAULT_ANCHOR.y + dy)
   end
 end
 
@@ -615,14 +620,36 @@ local function resolveTexture(rollID, itemLink, isPreview)
   return FALLBACK_ICON
 end
 
+local function setIconTexture(f, texture)
+  f.icon:SetNormalTexture(texture)
+  local tex = f.icon:GetNormalTexture()
+  if tex then tex:SetTexCoord(0.07, 0.93, 0.07, 0.93) end   -- trim the stock border
+end
+
 -- Bind one roll's item to the pooled frame: icon, and the fields its permanently
 -- installed hover/click handlers read.
+--
+-- `iconResolved` false means we are still showing the question mark. GetItemInfo
+-- populates ASYNCHRONOUSLY: for an item the client has never seen, the first query
+-- returns nil and is itself what starts the fill, so the icon cannot be right on
+-- the first attempt however early we ask. The OnUpdate loop retries until it
+-- lands (see retryIcon) rather than leaving a question mark up for the whole roll.
 local function applyItem(f, rollID, ctx, isPreview)
   f.rollID = rollID
   f.itemLink = ctx.itemLink
-  f.icon:SetNormalTexture(resolveTexture(rollID, ctx.itemLink, isPreview))
-  local tex = f.icon:GetNormalTexture()
-  if tex then tex:SetTexCoord(0.07, 0.93, 0.07, 0.93) end
+  local texture = resolveTexture(rollID, ctx.itemLink, isPreview)
+  f.iconResolved = (texture ~= FALLBACK_ICON)
+  setIconTexture(f, texture)
+end
+
+-- Re-ask for the icon. Cheap: two table lookups and a client call, run at most a
+-- few times a second and only until it resolves.
+local function retryIcon(f)
+  local texture = resolveTexture(f.rollID, f.itemLink, f.preview)
+  if texture ~= FALLBACK_ICON then
+    setIconTexture(f, texture)
+    f.iconResolved = true
+  end
 end
 
 -- Show a bounded-hold confirm for one roll. On a button click cast that choice;
@@ -670,14 +697,23 @@ function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMet
     if remain < 0 then remain = 0 end
     fr.bar:SetValue(remain)
     fr.timeText:SetText(string.format("%.0fs", remain))
-    -- Throttled live eligibility re-check (~3/sec) until resolved. Skipped for the
-    -- preview, whose RollID is a sentinel the client knows nothing about.
-    if not fr.resolved and not fr.preview and now >= fr.nextElig then
+    -- Throttled (~3/sec) re-checks of the two things the client answers late.
+    if not fr.resolved and now >= fr.nextElig then
       fr.nextElig = now + 0.3
-      local gi = rawget(_G, "GetLootRollItemInfo")
-      if gi then
-        local ok, _, _, _, _, _, cn, cg = pcall(gi, RollID)
-        if ok then applyElig(cn and true or false, cg and true or false) end
+      -- Roll eligibility. Skipped for the preview, whose RollID is a sentinel the
+      -- client knows nothing about.
+      if not fr.preview then
+        local gi = rawget(_G, "GetLootRollItemInfo")
+        if gi then
+          local ok, _, _, _, _, _, cn, cg = pcall(gi, RollID)
+          if ok then applyElig(cn and true or false, cg and true or false) end
+        end
+      end
+      -- The icon, until it lands. An item the client has never seen resolves one
+      -- query AFTER the one that triggered its cache fill, so the first attempt in
+      -- applyItem necessarily draws the question mark.
+      if not fr.iconResolved then
+        retryIcon(fr)
       end
     end
   end)
@@ -742,6 +778,15 @@ end
 
 function PasslootBiS:IsRollConfirmPreviewShown()
   return active[PREVIEW_ROLLID] ~= nil
+end
+
+-- Ask the client about the preview item ahead of time. The return value is
+-- deliberately unused: the CALL is the point, because the first GetItemInfo for an
+-- item the client has never seen returns nil and merely starts the cache fill. The
+-- status panel calls this when it opens, so by the time the button is clicked the
+-- icon is already there and no question mark is ever drawn.
+function PasslootBiS:WarmRollConfirmPreview()
+  previewItemLink()
 end
 
 function PasslootBiS:ShowRollConfirmPreview()
