@@ -30,7 +30,6 @@
 	<Script file="ZoneName.lua"/>
 	<Script file="ZoneType.lua"/>
 	<Script file="BiSImport.lua"/>
-	<Script file="Proficiency.lua"/>
 	<Script file="BiSRollLog.lua"/>
 	<Script file="LootTracker.lua"/>
 </Ui>

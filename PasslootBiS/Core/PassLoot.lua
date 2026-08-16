@@ -58,16 +58,6 @@ local defaults = {
 			["shown"] = false,
 			["log"] = {},
 		},
-		-- Proficiencies page (Modules/Proficiency.lua): the roll action used for
-		-- gear this character has no proficiency for, and which of the two
-		-- generated rules to write. The detection itself is never stored — it is
-		-- re-read from the client, so training a proficiency can't leave a stale
-		-- rule behind unnoticed.
-		["Proficiency"] = {
-			["roll"] = "pass",
-			["armor"] = true,
-			["weapons"] = true,
-		},
 		["SinkOptions"] = {},
 		["SkipRules"] = false,
 		["SkipWarning"] = true,
@@ -457,7 +447,6 @@ function PasslootBiS:OnInitialize()
 	self.OptionsTable.args.Output = self:GetSinkAce3OptionsDataTable()
 	self.OptionsTable.args.Import = self:BuildImportOptions()
 	self.OptionsTable.args.BiSManager = self:BuildBiSManagerOptions()
-	self.OptionsTable.args.Proficiency = self:BuildProficiencyOptions()
 	LibStub("AceConfig-3.0"):RegisterOptionsTable(L["PasslootBiS"], self.OptionsTable, { L["PASSLOOT_SLASH_COMMAND"] })
 	-- Ability_Racial_PackHobgoblin
 	-- INV_Misc_Bag_10
@@ -496,7 +485,6 @@ function PasslootBiS:OnInitialize()
 		["Output"] = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(L["PasslootBiS"], L["Output"], L["PasslootBiS"], "Output"),
 		["Import"] = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(L["PasslootBiS"], L["Import BiS"], L["PasslootBiS"], "Import"),
 		["BiSManager"] = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(L["PasslootBiS"], L["BiS Manager"], L["PasslootBiS"], "BiSManager"),
-		["Proficiency"] = LibStub("AceConfigDialog-3.0"):AddToBlizOptions(L["PasslootBiS"], L["Proficiencies"], L["PasslootBiS"], "Proficiency"),
 	}
 
 	-- PanelTemplates_SetNumTabs(PasslootBiS_TabbedMenuContainer, 2)  -- 2 because there are 2 tabs total.
@@ -1563,268 +1551,6 @@ function PasslootBiS:DoBiSImport()
 	end
 end
 
--- === Proficiencies =======================================================
--- The "Proficiencies" options page: read what this character can actually
--- equip and turn the GAPS into two "don't roll on it" rules. All of the
--- detection, merging and rule-building lives in Modules/Proficiency.lua (pure +
--- offline self-tested); this half is only the panel, the status text and the
--- write into db.profile.Rules — the same split BiSImport/DoBiSImport uses.
---
--- The scan is cached in self.ProficiencyReport because the skill-line probe
--- expands and re-collapses the Skills window's headers, which is not something
--- to do on every options-page repaint. Rescan is an explicit button, plus once
--- on load, so training a new proficiency mid-session needs one click.
-
-function PasslootBiS:ProficiencyScan(force)
-	local P = self.Proficiency
-	if not P then return nil end
-	if force or not self.ProficiencyReport then
-		self.ProficiencyReport = P.Detect()
-	end
-	return self.ProficiencyReport
-end
-
--- Is the module that owns `key` currently enabled? DefaultVars is rebuilt from
--- the registered modules by CheckRuleTables, so an absent key means no module
--- would ever evaluate that filter (the rule would just be skipped).
-local function moduleVarActive(key)
-	return PasslootBiS.DefaultVars and PasslootBiS.DefaultVars[key] == true
-end
-
--- The panel's detection read-out: one line per proficiency family, colour-coded,
--- plus which probe(s) the answer came from so a bad probe on this client is
--- visible rather than silently shaping the rules.
-function PasslootBiS:ProficiencyText()
-	local P = self.Proficiency
-	if not P then return "|cffff5555" .. L["Prof_NotLoaded"] .. "|r" end
-	local report = self:ProficiencyScan()
-	if not report then return "|cffff5555" .. L["Prof_NotLoaded"] .. "|r" end
-
-	local function names(list)
-		local out = {}
-		for _, p in ipairs(list) do out[#out + 1] = p.key end
-		if #out == 0 then return "|cff736f6e-|r" end
-		return table.concat(out, ", ")
-	end
-
-	local sources = {}
-	if report.skillOK then sources[#sources + 1] = report.skillNote end
-	if report.spellOK then sources[#sources + 1] = report.spellNote end
-	if #sources == 0 then sources[1] = "|cffff5555none|r" end
-	local sourceLine = "|cff736f6e" .. string.format(L["Prof_Source"], table.concat(sources, " + ")) .. "|r"
-
-	-- A failed detection is NOT rendered as "you can use nothing" — that reading
-	-- is the probe failing, and showing it as a proficiency list invites the user
-	-- to trust it. Say so instead, and stop.
-	if not report.ok then
-		return "|cffff5555" .. string.format(L["Prof_DetectFailed"], tostring(report.reason)) .. "|r\n" .. sourceLine
-	end
-
-	local lines = {}
-	for _, family in ipairs({ "armor", "weapon" }) do
-		local bucket = report.split[family]
-		lines[#lines + 1] = "|cffffcc00" .. (family == "armor" and L["Armor"] or L["Weapons"]) .. "|r"
-		lines[#lines + 1] = "  |cff55ff55" .. L["Prof_Known"] .. ":|r " .. names(bucket.known)
-		lines[#lines + 1] = "  |cffff5555" .. L["Prof_Missing"] .. ":|r " .. names(bucket.missing)
-	end
-	lines[#lines + 1] = sourceLine
-	lines[#lines + 1] = "|cff736f6e" .. L["Prof_Caveat"] .. "|r"
-	return table.concat(lines, "\n")
-end
-
-function PasslootBiS:SetProficiencyStatus(text, isError)
-	if text and text ~= "" then
-		self.ProficiencyStatus = (isError and "|cffff5555" or "|cff55ff55") .. text .. "|r"
-	else
-		self.ProficiencyStatus = ""
-	end
-	local reg = LibStub("AceConfigRegistry-3.0", true)
-	if reg then reg:NotifyChange(L["PasslootBiS"]) end
-end
-
-function PasslootBiS:BuildProficiencyOptions()
-	local function settings()
-		self.db.profile.Proficiency = self.db.profile.Proficiency or {}
-		return self.db.profile.Proficiency
-	end
-	return {
-		["type"] = "group",
-		["name"] = L["Proficiencies"],
-		["order"] = 57,   -- Import BiS 50, BiS Manager 55; this sits after them
-		["args"] = {
-			["intro"] = {
-				["type"] = "description",
-				["order"] = 1,
-				["fontSize"] = "medium",
-				["name"] = L["Prof_Intro"],
-			},
-			["detected"] = {
-				["type"] = "description",
-				["order"] = 2,
-				["fontSize"] = "medium",
-				["name"] = function()
-					return "|cffffffff" .. L["Prof_Detected"] .. "|r\n" .. PasslootBiS:ProficiencyText()
-				end,
-			},
-			["rescan"] = {
-				["type"] = "execute",
-				["order"] = 3,
-				["name"] = L["Prof_Rescan"],
-				["desc"] = L["Prof_RescanDesc"],
-				["func"] = function()
-					self:ProficiencyScan(true)
-					self:SetProficiencyStatus("")
-				end,
-			},
-			["action"] = {
-				["type"] = "select",
-				["order"] = 4,
-				["style"] = "dropdown",
-				["name"] = L["Prof_Action"],
-				["desc"] = L["Prof_ActionDesc"],
-				["values"] = function()
-					return {
-						["pass"] = L["Pass"],
-						["greed"] = L["Greed"],
-						["de"] = L["Disenchant"],
-					}
-				end,
-				["get"] = function() return settings().roll or "pass" end,
-				["set"] = function(_, value) settings().roll = value end,
-			},
-			["armor"] = {
-				["type"] = "toggle",
-				["order"] = 5,
-				["name"] = L["Prof_Armor"],
-				["desc"] = L["Prof_ArmorDesc"],
-				["get"] = function() return settings().armor ~= false end,
-				["set"] = function(_, value) settings().armor = value and true or false end,
-			},
-			["weapons"] = {
-				["type"] = "toggle",
-				["order"] = 6,
-				["name"] = L["Prof_Weapons"],
-				["desc"] = L["Prof_WeaponsDesc"],
-				["get"] = function() return settings().weapons ~= false end,
-				["set"] = function(_, value) settings().weapons = value and true or false end,
-			},
-			["go"] = {
-				["type"] = "execute",
-				["order"] = 7,
-				["name"] = L["Prof_Generate"],
-				["desc"] = L["Prof_GenerateDesc"],
-				["func"] = function() self:DoProficiencyGenerate() end,
-			},
-			["remove"] = {
-				["type"] = "execute",
-				["order"] = 8,
-				["name"] = L["Prof_Remove"],
-				["desc"] = L["Prof_RemoveDesc"],
-				["func"] = function() self:DoProficiencyRemove() end,
-			},
-			-- In-panel result line: a Pour message can land behind the Interface
-			-- Options window on this client (same reason as the import panel).
-			["status"] = {
-				["type"] = "description",
-				["order"] = 9,
-				["fontSize"] = "medium",
-				["name"] = function() return PasslootBiS.ProficiencyStatus or "" end,
-			},
-		},
-	}
-end
-
--- Build the rules from the current detection and write them into the profile.
--- Every refusal path (module off, detection failed, a family with no detected
--- proficiency at all) reports WHY in the panel instead of writing a rule that
--- would silently pass on loot — see the safety invariants in Proficiency.lua.
-function PasslootBiS:DoProficiencyGenerate()
-	local P = self.Proficiency
-	if not P then
-		self:SetProficiencyStatus(L["Prof_NotLoaded"], true)
-		return
-	end
-	if not moduleVarActive("TypeSubType") then
-		self:SetProficiencyStatus(L["Prof_NoModule"], true)
-		return
-	end
-	local report = self:ProficiencyScan()
-	if not (report and report.ok) then
-		self:SetProficiencyStatus(
-			string.format(L["Prof_DetectFailed"], tostring(report and report.reason or "unknown")), true)
-		return
-	end
-
-	local settings = self.db.profile.Proficiency or {}
-	local roll = settings.roll or "pass"
-	local built, notes = P.BuildRules(report.known, {
-		roll = roll,
-		armor = settings.armor ~= false,
-		weapons = settings.weapons ~= false,
-		equipSlotAvailable = moduleVarActive("EquipSlot"),
-	})
-
-	local rules = self.db.profile.Rules
-	local written = P.ApplyToRules(rules, built)
-
-	-- Notes explain any family we deliberately did NOT build; they are the whole
-	-- point of the refusal paths, so they show even on a successful write.
-	local rollLabel = ({ ["pass"] = L["Pass"], ["greed"] = L["Greed"], ["de"] = L["Disenchant"] })[roll] or roll
-	local msg = (written > 0)
-		and string.format(L["Prof_Done"], written, rollLabel)
-		or L["Prof_NothingBuilt"]
-	if #notes > 0 then
-		msg = msg .. "\n" .. table.concat(notes, "\n")
-	end
-	self:SetProficiencyStatus(msg, written == 0)
-
-	self:ResetCache()
-	if self.CurrentRule and self.CurrentRule > #rules then self.CurrentRule = nil end
-	if self.RulesFrame and self.Rules_RuleList_OnScroll then self:Rules_RuleList_OnScroll() end
-end
-
-function PasslootBiS:DoProficiencyRemove()
-	local P = self.Proficiency
-	if not P then
-		self:SetProficiencyStatus(L["Prof_NotLoaded"], true)
-		return
-	end
-	local rules = self.db.profile.Rules
-	local removed = P.RemoveFromRules(rules)
-	if removed > 0 then
-		self:SetProficiencyStatus(string.format(L["Prof_Removed"], removed), false)
-		self:ResetCache()
-		if self.CurrentRule and self.CurrentRule > #rules then self.CurrentRule = nil end
-		if self.RulesFrame and self.Rules_RuleList_OnScroll then self:Rules_RuleList_OnScroll() end
-	else
-		self:SetProficiencyStatus(L["Prof_NoneRemoved"], true)
-	end
-end
-
--- /plbisprof — the raw probe output, per proficiency. This is the verification
--- tool: the panel shows the merged answer, this shows which probe produced it,
--- so a probe that doesn't work on this client can be spotted and reported.
-function PasslootBiS:ProficiencyCommand()
-	local P = self.Proficiency
-	if not P then
-		self:Print("|cff33ff99PassLoot|r: " .. L["Prof_NotLoaded"])
-		return
-	end
-	local report = self:ProficiencyScan(true)
-	self:Print("|cff33ff99PassLoot|r proficiency probes:")
-	self:Print(string.format("  skill lines: %s (%s)", tostring(report.skillOK), tostring(report.skillNote)))
-	self:Print(string.format("  spells:      %s (%s)", tostring(report.spellOK), tostring(report.spellNote)))
-	for _, e in ipairs(report.entries) do
-		self:Print(string.format("  %-18s %s  skill=%s spell=%s",
-			e.key,
-			e.known and "|cff55ff55KNOWN|r  " or "|cff736f6emissing|r",
-			tostring(e.viaSkill), tostring(e.viaSpell)))
-	end
-	if not report.ok then
-		self:Print("|cffff5555  detection failed: " .. tostring(report.reason) .. "|r")
-	end
-end
-
 local BUCKET_BAG_UPDATE, BUCKET_PLAYER_LEVEL_UP
 function PasslootBiS:OnEnable()
 	-- events that may fire multiple times in quick succession and require a cache update, but don't require information from the event
@@ -2321,7 +2047,6 @@ end
 
 if PasslootBiS.RegisterChatCommand then
 	PasslootBiS:RegisterChatCommand("plbismgr", "BiSManagerCommand")
-	PasslootBiS:RegisterChatCommand("plbisprof", "ProficiencyCommand")
 end
 
 function PasslootBiS:IterateRules(CallbackFunc, ...)
