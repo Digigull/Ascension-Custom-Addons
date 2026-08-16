@@ -15,11 +15,17 @@ The five addon folders stay at the repo root so a user can download one and drop
 ```
 management/
   docs/                          repo-wide docs (this file, DRAG-FREEZE.md)
+  addons/<addon>/                per-addon docs — findings, decisions, dead ends
   addons/<addon>/tools/          per-addon maintenance tooling, not shipped
 ```
 
 Keep it that way: nothing under `management/` may be required at runtime, and no new
 non-addon folder belongs at the root.
+
+**Anything true of only one addon belongs in `management/addons/<addon>/`, not in this file.**
+This file is read at the start of every session in the repo, so it stays worth reading only if
+it holds rules that apply everywhere. Deep findings, measurements and rejected approaches go in
+a per-addon doc; link it from the table below in one line rather than summarising it here.
 
 ## Environment
 
@@ -104,7 +110,7 @@ a 1px `WHITE8X8` border, `SetBackdropColor(0.05, 0.05, 0.07, 0.95)`,
 |---|---|---|
 | `!ClientPerfProbe` | 4 spaces | The measurement addon. `darkBackdrop()` in `UI.lua` is its house helper. |
 | `AscensionHonorTracker` | 4 spaces | Small. Panel attaches to the character panel; strata matches it. |
-| `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. |
+| `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. Vendor pricing: `management/addons/auctionator/VENDOR-PRICE-RESEARCH.md` — read before touching the price estimator or the shipped seed. |
 | `PasslootBiS` | tabs | Ace3. Load order in `Core/Core.xml`; `PassLoot.lua` loads first, so shared helpers go there. |
 | `PassLootBiS_Scanner` | tabs | Load order in the `.toc`; `Core/UI.lua` loads before its consumers. Files guard on `rawget(_G, "CreateFrame")` so they stay loadable under bare lua5.1 — **preserve that**, it is what makes helpers testable offline. |
 
