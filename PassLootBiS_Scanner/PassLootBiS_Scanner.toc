@@ -36,6 +36,3 @@ Core\Tooltip.lua
 # --- Minimap button + settings window (load after Scanner: need ns.setSpec/ns.db) ---
 Core\MinimapButton.lua
 Core\Options.lua
-
-# --- Drag-freeze isolation harness (DEBUG; /plbisscan dragtest). Loads last. ---
-Core\DragTest.lua

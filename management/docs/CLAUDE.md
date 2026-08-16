@@ -58,9 +58,11 @@ strata, `SetToplevel`, or `Raise`. Short version:
 - The backdrop, children, and drag-wiring are **exonerated** — an empty frame still froze.
   Never attribute a freeze to a backdrop.
 
-**Two files deliberately still contain the bug and must keep it** — they are the isolation
-reproducers, and removing `SetToplevel` destroys the measurement:
-`PassLootBiS_Scanner/Core/DragTest.lua`, `!ClientPerfProbe/BackdropTest.lua`.
+**No file in this repo calls `SetToplevel(true)` any more.** The two isolation reproducers that
+deliberately kept the bug (`PassLootBiS_Scanner/Core/DragTest.lua`, and the frame-spawners in
+`!ClientPerfProbe/BackdropTest.lua`) were retired once the cause was confirmed — the measurement
+they produced is preserved in `DRAG-FREEZE.md`. A new `SetToplevel(true)` anywhere is a
+regression, with no exceptions to check first.
 
 ## Strata conventions
 

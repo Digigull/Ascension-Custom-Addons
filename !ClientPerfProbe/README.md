@@ -48,9 +48,7 @@ addon count means it got there early.
 | `/cpp thr <ms>` | Set the spike threshold |
 | `/cpp gc` | Force one full GC and measure the pause |
 | `/cpp mem` | Bounded `_G` walk ranking the largest memory globals |
-| `/cpp backdrop <Frame>` | Read a window's backdrop, to compare a laggy one against a smooth one |
-| `/cpp backdroptest` | Spawn A/B/C/D drag frames to isolate a backdrop as the stutter cause |
-| `/cpp constructtest` | E/F/G/H drag frames (backdrop constant) to isolate dropdown children |
+| `/cpp backdrop <Frame>` | Read a live window's backdrop, to compare one window's chrome against another |
 | `/cpp save` | Stamp the report into SavedVariables, then `/reload` and attach the file |
 | `/cpp clear [min]` | Wipe captured spikes and counters (`clear <min>` trims recent spikes only) |
 

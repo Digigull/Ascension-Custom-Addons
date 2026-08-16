@@ -82,7 +82,6 @@ global checks — neither is required.
 | `/plbs chat` / `frame` / `sound` / `tooltip` | Toggle each output surface |
 | `/plbs price <item>` | Probe the Auctionator fork's last-scanned price for one item |
 | `/plbs debug` | Dump the raw stat lines the scorer sees into a copyable box |
-| `/plbs dragtest` | Drag-freeze isolation harness (debug) |
 
 ## Saved variables
 

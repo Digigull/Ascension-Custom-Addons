@@ -640,21 +640,6 @@ SlashCmdList["PLBISSCAN"] = function(msg)
 		else
 			chat("filter window unavailable.")
 		end
-	elseif cmd == "dragtest" then
-		-- Spawn four movable frames that isolate the window-drag-freeze cause
-		-- (Core/DragTest.lua). Cold client, then drag each ONE at a time.
-		if ns.DragTest and ns.DragTest.toggle then
-			local shown = ns.DragTest.toggle()
-			if shown then
-				chat("drag-freeze isolation frames |cff44ff44shown|r. Cold (or |cffffffff/reload|r) first, then drag each ONE at a time:")
-				chat("  |cffffffffA|r repro (should freeze) · |cffffffffB|r no toplevel · |cffffffffC|r lighter strata · |cffffffffD|r no children")
-				chat("Note which HITCH. With ClientPerfProbe on: |cffffffff/cpp clear|r, drag one, |cffffffff/cpp|r reads a sus=DRAG spike per frame.")
-			else
-				chat("drag-freeze isolation frames hidden.")
-			end
-		else
-			chat("dragtest harness unavailable.")
-		end
 	elseif cmd == "debug" then
 		-- Dump the raw stat-line data the scorer sees into a copyable popup, to
 		-- diagnose 0-scores. Self-contained (own hidden tooltip + copy box) so it

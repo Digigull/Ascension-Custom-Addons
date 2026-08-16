@@ -435,8 +435,6 @@ local function usage()
     msg("  |cffffff00/cpp gc|r — force one full GC and measure the pause (sizes cause B)")
     msg("  |cffffff00/cpp mem|r — bounded _G walk: rank the top memory globals (on-contract memtables)")
     msg("  |cffffff00/cpp backdrop <Frame>|r — read a window's backdrop (compare a laggy one vs Details/WA)")
-    msg("  |cffffff00/cpp backdroptest|r — spawn A/B/C/D drag frames to isolate the backdrop as the stutter cause")
-    msg("  |cffffff00/cpp constructtest|r — E/F/G/H drag frames (backdrop constant) to isolate the dropdown children")
     msg("  |cffffff00/cpp save|r — stamp report into SavedVariables, then /reload + attach the file")
     msg("  |cffffff00/cpp clear|r — wipe captured spikes + counters (|cffffff00/cpp clear <min>|r trims recent spikes only)")
 end
@@ -509,26 +507,6 @@ local function handler(input)
         end
         local res = ns.BackdropTest.describe(rest)
         for _, l in ipairs(res.lines) do msg(l) end
-    elseif cmd == "backdroptest" or cmd == "bdtest" then
-        if not ns.BackdropTest then msg("backdrop test unavailable."); return end
-        local shown = ns.BackdropTest.toggle()
-        if shown then
-            msg("backdrop A/B/C/D test frames |cff44ff44shown|r. Cold (or |cffffff00/reload|r) first, then drag each ONE at a time:")
-            msg("  |cffffff00A|r full dialog backdrop · |cffffff00B|r border only · |cffffff00C|r tiled bg only · |cffffff00D|r no backdrop")
-            msg("note which HITCH (A/B/C/D). Tip: |cffffff00/cpp clear|r, drag one, |cffffff00/cpp|r to attribute a sus=DRAG spike per frame.")
-        else
-            msg("backdrop test frames hidden.")
-        end
-    elseif cmd == "constructtest" or cmd == "ctest" or cmd == "dragtest" then
-        if not ns.BackdropTest then msg("construction test unavailable."); return end
-        local shown = ns.BackdropTest.toggleConstruction()
-        if shown then
-            msg("construction test frames |cff44ff44shown|r (backdrop held CONSTANT = light; children vary).")
-            msg("  |cffffff00E|r no children · |cffffff00F|r +3 dropdowns |cffff4444(suspect)|r · |cffffff00G|r +4 buttons+close · |cffffff00H|r full BiS recipe")
-            msg("Cold (or |cffffff00/reload|r), |cffffff00/cpp clear|r, then drag each ONE at a time. F/H hitch but E/G smooth ⇒ UIDropDownMenuTemplate is the cause.")
-        else
-            msg("construction test frames hidden.")
-        end
     elseif cmd == "thr" then
         local v = tonumber(rest)
         if v and v > 0 then
