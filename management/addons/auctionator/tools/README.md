@@ -50,6 +50,31 @@ a corrupt record). It deliberately does **not** cross-check `obs` against `base`
 sale takes the base branch of `Atr_VendorLearn_OnEvent` and never writes `obs`, so the tables
 are disjoint by construction and "0 mismatches" would report a pass where no test ran.
 
+## Harvest dumps vs validation dumps
+
+Two kinds of dump are worth collecting, and they answer different questions.
+
+A **harvest dump** comes from the account the seed is grown on. It carries hundreds of new
+tuples, but its agreements with the shipped seed are worthless as evidence — they are the
+seed's own source read back. The tell is the echo count: the merge never overwrites a real
+observation, so on the origin install it wrote no echoes at all. The diff flags this rather
+than let `1342 of 1342 agreeing` be misread as confirmation.
+
+A **validation dump** comes from a fresh install of a *different* account. It adds little, but
+it is the only thing that tests the premise the whole seed rests on — that a confirmed
+`(itemID:ilvl:req)` price is a global server fact, not something account-local. Look at:
+
+- **`independent re-confirmations`** — seeded tuples this player then sold themselves. Any
+  conflict here is a direct hit on the premise and blocks the regeneration.
+- **`seed-tier accuracy (pt=seed)`** — `Atr_VendorLearn_OnEvent` stamps `pt = "seed"` when the
+  seed answered a prediction no local sale could have informed, so `pp` vs `p` on those rows is
+  the shipped table's out-of-sample error against ground truth.
+- **`estimator fallback (pt=est)`** — the same score for the estimator that runs where the seed
+  has no entry. The gap between these two lines is what a bigger seed actually buys.
+
+`pt = "learned"` rows are repeat sales of a price already stored locally and prove nothing;
+both tools ignore them.
+
 ## Two things that will bite you
 
 **`meta.built` is load-bearing.** `Atr_VendorSeed_Merge` refreshes a seed-only entry only when

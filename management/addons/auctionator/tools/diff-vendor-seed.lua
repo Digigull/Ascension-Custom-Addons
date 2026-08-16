@@ -317,9 +317,62 @@ for id, rows in pairs (per) do
 	end
 end
 
+-- The payoff of a dump from an install that is NOT the one the seed was
+-- harvested from: a seeded tuple that this player then sold themselves is an
+-- independent test of the whole premise, that a confirmed (itemID:ilvl:req)
+-- price is a global server fact rather than something account-local.  Echoes
+-- prove nothing -- only a cleared seed flag means a real sale happened here.
+local confirmAgree, confirmConflict = 0, {}
+for k, rec in pairs (learned.obs or {}) do
+	local sp = seedObs[k]
+	if (sp and isCopper (rec.p) and not (rec.seed == 1 and (rec.n or 0) == 0)) then
+		if (sp == rec.p) then confirmAgree = confirmAgree + 1
+		else confirmConflict[#confirmConflict + 1] = string.format ("%s  seed %s  sold %s", k, money (sp), money (rec.p)) end
+	end
+end
+
+-- Ground truth for the shipped table itself.  Atr_VendorLearn_OnEvent stamps
+-- pt = "seed" when the seed answered a prediction that no real sale on this
+-- install could have informed, so pp vs p on those rows is the seed's
+-- out-of-sample error.  pt = "learned" rows are repeat sales of a price already
+-- stored here and prove nothing; "est" rows score the estimator that runs when
+-- the seed has no entry -- the fallback a bigger seed displaces.
+local byTier = {}
+for _, e in ipairs (learned.log or {}) do
+	if (e.pp and e.p and e.p > 0 and e.pt) then
+		byTier[e.pt] = byTier[e.pt] or {}
+		table.insert (byTier[e.pt], math.abs (e.pp - e.p) / e.p)
+	end
+end
+
+local function tierLine (tier)
+	local t = byTier[tier]
+	if (t == nil or #t == 0) then return "none" end
+	table.sort (t)
+	local med  = t[math.floor (#t / 2) + 1]
+	local wrst = t[#t]
+	return string.format ("%d sample(s), median err %.1f%%, worst %.1f%%", #t, med * 100, wrst * 100)
+end
+
 io.write ("-- audit\n")
 io.write (string.format ("   repeat sales, already in seed   %s\n", distLine ("inseed")))
 io.write (string.format ("   repeat sales, new to the seed   %s\n", distLine ("new")))
+-- A dump re-exported from the install the seed was harvested from overlaps the
+-- seed heavily yet carries no echoes at all: the merge leaves a real
+-- observation alone, so it never wrote one.  Those re-confirmations are the
+-- seed's own source read back, not independent evidence, and 1342-of-1342
+-- agreeing would badly overstate the case if reported without this.
+local overlap  = confirmAgree + #confirmConflict + #B["obs.agree"].rows + #B["obs.disagree"].rows
+local selfEcho = (nEcho == 0 and overlap > 0)
+			and "  <- 0 echoes: looks like the seed's own source, NOT independent"
+			or ""
+io.write (string.format ("   independent re-confirmations    %d seeded tuple(s) really sold here, %d agreeing, %d conflicting%s\n",
+                        confirmAgree + #confirmConflict, confirmAgree, #confirmConflict, selfEcho))
+for n = 1, math.min (#confirmConflict, opt.all and #confirmConflict or opt.sample) do
+	io.write ("     " .. confirmConflict[n] .. "\n")
+end
+io.write (string.format ("   seed-tier accuracy (pt=seed)    %s\n", tierLine ("seed")))
+io.write (string.format ("   estimator fallback (pt=est)     %s\n", tierLine ("est")))
 io.write (string.format ("   ilvl monotonicity               %d item(s) with >1 tuple, %d inversion(s)\n",
                         multiItem, #inversions))
 for n = 1, math.min (#inversions, opt.all and #inversions or opt.sample) do
