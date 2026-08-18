@@ -89,13 +89,87 @@ local function acquireRow(f, idx)
 	return row
 end
 
--- Lay the line descriptors (f.lineDescs = { {str=, big=}, ... }) out as pooled
--- FontStrings at the CURRENT scroll width, stacking top-down, and size the scroll
--- child to the total height so the scrollbar range tracks it. Called from render
--- and live from the resize grip (OnSizeChanged), so lines re-wrap to the window
--- width instead of clipping.
+-- Item toplines get a mouse region laid over their text, so hovering an item in
+-- the log shows the real item tooltip and modified-click links it into chat or
+-- the dressing room -- the same behaviour as the stock loot-roll button (see the
+-- icon handlers in Core/RollAdvisor.lua). FontStrings cannot take mouse input
+-- themselves, so the regions are a SECOND pool (f.hovers), positioned on top of
+-- the rows by layoutRows and reused the same way.
+
+-- The tooltip payload for a logged item string. Groups store whatever the chat
+-- line carried: usually a full |Hitem:...|h[Name]|h link, but a bare "[Name]"
+-- when the client sent no link. Returns the hyperlink to feed SetHyperlink, or
+-- nil when there is nothing the client can build a tooltip from.
+local function hyperlinkOf(link)
+	if (type(link) ~= "string") then return nil end
+	local inner = link:match("|H(.-)|h")
+	if (inner) then return inner end
+	if (link:find("item:", 1, true)) then return link end
+	return nil
+end
+
+local function acquireHover(f, idx)
+	local h = f.hovers[idx]
+	if (not h) then
+		h = CreateFrame("Button", nil, f.content)
+		h:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+		local tex = h:GetHighlightTexture()
+		if (tex) then tex:SetAlpha(0.4) end
+		h:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+		-- Drag must keep working over the log body: a mouse-enabled child swallows
+		-- the left-drag the window's own OnDragStart relies on, so forward it.
+		h:RegisterForDrag("LeftButton")
+		h:SetScript("OnDragStart", function()
+			local win = PasslootBiS.LootWindowFrame
+			if (win) then win:StartMoving() end
+		end)
+		h:SetScript("OnDragStop", function()
+			local win = PasslootBiS.LootWindowFrame
+			if (not win) then return end
+			win:StopMovingOrSizing()
+			local point, _, relPoint, x, y = win:GetPoint()
+			local d = PasslootBiS.db.profile.LootWindow
+			d.point, d.relPoint, d.x, d.y = point, relPoint, x, y
+		end)
+		-- Reads btn.link / btn.itemName, which layoutRows sets per render: the
+		-- regions are pooled and reused, so nothing here may close over one item.
+		h:SetScript("OnEnter", function(btn)
+			GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+			local shown = false
+			local hl = hyperlinkOf(btn.link)
+			if (hl) then
+				shown = pcall(GameTooltip.SetHyperlink, GameTooltip, hl)
+				-- An unknown/malformed link leaves the tooltip empty rather than
+				-- erroring, so treat "no lines" as a miss and fall through.
+				if (shown and GameTooltip.NumLines and GameTooltip:NumLines() == 0) then
+					shown = false
+				end
+			end
+			if (not shown) then
+				local text = btn.itemName or btn.link
+				if (not text) then GameTooltip:Hide() return end
+				GameTooltip:SetText(text)
+			end
+			GameTooltip:Show()
+		end)
+		h:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		h:SetScript("OnClick", function(btn)
+			local handle = rawget(_G, "HandleModifiedItemClick")
+			if (handle and btn.link) then handle(btn.link) end
+		end)
+		f.hovers[idx] = h
+	end
+	return h
+end
+
+-- Lay the line descriptors (f.lineDescs = { {str=, big=, link=, itemName=}, ... })
+-- out as pooled FontStrings at the CURRENT scroll width, stacking top-down, and
+-- size the scroll child to the total height so the scrollbar range tracks it.
+-- Lines carrying a link also get a hover region (acquireHover) sized to the text
+-- they cover. Called from render and live from the resize grip (OnSizeChanged),
+-- so lines re-wrap -- and the regions follow -- as the window is resized.
 local function layoutRows(f)
-	if (not f or not f.scroll or not f.rows or not f.lineDescs) then return end
+	if (not f or not f.scroll or not f.rows or not f.hovers or not f.lineDescs) then return end
 	local sw = f.scroll:GetWidth()
 	if (not sw or sw < 40) then sw = (f:GetWidth() or 180) - 50 end
 	if (sw < 40) then sw = 40 end
@@ -111,6 +185,7 @@ local function layoutRows(f)
 		if (p) then path = p; flags = fl or "" end
 	end
 	local y = -2
+	local nHover = 0
 	for i, d in ipairs(f.lineDescs) do
 		local row = acquireRow(f, i)
 		row:SetFont(path, d.big and (base + EMPHASIS_DELTA) or base, flags)
@@ -121,9 +196,25 @@ local function layoutRows(f)
 		row:Show()
 		local h = row:GetStringHeight()
 		if (h < 1) then h = 1 end
+		if (d.link) then
+			-- Cover the TEXT, not the whole row: a full-width region would highlight
+			-- (and grab clicks over) empty space to the right of a short item name.
+			-- GetStringWidth reports the unwrapped width, so clamp to the wrap width.
+			nHover = nHover + 1
+			local hov = acquireHover(f, nHover)
+			hov.link, hov.itemName = d.link, d.itemName
+			local tw = (row:GetStringWidth() or 0) + 4
+			if (tw < 8 or tw > width) then tw = width end
+			hov:SetWidth(tw)
+			hov:SetHeight(h)
+			hov:ClearAllPoints()
+			hov:SetPoint("TOPLEFT", f.content, "TOPLEFT", 2, y)
+			hov:Show()
+		end
 		y = y - h - 1
 	end
 	for i = #f.lineDescs + 1, #f.rows do f.rows[i]:Hide() end
+	for i = nHover + 1, #f.hovers do f.hovers[i]:Hide() end
 	local total = (-y) + 4
 	if (total < 1) then total = 1 end
 	f.content:SetHeight(total)
@@ -272,7 +363,8 @@ function PasslootBiS:CreateLootWindow()
 	f.content = content
 	f.scroll = scroll
 	f.rows = {}          -- pool of per-line FontStrings (see layoutRows)
-	f.lineDescs = {}     -- current line descriptors: { {str=, big=}, ... }
+	f.hovers = {}        -- pool of item-tooltip mouse regions (see acquireHover)
+	f.lineDescs = {}     -- line descriptors: { {str=, big=, link=, itemName=}, ... }
 
 	-- Reflow the lines to the new width while the window is being dragged-to-size.
 	scroll:SetScript("OnSizeChanged", function() layoutRows(f) end)
@@ -349,12 +441,22 @@ function PasslootBiS:LootWindow_Render()
 	-- outcome line (Winner / Everyone passed / Rolling…) below. The winner line and
 	-- any Need line use the larger emphasis font; a repeated needer also gets a
 	-- coloured "needed N times consecutively" callout. Groups separated by a blank.
+	-- link/itemName are only set on the item topline; they are what turns that row
+	-- into a tooltip hover region (layoutRows). Older persisted logs may have no
+	-- link on a group, in which case the row simply stays inert.
 	local descs = {}
-	local function add(str, big) descs[#descs + 1] = { str = str, big = big and true or false } end
+	local function add(str, big, link, itemName)
+		descs[#descs + 1] = {
+			str = str,
+			big = big and true or false,
+			link = link,
+			itemName = itemName,
+		}
+	end
 
 	for i = #groups, 1, -1 do -- newest first
 		local g = groups[i]
-		add(g.link or g.name or "?", false)                       -- topline: the item
+		add(g.link or g.name or "?", false, g.link, g.name)       -- topline: the item
 		for _, r in ipairs(g.rolls) do
 			local col = CHOICE_COLORS[r.choice] or "ffffffff"
 			local val = r.value and (" (" .. r.value .. ")") or ""
