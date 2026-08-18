@@ -368,6 +368,22 @@ end
 -- ===== The button list =====
 
 local listScroll, listChild, listRows, listEmptyText
+local moveUpButton, moveDownButton, resetOrderButton, orderHint
+
+-- The selected row, held by frame *name* rather than by row or frame, so it
+-- survives the list being rebuilt under it (a rescan, an ignore toggle, the
+-- reorder itself). A name that stops having a row simply stops being selected.
+local selectedName
+
+local RefreshList
+
+local function SelectButton(name)
+    if not name or name == "" then
+        return
+    end
+    selectedName = name
+    RefreshList()
+end
 
 local function IsCollected(frame)
     for _, button in ipairs(ns.GetMinimapButtons()) do
@@ -402,8 +418,11 @@ local function BuildEntries()
         end
     end
 
+    -- Same comparator the grid uses (buttons.lua), so the order of the rows is
+    -- the order of the buttons under the minimap.
+    local compare = ns.ButtonOrderComparator()
     table.sort(entries, function(a, b)
-        return (a.name or "") < (b.name or "")
+        return compare(a.name or "", b.name or "")
     end)
 
     return entries
@@ -422,6 +441,13 @@ local function CreateRow(index)
     row.stripe:SetAllPoints()
     row.stripe:SetTexture(1, 1, 1, 0.05)
     row.stripe:Hide()
+
+    -- Drawn after the hover stripe so it stays visible while the cursor is on
+    -- the row it marks.
+    row.selection = row:CreateTexture(nil, "BACKGROUND")
+    row.selection:SetAllPoints()
+    row.selection:SetTexture(1, 0.82, 0, 0.20)
+    row.selection:Hide()
 
     row.check = CreateFrame("CheckButton", "ExadMinimapButtonRow" .. index .. "Check", row, "UICheckButtonTemplate")
     row.check:SetSize(22, 22)
@@ -476,6 +502,16 @@ local function CreateRow(index)
         GameTooltip:Hide()
     end)
 
+    row:SetScript("OnMouseUp", function(self, mouseButton)
+        if mouseButton ~= "LeftButton" then
+            return
+        end
+        local entry = self.entry
+        if entry and entry.name and entry.name ~= "" then
+            SelectButton(entry.name)
+        end
+    end)
+
     row:SetScript("OnEnter", function(self)
         self.stripe:Show()
         if self.entry then
@@ -490,12 +526,31 @@ local function CreateRow(index)
     return row
 end
 
-local function RefreshList()
+-- Assigns the local forward-declared above, so a row's OnMouseUp can rebuild
+-- the list it lives in.
+function RefreshList()
     if not listChild then
         return
     end
 
     local entries = BuildEntries()
+
+    -- Where the selection sits now, and which rows are the ends of the run that
+    -- can be reordered. Unnamed frames cannot hold a slot in the saved order, so
+    -- they are not counted as somewhere a button can be moved to.
+    local selectedIndex, firstNamed, lastNamed
+    for index, entry in ipairs(entries) do
+        if entry.name and entry.name ~= "" then
+            firstNamed = firstNamed or index
+            lastNamed = index
+            if entry.name == selectedName then
+                selectedIndex = index
+            end
+        end
+    end
+    if not selectedIndex then
+        selectedName = nil
+    end
 
     for index, entry in ipairs(entries) do
         local row = listRows[index]
@@ -542,6 +597,12 @@ local function RefreshList()
             row.remove:Hide()
         end
 
+        if index == selectedIndex then
+            row.selection:Show()
+        else
+            row.selection:Hide()
+        end
+
         row:Show()
     end
 
@@ -555,6 +616,34 @@ local function RefreshList()
         listEmptyText:Show()
     else
         listEmptyText:Hide()
+    end
+
+    -- The reorder controls follow the selection: with nothing selected, or the
+    -- selection already at the end it would move towards, the button is greyed.
+    if moveUpButton then
+        if selectedIndex and firstNamed and selectedIndex > firstNamed then
+            moveUpButton:Enable()
+        else
+            moveUpButton:Disable()
+        end
+
+        if selectedIndex and lastNamed and selectedIndex < lastNamed then
+            moveDownButton:Enable()
+        else
+            moveDownButton:Disable()
+        end
+
+        if #ns.db.buttonOrder > 0 then
+            resetOrderButton:Enable()
+        else
+            resetOrderButton:Disable()
+        end
+
+        if selectedName then
+            orderHint:SetText("Selected: |cffffd200" .. selectedName .. "|r")
+        else
+            orderHint:SetText("Click a row to select it, then move it.")
+        end
     end
 end
 
@@ -676,8 +765,9 @@ local function BuildButtonPanel()
     title:SetText("Minimap buttons")
 
     CreateLabel(panel,
-        "Every button the collector can see. Uncheck one to leave it on the minimap instead of in the grid; "
-        .. "hover a row to outline the real button.",
+        "Every button the collector can see, in the order the grid lays them out. Uncheck one to leave it on "
+        .. "the minimap instead of in the grid; hover a row to outline the real button, click it to select, "
+        .. "then use Move up and Move down.",
         16, -40, 560)
 
     local pick = CreateButton(panel, "Pick", "Add by clicking", 150, function()
@@ -723,7 +813,7 @@ local function BuildButtonPanel()
 
     listScroll = CreateFrame("ScrollFrame", "ExadMinimapButtonList", panel, "UIPanelScrollFrameTemplate")
     listScroll:SetPoint("TOPLEFT", 16, -110)
-    listScroll:SetPoint("BOTTOMRIGHT", -40, 116)
+    listScroll:SetPoint("BOTTOMRIGHT", -40, 142)
 
     local listBorder = ns.CreateBackdropFrame(nil, panel)
     listBorder:SetPoint("TOPLEFT", listScroll, "TOPLEFT", -4, 4)
@@ -765,6 +855,56 @@ local function BuildButtonPanel()
         local value = bar:GetValue() - delta * ROW_HEIGHT * 2
         bar:SetValue(math.max(minValue, math.min(maxValue, value)))
     end)
+
+    -- ===== Reordering =====
+    --
+    -- The order is saved by frame name (ns.db.buttonOrder), so it survives a
+    -- reload and an addon that has not loaded yet keeps its slot. Moving a row
+    -- relays the grid straight away, whether or not it is open.
+
+    moveUpButton = CreateButton(panel, "MoveUp", "Move up", 100, function()
+        if selectedName then
+            ns.MoveButton(selectedName, -1)
+        end
+    end)
+    moveUpButton:SetPoint("BOTTOMLEFT", 16, 112)
+
+    moveDownButton = CreateButton(panel, "MoveDown", "Move down", 100, function()
+        if selectedName then
+            ns.MoveButton(selectedName, 1)
+        end
+    end)
+    moveDownButton:SetPoint("LEFT", moveUpButton, "RIGHT", 8, 0)
+
+    resetOrderButton = CreateButton(panel, "ResetOrder", "Sort A-Z", 100, function()
+        ns.ResetButtonOrder()
+    end)
+    resetOrderButton:SetPoint("LEFT", moveDownButton, "RIGHT", 8, 0)
+
+    local function OrderTooltip(button, title, body)
+        button:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(title, 1, 1, 1)
+            GameTooltip:AddLine(body, 0.8, 0.8, 0.8, true)
+            GameTooltip:Show()
+        end)
+        button:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+    end
+
+    OrderTooltip(moveUpButton, "Move up",
+        "Moves the selected button one place earlier in the grid. The grid fills left to right, "
+        .. "so the first button is the top-left one.")
+    OrderTooltip(moveDownButton, "Move down", "Moves the selected button one place later in the grid.")
+    OrderTooltip(resetOrderButton, "Sort A-Z",
+        "Forgets the custom order and goes back to sorting by frame name.")
+
+    orderHint = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    orderHint:SetPoint("LEFT", resetOrderButton, "RIGHT", 12, 0)
+    orderHint:SetWidth(230)
+    orderHint:SetJustifyH("LEFT")
+    orderHint:SetText("Click a row to select it, then move it.")
 
     local pickHint = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     pickHint:SetPoint("BOTTOMLEFT", 16, 88)
@@ -816,6 +956,7 @@ local function TakeSnapshot()
     end
     snapshot.extraButtons = CopyList(ns.db.extraButtons)
     snapshot.ignoredButtons = CopyList(ns.db.ignoredButtons)
+    snapshot.buttonOrder = CopyList(ns.db.buttonOrder)
 end
 
 local function RestoreSnapshot()
@@ -827,6 +968,7 @@ local function RestoreSnapshot()
     end
     ns.db.extraButtons = CopyList(snapshot.extraButtons)
     ns.db.ignoredButtons = CopyList(snapshot.ignoredButtons)
+    ns.db.buttonOrder = CopyList(snapshot.buttonOrder)
     snapshot = nil
 
     ns.InvalidateButtonCache()
@@ -840,6 +982,7 @@ local function ResetToDefaults()
     end
     ns.db.extraButtons = CopyList(ns.defaults.extraButtons)
     ns.db.ignoredButtons = {}
+    ns.db.buttonOrder = {}
 
     ns.InvalidateButtonCache()
     ns.RefreshButtonLayout()

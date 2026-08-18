@@ -278,6 +278,137 @@ function ns.RemoveExtraButton(name)
     return true
 end
 
+-- ===== Grid order =====
+--
+-- ns.db.buttonOrder is a list of frame names in the order the grid lays them
+-- out. A name that is not in it -- a button belonging to an addon installed
+-- since the last reorder -- sorts after every name that is, alphabetically, so
+-- something new lands at the end of the grid instead of shuffling what you
+-- already arranged. With the list empty, everything is unranked and the order
+-- is the plain alphabetical sort this addon has always used.
+
+local function OrderRanks()
+    local ranks = {}
+    for index, name in ipairs((ns.db and ns.db.buttonOrder) or {}) do
+        if ranks[name] == nil then
+            ranks[name] = index
+        end
+    end
+    return ranks
+end
+
+-- One comparator over frame names, shared by the grid and the options list so
+-- the row you drag past another is the button you see move on screen.
+function ns.ButtonOrderComparator()
+    local ranks = OrderRanks()
+    return function(a, b)
+        local rankA, rankB = ranks[a or ""], ranks[b or ""]
+        if rankA and rankB then
+            return rankA < rankB
+        elseif rankA or rankB then
+            return rankA ~= nil
+        end
+        return (a or "") < (b or "")
+    end
+end
+
+-- Every name the options list can show, in grid order. Unnamed frames are left
+-- out: the order is stored by name, so a frame without one cannot hold a slot.
+function ns.GetOrderedNames()
+    local names, seen = {}, {}
+
+    local function add(name)
+        if name and name ~= "" and not seen[name] then
+            seen[name] = true
+            names[#names + 1] = name
+        end
+    end
+
+    for _, frame in ipairs(ns.GetAllButtons and ns.GetAllButtons() or {}) do
+        add(ButtonName(frame))
+    end
+    -- Names tracked by hand whose frame is not loaded right now are still rows
+    -- in the panel, so they still take part in the ordering.
+    for _, name in ipairs((ns.db and ns.db.extraButtons) or {}) do
+        add(name)
+    end
+
+    table.sort(names, ns.ButtonOrderComparator())
+    return names
+end
+
+-- Move one button a slot up (delta -1) or down (delta 1). The whole order is
+-- written back, not just the pair that swapped: pinning every name at once is
+-- what stops the rest of the grid drifting the next time something unranked
+-- turns up.
+function ns.MoveButton(name, delta)
+    if not ns.db or not name or name == "" or not delta or delta == 0 then
+        return false
+    end
+
+    local names = ns.GetOrderedNames()
+    local index
+    for position, entry in ipairs(names) do
+        if entry == name then
+            index = position
+            break
+        end
+    end
+    if not index then
+        return false
+    end
+
+    local target = index + delta
+    if target < 1 or target > #names then
+        return false
+    end
+    names[index], names[target] = names[target], names[index]
+
+    -- A name from the old order that is nowhere in the panel today -- its addon
+    -- is disabled, say -- keeps its slot rather than being dropped and coming
+    -- back at the end of the grid whenever the addon is switched on again.
+    local present = {}
+    for _, entry in ipairs(names) do
+        present[entry] = true
+    end
+    for oldIndex, old in ipairs(ns.db.buttonOrder) do
+        if not present[old] then
+            present[old] = true
+            table.insert(names, math.min(oldIndex, #names + 1), old)
+        end
+    end
+
+    ns.db.buttonOrder = names
+
+    ns.InvalidateButtonCache()
+    if ns.RefreshButtonLayout then
+        ns.RefreshButtonLayout()
+    end
+    if ns.RefreshOptions then
+        ns.RefreshOptions()
+    end
+    return true
+end
+
+-- Back to alphabetical: drop every remembered slot, including the ones held for
+-- buttons that are not loaded.
+function ns.ResetButtonOrder()
+    if not ns.db or #ns.db.buttonOrder == 0 then
+        return false
+    end
+
+    ns.db.buttonOrder = {}
+
+    ns.InvalidateButtonCache()
+    if ns.RefreshButtonLayout then
+        ns.RefreshButtonLayout()
+    end
+    if ns.RefreshOptions then
+        ns.RefreshOptions()
+    end
+    return true
+end
+
 local function Rebuild()
     local all, seen = {}, {}
 
@@ -330,9 +461,12 @@ local function Rebuild()
         add(_G[name])
     end
 
-    -- pairs() order is arbitrary, so sort to keep the grid stable across sessions.
+    -- pairs() order is arbitrary, so sort to keep the grid stable across
+    -- sessions: the order you set in the options panel first, then alphabetical
+    -- for anything you have never moved.
+    local compare = ns.ButtonOrderComparator()
     table.sort(all, function(a, b)
-        return ButtonName(a) < ButtonName(b)
+        return compare(ButtonName(a), ButtonName(b))
     end)
 
     local ignored = IgnoredSet()
