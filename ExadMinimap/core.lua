@@ -40,6 +40,12 @@ ns.defaults = {
     -- from the Buttons page of the options panel, or /exadmm ignore <FrameName>.
     ignoredButtons = {},
 
+    -- The order the grid lays buttons out in, by frame name. Empty means plain
+    -- alphabetical; the Move up/Move down buttons on the Buttons page fill it
+    -- in. A name that is not listed sorts after every name that is, so a button
+    -- from a newly installed addon appends instead of shuffling the rest.
+    buttonOrder = {},
+
     -- Buttons the scan cannot reach. Add their exact frame names here, or in
     -- game with: /exadmm add <FrameName>
     extraButtons = {
@@ -206,6 +212,7 @@ local function Usage()
     ns.Print("  /exadmm add <FrameName>  - track a button the scan cannot reach")
     ns.Print("  /exadmm remove <FrameName>")
     ns.Print("  /exadmm ignore <FrameName> - leave a button on the minimap")
+    ns.Print("  /exadmm order            - show the grid order (order reset = A-Z)")
     ns.Print("  /exadmm list             - show tracked buttons and status")
     ns.Print("  /exadmm name             - print the frame name under your cursor")
 end
@@ -294,6 +301,27 @@ SlashCmdList["EXADMINIMAP"] = function(input)
             ns.Print("stopped tracking " .. arg .. ".")
         else
             ns.Print(arg .. " was not tracked.")
+        end
+
+    elseif cmd == "order" then
+        if string.lower(arg) == "reset" then
+            if ns.ResetButtonOrder and ns.ResetButtonOrder() then
+                ns.Print("grid order reset to alphabetical.")
+            else
+                ns.Print("the grid order is already alphabetical.")
+            end
+            return
+        end
+
+        local names = ns.GetOrderedNames and ns.GetOrderedNames() or {}
+        if #names == 0 then
+            ns.Print("no buttons to order yet.")
+        else
+            ns.Print("grid order (Buttons page: select a row, then Move up/Move down):")
+            for index, name in ipairs(names) do
+                ns.Print("  " .. index .. ". " .. name
+                    .. (ns.IsIgnored(name) and " |cffffff00(left on the minimap)|r" or ""))
+            end
         end
 
     elseif cmd == "list" then

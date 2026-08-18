@@ -62,10 +62,27 @@ Interface > AddOns > ExadMinimap, or `/exadmm config`. Two pages:
 - **ExadMinimap** — the skin, the collector, minimap size, grid spacing and the
   fade delay. Options marked `*` need a UI reload; there is a Reload UI button
   on both pages.
-- **Buttons** — every button the collector can see, with its own icon. Hover a
-  row to outline the real button on screen. Uncheck one to leave it where its
-  own addon put it instead of pulling it into the grid; the button goes back to
-  its original spot straight away, no reload needed.
+- **Buttons** — every button the collector can see, with its own icon, listed
+  in the order the grid lays them out. Hover a row to outline the real button on
+  screen. Uncheck one to leave it where its own addon put it instead of pulling
+  it into the grid; the button goes back to its original spot straight away, no
+  reload needed.
+
+---
+
+## Ordering the grid
+
+Click a row on the Buttons page to select it, then **Move up** / **Move down**
+to shift that button a place at a time. The list is in grid order — the grid
+fills left to right, so the top row of the list is the top-left button — and it
+relays as you go, whether or not the grid is open. **Sort A-Z** forgets the
+custom order and goes back to sorting by frame name.
+
+The order is saved by frame name, so it survives a reload, and a button whose
+addon is switched off keeps its slot for when it comes back. A button from an
+addon installed *after* you last reordered sorts to the end rather than pushing
+into the middle of an order you set. `/exadmm order` prints the current order,
+and `/exadmm order reset` is the same as Sort A-Z.
 
 ---
 
@@ -106,6 +123,7 @@ the box.
 /exadmm add <FrameName>   track a button the scan cannot reach
 /exadmm remove <FrameName>
 /exadmm ignore <FrameName>  leave a button on the minimap
+/exadmm order             print the grid order (order reset = back to A-Z)
 /exadmm list              current settings and tracked buttons
 /exadmm name              print the frame name under your cursor
 ```

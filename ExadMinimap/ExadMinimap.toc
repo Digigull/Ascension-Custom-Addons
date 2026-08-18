@@ -2,7 +2,7 @@
 ## Title: |cff009cffExadMinimap|r
 ## Notes: Square minimap skin and minimap button collector, extracted from ExadTweaks.
 ## Author: Exad
-## Version: 1.1
+## Version: 1.2
 ## SavedVariablesPerCharacter: ExadMinimapDB
 ## DefaultState: enabled
 
