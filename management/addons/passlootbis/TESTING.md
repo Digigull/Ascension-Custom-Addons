@@ -5,7 +5,9 @@ Nothing in this repo can run the 3.3.5 client, so this is the list that turns
 you are that session, read `BIND-CONFIRMS.md` and `BIS-CHECK.md` first for why any
 of it is shaped the way it is.
 
-## Round 1 results (2026-08, owner)
+## Results so far (2026-08, owner)
+
+Rounds 1–6. A "round" is one pass through the steps below with a build in the client.
 
 | Check | Result |
 |---|---|
@@ -21,7 +23,7 @@ of it is shaped the way it is.
 | H. Usable dry run (round 5) | **PASS** — same Bloodforged item after the fix: `usable: yes   (2 Usable)`, no red lines. Forge labels do not trip the colour test |
 | H. Usable dry run (round 6) | **PASS** — `Bloodforged Pyremail Wristguards` (Mail): `usable: no`, `red lines: R3 Mail`. Forged *and* unwearable is still caught, and the index moved R4 → R3 |
 
-Two changes came out of that round, so steps below are written against them:
+Two changes came out of round 1, so the steps below are written against them:
 
 - **The three bind-confirm boxes are now one**, `Auto-Confirm Bind Popups`, default
   ON, covering the roll prompt, the pickup prompt and the popup-queue bit.
@@ -187,50 +189,30 @@ The veto needs one specific item to drop, so force the situation instead:
     gold "High Value", red "BiS, but lower". That is the cheapest way to check the
     down arrow renders.
 
-### H. The Usable verdict (round-2 fix — no dungeon needed for the dry run)
-**Start here, not with a dungeon.** `/plbisdebug item ` then shift-click any item —
-bags, a chat link, the AH — and the report now prints the `Not Usable` rule's verdict
-on it without waiting for it to drop:
+### H. The Usable verdict (no dungeon needed)
+Full background — how the check works, what its red lines mean, and the bug that hid
+in it — is `USABLE-SCAN.md`. This is just the test.
 
-```
-  usable: no   (3 Unusable)   red line: L3 Requires Level 60
-```
+24b. `/plbisdebug item ` then shift-click any item: bags, bank, a chat link, an AH
+    listing. The report prints the `Not Usable` rule's own verdict on it, without
+    waiting for it to drop:
 
-That line comes from `Modules/Usable.lua` itself, not a copy of its logic, so it is
-the same answer a live roll would get. Shift-click a few things you can plainly wear
-and a few you cannot; the verdict must track. Anything wearable that comes back
-`usable: no` is the finding — copy the red line.
+    ```
+      usable: no   (3 Unusable)   red lines: R4 Mail
+    ```
 
-The remaining steps need real loot only because they check the *trace*:
-
-25. With the trace on, let any dungeon's loot go past, then `/plbisdebug`. Every
-    item traces one `(Usable) Usable: N (...)` line, and **N must now vary**: it read
-    a hardcoded `2 (Usable)` for every item ever scanned, so the round-1 Dire Maul
-    trace showed the `Not Usable` rule matching three items the trace itself called
-    usable. The filter was right; only its report was wrong.
-26. On an item ruled unusable the line now carries `red line: R4 Mail` — the
-    tooltip line painted in the unmet-requirement red (255,32,32), which is the whole
-    basis for the verdict, prefixed with its position: `L`/`R` for the left or right
-    column, then the line number. Known vocabulary so far:
-    - `R4 Mail` — **an armour class you cannot wear.** The armour type sits in the
-      right column of the armour line and the client reddens just that word. Round 2
-      measured this on `Leggings of Destruction`; it is the commonest refusal. The
-      **index is not fixed** — round 6 saw the same refusal at `R3` on an item with
-      one fewer line above it. Read the text, never the position.
-
-    *Superseded:* the position was originally documented as telling a client refusal
-    (left column, near the top) from an addon-added line (right column or bottom).
-    The first real measurement was `R4`, so the column says nothing about the source.
-    Two things to check the line against:
-    - An **already-known recipe** or one needing a profession you lack should name
-      that requirement. Those are the easy confirmations that the capture works.
-    - **Anything you can plainly wear that comes back unusable** is the finding worth
-      reporting — the dry run above is the fast way to hunt for one, since a dungeon
-      per attempt with random drops is not — the round-1 trace ruled
-      `Nightshade Boots of the Slayer` (leather,
-      requires level 54) unusable on a level-60 leather-wearing Brigand, and greeded
-      it under the `Not Usable` rule. Copy the red line; it names whichever
-      requirement Ascension is failing, and there was no way to see it before.
+    That comes from `Modules/Usable.lua` itself, not a copy of its logic, so it is
+    the same answer a live roll would get.
+25. Shift-click a few things you can plainly wear and a few you cannot. **The verdict
+    must track.** An armour class you cannot use names itself (`R4 Mail`); an
+    already-known recipe or one needing a profession you lack names that requirement.
+26. **Anything wearable that comes back `usable: no` is the finding.** Copy the
+    `red lines:` field — it names the tooltip line responsible, and
+    `USABLE-SCAN.md` § *If it resurfaces* says what each kind means.
+27. With the trace on, let a dungeon's loot go past and check the same verdict appears
+    per item as `(Usable) Usable: N (...)`. **N must vary** — it once printed a
+    hardcoded `2` for everything, which is what made a self-contradicting report look
+    like noise.
 
 ## 3. What to send back
 
@@ -240,7 +222,8 @@ single paste is usually the entire diagnosis — no need to describe it in prose
 
 ## 4. Known unverified
 
-What round 1 did not reach, highest-risk first:
+Genuinely open, highest-risk first. Things that were investigated and settled are in
+§5, so this list stays a to-do rather than an archive.
 
 - **Both confirm paths.** Neither `CONFIRM_LOOT_ROLL: auto-confirming roll N` nor
   `LOOT_BIND_CONFIRM: auto-confirming loot slot N` has been seen in a trace yet, so
@@ -250,54 +233,12 @@ What round 1 did not reach, highest-risk first:
 - **`LOOT_BIND` / `CONFIRM_LOOT_ROLL` popup hiding** — the confirm is event-driven
   and solid; the *hide* assumes the client stores the slot/rollID as the dialog's
   `data`.
-- **~~A Bloodforged variant scored identically to its base item.~~ Explained, not a
-  bug.** `Shadefiend Boots` (round 3) and `Bloodforged Shadefiend Boots` (round 5)
-  both scored 23.5, which looked wrong for an item said to trade PvE power for PvP
-  power. Owner: the PvE/PvP power weighting is switched **off** on this character, so
-  the forged half contributes nothing either way, and these items roll variable stats
-  anyway. Two independent reasons for the scores to land together. Left here only so
-  the next person reading two forged scores does not re-open it.
 - **`LOOT_ITEM_*` chat patterns** feeding the ledger, if Ascension reworded loot
   messages. Round 1 is *not* evidence against them: the one item won that run was
   `Jasper Link of the Arcane`, an intellect ring worth 0 to a Brigand, and
   `WonLedger.record` drops a zero score on purpose. An empty `[This run]` there is
   the designed behaviour, not a missed match — step E still needs gear the spec
   actually scores.
-- **Closed: the ring that changed score between two reports.** Round 2 scored an
-  equipped `Innervating Band` at 32.5 where round 1 had 24.3, with every other slot
-  byte-identical. Not a scoring bug — Ascension awards a Dungeon Spoils container at
-  the end of a run, and the owner pulled the **Mythic** version of the ring from it
-  and equipped it. Worth remembering when reading two reports side by side: an
-  equipped item can legitimately change into a higher forge of itself between runs.
-- **SOLVED: why a wearable item read as unusable.** A blank tooltip line left red by
-  a previously scanned item. `GameTooltip` reuses its FontStrings — `ClearLines()`
-  hides them but does not reset their colour — so a string another item left red
-  still answers red through `GetTextColor()` when the current item leaves it blank,
-  and the scan counted that as an unmet requirement. Order-dependent, which is why it
-  looked random. Round 4 caught it: a dry run printed `red line: R4 ` with **nothing
-  after the position**. Fixed by ignoring lines with no text; locked in by
-  `tools/usable-smoke.lua` case 1.
-
-  Impact was invisible from the outside, which is why it lasted: `Not Usable` and
-  `Catch All` both greed, so the wrong rule still reached the right roll. It would
-  have mattered the moment those two rules diverged.
-- **CLOSED: `Bloodforged` does not trip the colour test.** The worry was that the
-  round-4 item's visible tooltip carries red "heroic bloodforged" text, so the
-  blank-line fix might uncover a second misfire making every forged item read
-  unusable. Round 5 re-ran the same dry run on the same
-  `[Bloodforged Shadefiend Boots]` and got `usable: yes   (2 Usable)` with no red
-  lines at all. The blank line was the whole story. Whatever paints that label red on
-  screen is not the client's 255,32,32 in our hidden tooltip — most likely an inline
-  `|cff` escape, which `GetTextColor()` cannot see, exactly like the BiS Scanner's own
-  annotation.
-  - **Ruled out: the BiS Scanner's own tooltip line.** The obvious suspect is the
-    red downgrade text the scanner adds on hover, but it cannot reach this test
-    twice over. `PassLootBiS_Scanner/Core/Tooltip.lua` hooks `GameTooltip` and
-    `ItemRefTooltip` only, and `HookScript` is per frame — the usable scan reads
-    `PasslootBiSTT`, a separate hidden tooltip. And the scanner's line is written by
-    `setTopRight` with the base colour `COLOR_NEU` (0.90, 0.90, 0.60); its red is an
-    inline `|cff` escape, which is invisible to the `GetTextColor()` the red test
-    reads. Even landing on the same frame it would not match.
 - **`ZONE_CHANGED_NEW_AREA` timing** on the way out of an instance.
 - **`Interface\Buttons\Arrow-Down-Up`** existing in this build.
 - **The 21.9 — target half RESOLVED, score half still untested.** In the round-1
@@ -331,11 +272,32 @@ What round 1 did not reach, highest-risk first:
   looks like an upgrade), and if the strip is the cause then "measured safe" is not
   safe enough and the box should come back off.
 
-  **How to settle it:** `/plbisdebug item ` + shift-click a **feet** item. The report
-  now prints `target from equipped: slot 8 = N` under the score, so compare `N`
-  against the `stripped` column for slot 8 in the same report.
-  - Equal → round 1 was a one-off cold read; note it and move on.
-  - Different → the stripped read is unstable. **Untick Ignore enchants** and send
-    both reports; the strip goes back off until that is understood.
-  - Also worth one run with the box **off**: if the target then matches `real`
-    exactly, that isolates it to the strip path rather than to `effectiveTarget`.
+  **That comparison has now been made and it agreed** — round 3's `target from
+  equipped: slot 8 = 47.3` is exactly the `stripped` column for slot 8 in the same
+  report, so round 1's 21.9 was a one-off cold read on the target side.
+
+  **What is left:** dry-run your own **equipped** `Pads of the Dread Wolf` — one of
+  only two slots carrying enchant value, so it is the item that can tell the two
+  reads apart. With the strip working it must come back `score 47.3`, not `58.3`.
+  - `47.3` → the strip works on both sides; close this entry.
+  - `58.3` → the hovered/dry-run side is not being stripped after all, and the
+    compare is mixing a stripped target with an unstripped score. **Untick Ignore
+    enchants** and send both reports.
+
+## 5. Settled — do not re-open without new evidence
+
+- **The Usable / "Not Usable" investigation** (rounds 1–6): the trace that printed a
+  hardcoded verdict, the blank red tooltip line that made wearable gear read as
+  unusable, and the two suspects ruled out along the way (the BiS Scanner's own red
+  annotation, and forge labels). Full write-up, the `red lines:` vocabulary, and what
+  to do if the symptom returns: **`USABLE-SCAN.md`**. Closed by choice, with one
+  loose end named there.
+- **A ring that changed score between two reports.** Round 2 scored an equipped
+  `Innervating Band` at 32.5 where round 1 had 24.3, every other slot byte-identical.
+  Not a scoring bug: Ascension awards a Dungeon Spoils container at the end of a run,
+  and the owner pulled the **Mythic** forge of that ring from it and equipped it. An
+  equipped item can legitimately become a higher forge of itself between two reports.
+- **A Bloodforged variant scoring the same as its base item.** Looked wrong for an
+  item said to trade PvE power for PvP power. The PvE/PvP power weighting is switched
+  off on this character, so the forged half contributes nothing either way, and these
+  items roll variable stats. Two independent reasons for the scores to land together.
