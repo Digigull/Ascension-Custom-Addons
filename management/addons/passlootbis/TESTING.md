@@ -169,7 +169,22 @@ The veto needs one specific item to drop, so force the situation instead:
     gold "High Value", red "BiS, but lower". That is the cheapest way to check the
     down arrow renders.
 
-### H. The Usable trace line (round-2 fix — read one trace, no setup)
+### H. The Usable verdict (round-2 fix — no dungeon needed for the dry run)
+**Start here, not with a dungeon.** `/plbisdebug item ` then shift-click any item —
+bags, a chat link, the AH — and the report now prints the `Not Usable` rule's verdict
+on it without waiting for it to drop:
+
+```
+  usable: no   (3 Unusable)   red line: L3 Requires Level 60
+```
+
+That line comes from `Modules/Usable.lua` itself, not a copy of its logic, so it is
+the same answer a live roll would get. Shift-click a few things you can plainly wear
+and a few you cannot; the verdict must track. Anything wearable that comes back
+`usable: no` is the finding — copy the red line.
+
+The remaining steps need real loot only because they check the *trace*:
+
 25. With the trace on, let any dungeon's loot go past, then `/plbisdebug`. Every
     item traces one `(Usable) Usable: N (...)` line, and **N must now vary**: it read
     a hardcoded `2 (Usable)` for every item ever scanned, so the round-1 Dire Maul
@@ -187,7 +202,9 @@ The veto needs one specific item to drop, so force the situation instead:
     - An **already-known recipe** or one needing a profession you lack should name
       that requirement. Those are the easy confirmations that the capture works.
     - **Anything you can plainly wear that comes back unusable** is the finding worth
-      reporting — the round-1 trace ruled `Nightshade Boots of the Slayer` (leather,
+      reporting — the dry run above is the fast way to hunt for one, since a dungeon
+      per attempt with random drops is not — the round-1 trace ruled
+      `Nightshade Boots of the Slayer` (leather,
       requires level 54) unusable on a level-60 leather-wearing Brigand, and greeded
       it under the `Not Usable` rule. Copy the red line; it names whichever
       requirement Ascension is failing, and there was no way to see it before.
@@ -216,6 +233,12 @@ What round 1 did not reach, highest-risk first:
   `WonLedger.record` drops a zero score on purpose. An empty `[This run]` there is
   the designed behaviour, not a missed match — step E still needs gear the spec
   actually scores.
+- **Closed: the ring that changed score between two reports.** Round 2 scored an
+  equipped `Innervating Band` at 32.5 where round 1 had 24.3, with every other slot
+  byte-identical. Not a scoring bug — Ascension awards a Dungeon Spoils container at
+  the end of a run, and the owner pulled the **Mythic** version of the ring from it
+  and equipped it. Worth remembering when reading two reports side by side: an
+  equipped item can legitimately change into a higher forge of itself between runs.
 - **Why a wearable item reads as unusable.** Round 1 greeded a pair of level-54
   leather boots on a level-60 leather wearer under the `Not Usable` rule. The
   `red line:` capture added in step H exists to answer this; until a trace carries
