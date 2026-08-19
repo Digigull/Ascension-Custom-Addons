@@ -693,6 +693,21 @@ name to open a second bucket. Both Bloodforged Imperial Jewels use the same icon
 in one bucket. `GetAuctionItemInfo` hands that same loop `quality` and `level`, and
 `GetAuctionItemLink` hands it the item id — the loop uses neither for the split.
 
+**That split already writes to the price database, and it is ugly.** The space-suffixed name
+becomes the bucket's `itemName` (`AtrScan:Init`, `AuctionatorScan.lua:135`), and the finaliser
+writes `gAtr_ScanDB[scn.itemName]` (`:668`) — so **the live database already contains
+`"Some Item "` keys** wherever the texture test has fired. Two consequences:
+
+- **A dump measures the problem for free.** Grep the saved variables for keys with a trailing
+  space: that is the count of variant pairs the *texture* test caught. It is a floor, not the
+  answer — the Bloodforged case is precisely one the texture test misses — but it costs nothing
+  and it is real data about how common variants are on this server.
+- **Part 1 has a decision to make before any code**: whether the new split *replaces* the
+  trailing-space hack or sits alongside it, and what happens to the space-keyed rows already in
+  people's databases. Replacing it is the honest answer, but it orphans those rows and they
+  will keep answering lookups for a name nobody queries. That decision is not made yet, and it
+  is the only thing standing between part 1 and someone writing it.
+
 **And the raw data cannot be re-partitioned afterwards.** `AtrScan:AddScanItem`
 (`AuctionatorScan.lua:381`) stores only stack size, buyout, owner and page. The row's link is
 consulted once, under `if (scn.itemLink == nil …)` at `:356`, so a bucket that already has a
@@ -709,7 +724,8 @@ this case (epic vs rare); the item's real link is available too, via the bag slo
 1. **Split the scan buckets on something that works** — quality, or required/item level, or the
    listing's item id — instead of texture, and record the row's link in `AddScanItem` so a
    bucket knows what it holds. Contained inside `AuctionatorScan.lua`; fixes the *displayed*
-   list on the Sell and Buy tabs.
+   list on the Sell and Buy tabs. **Not startable as written** — see the trailing-space note
+   above for the one decision to make first.
 2. **Give the Sell tab the item it was actually handed**, from `GetAuctionSellItemInfo`'s
    quality or from the bag link, rather than resolving the name through `gItemLinkCache`.
    Contained; fixes the recommendation for the item in the drop box.
