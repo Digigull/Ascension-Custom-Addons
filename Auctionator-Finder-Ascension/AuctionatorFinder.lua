@@ -109,6 +109,7 @@ local gFdr_UsableUserOff = false;	-- user unchecked it after our auto-check; res
 local gFdr_LvlMin		 = nil;		-- client-side level range (read live at rebuild)
 local gFdr_LvlMax		 = nil;
 local gFdr_ReqCap		 = nil;		-- "My Lvl": hide items requiring more than this
+local gFdr_HideKnown	 = false;	-- hide recipes this character has already learned
 
 local gFdr_SelectedStats = {};		-- ordered list of selected stat keys (filter, AND)
 local gFdr_SelectedSet	 = {};		-- same keys as a set for quick lookup
@@ -533,6 +534,7 @@ end
 -------------------------------------------------------------------------------
 
 local FDR_ARMOR_CLASS = 2;	-- index of Armor in GetAuctionItemClasses (stable in 3.3.5)
+local FDR_RECIPE_CLASS = 9;	-- index of Recipe in the same list, same assumption
 
 -- Summarizes the category selection. Armor is special: material subclasses
 -- (Cloth/Leather/...) and slots (Legs/Chest/...) combine with AND — materials
@@ -846,8 +848,49 @@ local function Fdr_PassesLevelFilter (rec)
 	return true;
 end
 
+-- Hide recipes this character already knows.  The knowing is decided in
+-- AuctionatorFinderProfession.lua (Atr_Craft_IsRecipeKnown, which reads the
+-- client's own ITEM_SPELL_KNOWN tooltip line); this only asks.
+--
+-- Gated on the item class for COST, not correctness: only a recipe ever carries
+-- the known-line, so scanning a tooltip for every sword would be pure waste.
+-- The class name comes from GetAuctionItemClasses, which returns the same
+-- strings GetItemInfo does (see Fdr_IsGearClassName) -- so this reads right on
+-- a localised client, where an English literal would not. The literal is kept
+-- as a fallback for a server that reorders the list; if neither matches, the
+-- filter simply stops hiding anything, which is the safe direction.
+--
+-- The verdict is memoised on the record because a rebuild runs on every sort,
+-- filter tick and column change, and a tooltip scan per row per rebuild would
+-- be felt. A fresh search builds fresh records, so a recipe learned mid-session
+-- is re-read then -- and the per-character cache carries a `true` across
+-- sessions anyway.
+local function Fdr_IsRecipeClassName (sType)
+
+	if (sType == nil) then return false; end
+	if (sType == "Recipe") then return true; end
+	if (GetAuctionItemClasses == nil) then return false; end
+
+	local recipe = select (FDR_RECIPE_CLASS, GetAuctionItemClasses());
+	return (recipe ~= nil and sType == recipe);
+end
+
+local function Fdr_PassesKnownFilter (rec)
+
+	if (not gFdr_HideKnown) then return true; end
+	if (not Fdr_IsRecipeClassName (rec.itemType)) then return true; end
+
+	if (rec.recipeKnown == nil) then
+		rec.recipeKnown = (type (Atr_Craft_IsRecipeKnown) == "function")
+						  and Atr_Craft_IsRecipeKnown (rec.link) or false;
+	end
+
+	return not rec.recipeKnown;
+end
+
 local function Fdr_PassesFilters (rec)
-	return Fdr_PassesLevelFilter (rec) and Fdr_PassesCategoryFilter (rec) and Fdr_PassesStatFilter (rec);
+	return Fdr_PassesLevelFilter (rec) and Fdr_PassesCategoryFilter (rec)
+			and Fdr_PassesStatFilter (rec) and Fdr_PassesKnownFilter (rec);
 end
 
 Fdr_PassesStatFilter = function (rec)
@@ -892,6 +935,11 @@ function Atr_Finder_RebuildDisplay ()
 	if (Atr_Finder_ReqCheck and Atr_Finder_ReqCheck:GetChecked() and UnitLevel) then
 		gFdr_ReqCap = UnitLevel ("player");
 	end
+
+	-- read once per rebuild, not once per row: the setting lives in the Finder
+	-- options panel (the control row here has no space left for a checkbox)
+	gFdr_HideKnown = (type (Fdr_HideKnownRecipes_Enabled) == "function")
+					 and Fdr_HideKnownRecipes_Enabled () or false;
 
 	local grouping = Atr_Finder_GroupCheck and Atr_Finder_GroupCheck:GetChecked();
 

@@ -469,30 +469,73 @@ survives. **Not verified in-game.**
 
 ---
 
-## 6. Finder — filter recipes by already-learned
+## 6. Finder — filter recipes by already-learned — DONE
 
 **Asked:** if searching recipes on the Finder, have a filter for already learned.
 
-**Nothing exists.** The Finder has no notion of recipes at all — no `IsRecipe`, no known-spell
-check anywhere in `AuctionatorFinder.lua`.
+**Shipped 2026-08-19.** A checkbox in the Finder options panel removes recipe listings this
+character has already learned.
 
-**The mechanism that will work on 3.3.5.** For a recipe *item*, the tooltip carries the red
-`"Already known"` line (`ITEM_SPELL_KNOWN`) when the character has learned it. Reading it
-means scanning the item's tooltip, which is the same technique the Finder's full scan already
-uses to read a listing's true item level and DPS (`AuctionatorFinder.lua:1265` and the
-Hints file's tooltip scraper, `AuctionatorHints.lua:880`). So the tooling exists; this is a
-new consumer of it, not new machinery.
+### How "known" is decided
 
-Watch for:
+There is no API on 3.3.5 that answers "have I learned recipe item X". The only signal is the
+`ITEM_SPELL_KNOWN` line the client itself adds to a recipe's tooltip, so
+`Atr_Craft_IsRecipeKnown` (`AuctionatorFinderProfession.lua`) reads it off a hidden tooltip —
+the same technique the Finder already uses for a listing's true item level.
 
-- The check is **per character**, unlike almost everything else Auctionator persists
-  account-wide. The cache has to be keyed by character or it will lie on an alt.
-- `Atr_Craft_HarvestRecipeTooltip` (`AuctionatorFinderProfession.lua:198`) already parses recipe
-  item tooltips for reagents and already strips the `Pattern:`/`Formula:`/`Plans:` name prefix (`:201`).
-  Read the known-line in the same pass rather than scanning twice.
-- Ascension's tooltip strings may not match the stock English `ITEM_SPELL_KNOWN`. Verify.
+**Deliberately a TEXT test, not the colour test `USABLE-SCAN.md` documents.** That doc was the
+obvious model and it is the wrong one here: on a recipe tooltip the same unmet-requirement red
+also paints `Requires Enchanting (300)` and a too-high required level, so a recipe you *cannot
+learn* would read as one you *already know* — the exact inversion, and it would hide the row.
+What did carry over is the blank-line lesson: only a line with text is tested, because
+`GameTooltip` reuses its FontStrings and `ClearLines` only hides them.
 
-Ships as a checkbox next to `Usable`/`My Lvl`, active only when the results contain recipes.
+The wording comes from `_G.ITEM_SPELL_KNOWN` rather than a literal, so a re-worded or localised
+client still matches; a lower-cased `"already known"` substring is the fallback.
+
+### The cache, and why it can be persisted safely
+
+`AUCTIONATOR_KNOWN_RECIPES`, **per character** — the one `SavedVariablesPerCharacter` addition
+this addon has needed in a while, because an alt has not learned your main's recipes. That is a
+`.toc` change, unlike item 4's.
+
+**Only "known" is ever written, never "not known."** Learning a recipe moves unknown → known and
+nothing in the game moves it back, so a stored `true` cannot go stale; a missing entry just means
+"scan again". That is the whole reason a persisted cache is safe here.
+
+**When in doubt, do not hide.** An item the client has never cached renders a stub tooltip with
+no known-line, which reads as "not known" and leaves the row on screen. Showing a recipe you own
+is a mild annoyance; hiding one you wanted is a lost purchase.
+
+### Where it hooks in
+
+- **`Fdr_PassesKnownFilter`** joins `Fdr_PassesFilters`, the single choke point both the grouped
+  and ungrouped display paths already run every row through.
+- **Gated on the item class for cost, not correctness.** The class name comes from
+  `GetAuctionItemClasses` (which returns the same strings `GetItemInfo` does — see
+  `Fdr_IsGearClassName`), so it reads right on a localised client; `"Recipe"` is kept as a
+  fallback. If neither matches the filter simply stops hiding anything.
+- **The verdict is memoised on the record**, because a rebuild runs on every sort and column
+  change and a tooltip scan per row per rebuild would be felt.
+- **`Atr_Craft_HarvestRecipeTooltip` warms the cache for free** — it is already walking a
+  rendered recipe tooltip for reagents, so it reads the known-line in the same pass, which is
+  what this item's original plan asked for.
+
+### Where the checkbox went, and why not where the plan said
+
+The plan said "next to `Usable`/`My Lvl`". **The Finder's control row has no space left**: the
+search box, Categories, the level range, three checkboxes and the stat dropdown run from x=72 to
+x=732 with no 24px gap anywhere. Adding a second control row would push the results grid down and
+cost one of the 15 visible rows. Asked the owner (2026-08-19), who chose the **Finder options
+panel** — no layout risk, alongside the existing scan options. `Fdr_Options_Apply` triggers a
+rebuild so a toggle takes effect on results already on screen.
+
+The preference is account-wide (a habit) even though the knowledge is per character.
+
+**Verified** by `luac5.1 -p` on all three changed files. **Not verified in game.** Two things to
+look at first: whether Ascension's recipe tooltips carry the stock string at all (the original
+open question — if they do not, nothing is hidden and nothing breaks), and whether the class name
+at index 9 of `GetAuctionItemClasses` really is Recipe on this server.
 
 ---
 
@@ -1095,27 +1138,22 @@ The 95 new rows are the window harvest working for the first time: ten `made = 3
 
 ## Suggested order
 
-Items 1–5, 11 and 14 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11 and 14 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
-1. **Item 6** — Finder recipe filter, the last small self-contained feature. The in-game check
-   it was blocked on (does Ascension carry the stock `ITEM_SPELL_KNOWN` string?) is softer than
-   it reads: read `_G.ITEM_SPELL_KNOWN` at runtime and fall back to the line's *colour*, the
-   technique `USABLE-SCAN.md` already proved in the PassLoot pair. Per-character cache, not
-   account-wide.
-2. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
+1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
    waiting on: three trailing-space rows, none with an unsuffixed twin, so replacing the texture
    hack orphans nothing. Part 2 (give the Sell tab the item it was handed) is independent and
    smaller still.
-3. **Item 7 (Ledger)** — the biggest new surface, and it unblocks 8 and 9. One scope question
+2. **Item 7 (Ledger)** — the biggest new surface, and it unblocks 8 and 9. One scope question
    to answer before the first row is written: auction house only, or vendor and mail too.
-4. **Item 12 part 3** — the price database's value shape. Do it after part 1, which is what
+3. **Item 12 part 3** — the price database's value shape. Do it after part 1, which is what
    gives it data to store, and fold item 13's mean-database change into the same pass since both
    touch the same value types.
-5. **Item 8 (Advisor)** — now known to be a data-plumbing project first: there is no price
+4. **Item 8 (Advisor)** — now known to be a data-plumbing project first: there is no price
    series, confirmed on real data. Scope after the Ledger.
-6. **Item 9** — investigate with ledger data in hand.
-7. **Item 13** — saved-variable trimming. Invisible to the user, so it ranks last on its own;
+5. **Item 9** — investigate with ledger data in hand.
+6. **Item 13** — saved-variable trimming. Invisible to the user, so it ranks last on its own;
    worth folding into item 12 part 3 if that lands first.
 
 ## What a SavedVariables dump answers
@@ -1199,8 +1237,10 @@ to become visible.
   vellums price from a vendor rather than the auction house.~~ — **closed 2026-08-19.** Both
   names are in the price database and both candidate names match; both vellums are vendor-sold
   at 2g40s (`52510`, `52511`) and now price from there instead of the AH's 6g85s / 3g22s.
-- **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
-  ("Already known") string.
+- **Item 6 (built, needs one in-game check):** whether Ascension's recipe tooltips carry the
+  stock `ITEM_SPELL_KNOWN` ("Already known") string, and whether class 9 of
+  `GetAuctionItemClasses` is Recipe here. If either is wrong the filter hides nothing and
+  nothing else changes — search recipes with the option on and see whether known ones drop out.
 - ~~**Item 11:** whether the profession harvest stores transmutes at all~~ — **closed
   2026-08-19.** It did not, and the item-link theory was wrong: the window harvest dropped every
   recipe producing an item because its file never captured `zc` (item 14). After the fix,
