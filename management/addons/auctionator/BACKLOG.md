@@ -153,18 +153,53 @@ This is a real ordering problem for the user: the stats are a *filter*
 (`Fdr_PassesStatFilter`, `:741` — a selected stat that a row lacks removes the row), so the
 natural flow is pick the stat, then search. Today you must search, then pick, then look again.
 
-**Shape of the work.** Seed the dropdown from a static list of stat keys (WoW's
-`ITEM_MOD_*` globals give both the keys and the localised names, and
-`Fdr_StatDisplayName` already maps keys to labels), and union it with whatever the current
-results discovered. Two decisions to make when building it:
+**Decided (owner, 2026-08-19): learn, don't seed.** No static `ITEM_MOD_*` list. The addon
+remembers every stat key it has ever seen on gear and offers the accumulated set in the
+dropdown from then on, so the list is empty on a fresh install and fills in as you search. That
+sidesteps the two problems a static seed had — a long list of stock keys that may not apply on
+this server, and Ascension's custom stats, which no stock constant covers and which a static
+list would have had to fall back to discovery for anyway.
 
-- Ascension has custom stats that no stock `ITEM_MOD_*` constant covers. The union keeps them
-  available once seen; a purely static list would lose them. Union, not replace.
-- A static list is long. Consider keeping the results-derived keys at the top and the rest
-  below, or dropping the `ubiquitousConstant` filter only for the seeded part.
+**Learn from the RAW discoveries, not from `gFdr_StatKeys`.** This is the part that is easy to
+get wrong. `statSeen` (`AuctionatorFinder.lua:2607`) accumulates every stat key on every
+equippable result. `gFdr_StatKeys` is what survives *two* filters applied to it (`:2694`):
+
+- `FDR_DPS_KEY` is dropped because DPS has its own dedicated column.
+- `ubiquitousConstant` drops a stat that appears on **every** result with an **identical**
+  value, on the grounds that it cannot discriminate between them.
+
+The second is a judgement about *this result set only*. A search narrow enough that every hit
+carries the same +10 Stamina drops Stamina — and Stamina is obviously worth remembering.
+Persisting the post-filter list would make what gets learned depend on the shape of your past
+searches, and a stat could end up harder to learn precisely because you once searched for it
+too precisely. So: **learn from `statSeen`'s keys, and keep `ubiquitousConstant` as a display
+rule for the current results only.** `FDR_DPS_KEY` should stay out of the learned set too, for
+the same reason it is excluded now.
+
+**Storage.** `AUCTIONATOR_FINDER_SETTINGS` is already an account-wide SavedVariable (declared
+in the `.toc`), so a `statKeys` sub-table lands there with no `.toc` change. Account-wide is
+right — stats are a property of the server's items, not of a character. The set is bounded by
+the number of distinct stat keys that exist, so no pruning rule is needed; a sanity cap that
+complains rather than silently truncating is cheap insurance against a malformed key being
+written in a loop.
+
+**Display.** `Fdr_StatDisplayName` (`:178`) already handles unknown keys — it reads `_G[key]`
+and falls back to de-tokenising the key itself — so a learned custom stat gets a readable label
+with no extra mapping.
+
+Two ordering choices worth making deliberately:
+
+- List the stats present in the current results first, then the rest of the learned set. Before
+  a search there is only the learned set, which is the whole point of the item.
+- Dim the learned-but-not-in-these-results entries. Selecting one *is* meaningful before a
+  search, but after a search it will empty the list — `Fdr_PassesStatFilter` (`:741`) removes
+  any row missing a selected stat. Dimming makes that predictable rather than surprising.
 
 The selection already survives a stat vanishing from results — the comment at `:2704` says so
 deliberately — so pre-selecting before a scan needs nothing extra to persist.
+
+The dropdown rebuilds through `UIDropDownMenu_Initialize` every time it opens, so it picks up a
+grown set with no refresh plumbing.
 
 ---
 
@@ -324,6 +359,8 @@ columns for a real case. Recorded here only so the observation is not lost.
   transaction record.
 - **Item 3:** **diagnostic first.** Read `GetTradeSkillNumMade`'s real returns off a live
   Alchemy window before any manual-yield UI is written.
+- **Item 4:** **learn the stats, don't seed them.** No static stat list — the addon remembers
+  what it has seen and offers that from then on.
 
 ## Still open
 
