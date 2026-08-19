@@ -713,10 +713,82 @@ this case (epic vs rare); the item's real link is available too, via the bag slo
 2. **Give the Sell tab the item it was actually handed**, from `GetAuctionSellItemInfo`'s
    quality or from the bag link, rather than resolving the name through `gItemLinkCache`.
    Contained; fixes the recommendation for the item in the drop box.
-3. **Re-key the price database off the item id.** This is the real one. It changes a saved
-   variable that every consumer above reads, needs a migration for existing data, and needs an
-   answer for names that legitimately have one price. Not a UI change — do 1 and 2 first and
-   see how much of the symptom is left.
+3. **Teach the price database about variants.** The real one. See the recommended shape below
+   — the summary is that it should *not* be a re-key.
+
+### Recommended shape for part 3 (2026-08-19)
+
+The owner's instinct — put the item's identifying data in the price database — is right. The
+obvious way to do it is wrong, or at least much more expensive than it looks.
+
+**Do not re-key the database from name to item id.** Keep the name as the key and let the
+*value* carry variants:
+
+```
+gAtr_ScanDB[name] = 123456                          -- legacy: one price, no variants known
+gAtr_ScanDB[name] = { ["1234:0"] = 97500,           -- itemId:suffixId
+                      ["5678:0"] = 1233375,
+                      dflt      = 97500 }           -- what a name-only lookup answers
+```
+
+Three reasons, in order of how much they matter:
+
+- **A dozen callers have a name and nothing else, and always will.** `Atr_GetDEitemName(itemID)`
+  turns an id into a name and then looks the name up (`AuctionatorHints.lua:617`); the
+  profession code prices reagents and scrolls by name (`AuctionatorFinderProfession.lua:64`,
+  `:220`, `:640`, `:1136`); the Bazaar prices `rec.name` (`AuctionatorBazaar.lua:2938`);
+  `Atr_GetAuctionBuyout` is a public API taking either (`AuctionatorAPI.lua:47`). Under
+  id-keying every one of those becomes unanswerable, and the fix is to build a name→ids index
+  and a policy for picking among them — which is the variant-in-value design, arrived at by the
+  expensive route and bolted on the side. Build it deliberately instead.
+- **Migration becomes free.** A legacy `number` value simply *is* "one variant, unknown id".
+  A `type(v) == "number"` branch handles every pre-existing row forever, so there is no
+  `__dbversion` 3 rewrite and no risk of eating someone's database. The codebase already does
+  exactly this shape for `gAtr_MeanDB` (`if (type (m) ~= "table") then m = {} end`,
+  `AuctionatorScan.lua:1360`).
+- **It stages.** Only callers that actually know the variant need to change, one at a time —
+  the Sell tab, the AH/bag tooltip (which already computes `itemID`, `AuctionatorHints.lua:2160`),
+  the sell-browser rows (`Auctionator.lua:1792`, `:2184`). Everything else keeps working
+  unchanged on the default.
+
+**The seam is already there.** `Atr_GetAuctionPrice` and `Atr_GetMeanPrice`
+(`AuctionatorHints.lua:273`, `:318`) are the only two accessors, and **both already take
+"itemName or itemID"** — and then convert the id to a name and throw it away. Giving them an
+optional variant key, and making the id path keep the id instead of discarding it, is where
+this change lives. `gAtr_MeanDB` needs the same treatment or the two tooltip lines will
+disagree between variants.
+
+**Use `itemId:suffixId` as the variant key, not the bare item id.** The format is already in
+this addon: `AUCTIONATOR_PRICING_HISTORY[name]["is"]` stores `itemId:suffixId:uniqueId`
+(`Auctionator.lua:4548`). Drop `uniqueId` — it is per-instance and would shatter the table.
+Keeping `suffixId` matters because random-suffix gear is the *other* variant axis and the two
+should not be conflated.
+
+  Note while reusing that format: the existing parser has a copy-paste bug at
+  `Auctionator.lua:4558` — `uniqueId = tonumber(suffixId)` reads the wrong variable. Harmless
+  today because the value is only used to rebuild an item string where `uniqueId` rarely
+  matters, but do not propagate it.
+
+**What will actually break downstream, and it is not the readers.** Changing the value type
+breaks the code that *walks* the table:
+
+- `Atr_GetAHVariantEstimate` (`AuctionatorHints.lua:250`) iterates `pairs(gAtr_ScanDB)` and
+  filters on `type(price) == "number"`. Variant rows become tables and would be **silently
+  dropped from the estimate** — random-suffix gear quietly gets worse. This is the one to fix
+  in the same commit, not after.
+- `/atrprices list` does the same filter (`AuctionatorFinderPriceDB.lua:384`), and
+  `Fdr_PriceDB_ResolveName` (`:265`) tests `gAtr_ScanDB[name] ~= nil` to decide a name is known.
+- `Atr_GetDBsize` (`AuctionatorScan.lua:1066`) is a bare count and is fine.
+
+**Note the two variant systems are unrelated and must stay that way.**
+`Atr_GetAHVariantEstimate` handles random-suffix gear, where the variants have *different
+names* ("Dreamdust Slippers of the Owl"). This item is the opposite case: *same* name,
+different item. Neither mechanism can serve the other, and a fix that tries to unify them will
+get both wrong.
+
+**Do part 1 first regardless.** The database has nothing to store until the scan can tell the
+variants apart: `AtrScan.items[name]` is one bucket per name and `AddScanItem` never records
+the row's link. Part 3 without part 1 is a schema with no data.
 
 **Not yet known:** how common this is on Ascension. Two same-name variants of one gem is one
 sighting; whether the server does this broadly (custom itemsets, difficulty tiers) decides
@@ -746,8 +818,9 @@ Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without
 6. **Item 9** — investigate with ledger data in hand.
 
 **Item 12** does not have a place in that line yet. Its parts 1 and 2 are small and could go
-any time; part 3 re-keys the price database and should not be started before someone has looked
-at a `SavedVariables` dump to see how many names actually collide.
+any time; part 3 changes the price database's value shape and should not be started before
+someone has looked at a `SavedVariables` dump to see how many names actually collide. Part 3's
+design is settled either way — see the recommended shape in the item.
 
 ## What a SavedVariables dump answers
 
@@ -802,5 +875,5 @@ from the same account, which the supplied file did not include.
   a feature or a data-plumbing project.
 - **Item 9:** parked by the owner until item 7 lands.
 - **Item 12:** how many item names on this server carry more than one variant. One sighting so
-  far (`Bloodforged Imperial Jewel`, rare and epic). The answer decides whether the fix is two
-  local changes or a re-keyed price database.
+  far (`Bloodforged Imperial Jewel`, rare and epic). The answer decides how much part 3 is
+  worth, not what shape it takes — that is settled (variant-in-value, not a re-key).
