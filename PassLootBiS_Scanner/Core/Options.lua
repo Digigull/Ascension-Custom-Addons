@@ -227,6 +227,9 @@ local function build()
 
 	-- Test: fires whatever the two boxes above would fire for an item that is both
 	-- an upgrade and high value, so you hear the real cues rather than a stand-in.
+	-- Both toggles play the same coin jingle and Alert.cues() de-duplicates it, so
+	-- that item is ONE coin however many of the two boxes are ticked -- if you hear
+	-- two sounds here, something has pointed the cues at different files again.
 	local soundTest = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	soundTest:SetWidth(56)
 	soundTest:SetHeight(22)
