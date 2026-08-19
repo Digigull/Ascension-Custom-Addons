@@ -552,7 +552,7 @@ recipes, not just stock ones, and `GetAuctionItemClasses` index 9 really is Reci
 
 ---
 
-## 7. NEW — Ledger: record all purchases and sales — **stages 1 and 2 shipped**
+## 7. NEW — Ledger: record all purchases and sales — **DONE (v1)**
 
 **Asked:** a new ledger recording all purchases and sales.
 
@@ -716,14 +716,50 @@ genuinely new one produces exactly one; and a sale keeps its invoice parts. **No
 game**, and the event wiring specifically is not covered by that test — it was run with
 `CreateFrame` nil, so what is proven is the sweep and the counting, not the frame that calls them.
 
-### Still to come
+### Stage 3 shipped 2026-08-19 — the tab
 
-- **Stage 3 — the tab.** Rename the existing Ledger sub-tab to **History** (it shows price
-  history, and `Atr_ShowHistory` already sets its column heading to `History`, so the label was
-  the odd one out), freeing the name, then build the Ledger view. `FRAMEWORK.md` §8 has the
-  sub-tab recipe and the 15-site main-tab census.
+**Own panel on its own main tab**, not a sub-tab. The shared Auctionator panel is built around one
+scanned *item* (`FRAMEWORK.md` §4, World 1) and a ledger is not about an item, it is about you —
+so the Current/History strip was the wrong home for it however much cheaper it looked.
 
----
+That means the 15-site main-tab wiring, all tagged **`-- LEDGER_TAB`** so
+`grep -n LEDGER_TAB Auctionator.lua` is the census the next person gets, exactly as the Bazaar
+left one behind.
+
+**The name was freed first.** Tab 2 of the Current/Ledger strip is renamed to **History**
+(`Auctionator.xml:1004`) — it shows the price history of the scanned item, which is what
+`Atr_ShowHistory` already titles its own column, so the label was the odd one out rather than a
+casualty of this change.
+
+**The panel**: newest first (a ledger is read from the end), a `FauxScrollFrame`, an item tooltip
+on any row that still carries a link, and a totals line.
+
+Two things in it are deliberate rather than incidental:
+
+- **The money column states a direction.** A sale reads `+`, a purchase `-`, and expiry and
+  cancellation move no money at all so they read `--` rather than zero. A ledger that shows a sale
+  and a purchase in the same colour is worse than one that shows neither.
+- **The totals line says "auction house", never "profit".** v1 does not see vendor sales, so a
+  profit figure would be wrong by exactly the amount the user cannot see. The panel also carries
+  the sentence outright: *"Auction house activity. Vendor sales are not recorded yet."* That is
+  this item's "absent, not zero" rule made visible rather than left in a doc.
+
+**One layout trap worth keeping:** sibling frames draw in creation order, so the `FauxScrollFrame`
+is created **before** the rows. The other way round the scrollbar covers the money column and the
+rows stop taking mouse. The row width and the money column both stop short of the bar's ~26px.
+
+**Verified** by `luac5.1 -p`, XML parse, and an offline check of the display maths — that the
+newest-first indexing (`rows[n - (offset + i - 1)]`) reads the newest row at the top and pages
+correctly, and that the totals add up the three sources separately. **Not verified in game**, and
+the layout is the part to look at first: every coordinate in the panel is reasoned, not seen.
+
+### Left for v2
+
+- **Vendor buy/sell and mail beyond the auction house** — the scope the owner deferred. The `src`
+  tag already exists to carry them.
+- **A mail that arrives and is taken between two sweeps** stays invisible (stage 2's known gap).
+- **Item 9 is now answerable**: `buy` rows carry what the loop intended, `won` rows what actually
+  arrived. Nothing compares them yet — that comparison is item 9's own work.
 
 ## 8. NEW — Advisor
 

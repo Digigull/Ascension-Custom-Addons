@@ -1001,7 +1001,7 @@
 						<Anchors><Anchor point="BOTTOMRIGHT" ><Offset><AbsDimension x="-8" y="0"/></Offset></Anchor></Anchors>
 						<Scripts><OnClick>PanelTemplates_SetTab(Atr_ListTabs, 3);Atr_ShowWhichRB(3);</OnClick></Scripts>
 					</Button>
-					<Button name="$parentTab2" inherits="TabButtonTemplate" id="2" text="Ledger">
+					<Button name="$parentTab2" inherits="TabButtonTemplate" id="2" text="History">
 						<Anchors><Anchor point="BOTTOMRIGHT" ><Offset><AbsDimension x="-8" y="0"/></Offset></Anchor></Anchors>
 						<Scripts><OnClick>PanelTemplates_SetTab(Atr_ListTabs, 2);Atr_ShowWhichRB(2);</OnClick></Scripts>
 					</Button>
