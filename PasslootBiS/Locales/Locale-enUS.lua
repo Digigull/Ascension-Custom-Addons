@@ -487,3 +487,16 @@ L["BiSCleanup_Apply"] = "Stop rolling these"
 L["BiSCleanup_Keep"] = "Keep them"
 L["BiSCleanup_More"] = "...and %d more."
 L["BiSCleanup_Done"] = "BiS Check: stopped auto-rolling on %d item(s). They are still on the list -- re-tick them in the BiS Manager."
+
+-- /plbisdebug (Core/DebugReport.lua). Chat on this client cannot be selected or
+-- copied, so the report goes into an EditBox and the title has to say what to do
+-- with it -- a copy box nobody knows to Ctrl+A is just a wall of text.
+L["DebugBox_Title"] = "PassLoot (BiS) diagnostic -- click the text, Ctrl+A, Ctrl+C"
+L["DebugCmd_On"] = "trace |cff33ff99on|r (buffered quietly). Do a run, then /plbisdebug show to copy it out."
+L["DebugCmd_Off"] = "trace |cffff0000off|r. What was already captured is kept until /plbisdebug clear or a reload."
+L["DebugCmd_ItemUsage"] = "usage: /plbisdebug item <shift-click an item here>"
+L["DebugCmd_Usage"] = [=[/plbisdebug           open the report + copy box
+/plbisdebug on|off    start / stop collecting the trace
+/plbisdebug chat      also echo trace lines to chat as they happen
+/plbisdebug clear     empty the trace
+/plbisdebug item <link>  dry-run one item through BiS Check (shift-click it in)]=]

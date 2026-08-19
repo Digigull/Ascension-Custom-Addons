@@ -67,11 +67,9 @@ indistinguishable from a feature that does not exist.
 
 ## Debugging this in game
 
-`/plbisdebug` toggles the `Debug()` trace (there was previously no way to turn it on
-short of editing `Core/Constants.lua`). With it on, the roll path logs rule matches,
-each `RollOnLoot`, and every confirm — including `not our roll, leaving the popup`,
-which is the line that tells you a prompt you had to click by hand was a manual roll
-rather than a missed auto-confirm.
+`/plbisdebug` — see the "Diagnostics" section of `BIS-CHECK.md`. The line that
+settles a confirm question is `not our roll, leaving the popup`: it means a prompt
+you had to click by hand was a *manual* roll, not a missed auto-confirm.
 
 ## Not verified in game
 

@@ -5,6 +5,7 @@
 	<Script file="RollAdvisor.lua"/>
 	<Script file="RollRetry.lua"/>
 	<Script file="BiSCleanup.lua"/>
+	<Script file="DebugReport.lua"/>
 	<Script file="Constants.lua"/>
 	<Script file="MainGUI.lua"/>
 	<Script file="AdvisorStatus.lua"/>

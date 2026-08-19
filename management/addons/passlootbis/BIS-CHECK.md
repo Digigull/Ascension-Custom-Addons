@@ -90,6 +90,52 @@ positive costs you an item outright.
   early unless there is an upgrade or a gold flag, so the host's veto window is the
   only UI for it. Do not "fix" that into a second popup.
 
+## Diagnostics — `/plbisdebug`
+
+BiS Check is close to untestable on purpose: it needs one specific stale item to
+drop off one specific boss. So the trace and the report exist to answer "would it
+have fired?" without that.
+
+| Command | Does |
+|---|---|
+| `/plbisdebug` | Open the report in a **copy box** — click the text, Ctrl+A, Ctrl+C |
+| `/plbisdebug on` \| `off` | Start / stop collecting the trace |
+| `/plbisdebug chat` | Also echo trace lines live (off by default) |
+| `/plbisdebug clear` | Empty the trace |
+| `/plbisdebug item <link>` | **Dry-run one item** through BiS Check — shift-click it in |
+
+`item` is the one that matters. It runs the link through `ns.effectiveTarget` and
+`ns.judge` — the very functions the live roll path calls — and reports the score,
+the target, and whether BiS Check *would* veto. If it says veto, a real roll would
+too. Those two helpers were extracted from `compareRoll` precisely so the dry run
+cannot answer differently from the feature; do not let a diagnostic grow its own
+copy of that arithmetic.
+
+The report also covers the parts that are checkable without any drop at all: the
+advisor registry and trust mode, the three source toggles, the scanner's spec and
+weights, every rule with its `[BeforeAdvisor]` tick, **the win ledger's current
+contents**, and an in-game run of the verdict contract between the *installed*
+copies of the two addons (the offline check in `tools/` only proves the two files
+in the repo agree — the two folders in `Interface\AddOns` are what can actually be
+mismatched).
+
+Two constraints worth keeping:
+
+- **Chat on this client cannot be selected or copied**, so a trace you can only read
+  is a trace you cannot report. Everything lands in one selectable EditBox.
+- **Nothing is persisted.** The ring, the on/off flag and the echo flag live on the
+  addon table, never in `db.profile`, so a `/reload` wipes the lot and no diagnostic
+  state is left behind in SavedVariables (owner decision — the SavedVariables file is
+  not a debug dump unless there is no alternative, and here there is one).
+
+The trace is **buffered silently by default**; `chat` is opt-in. It is meant to be
+left on through a boss pull, and a line per rule per roll would bury the fight.
+
+`tools/report-smoke.lua` exercises the whole report offline against a stubbed addon,
+including the degenerate no-scanner case — the report reaches through a lot of
+objects that can each be absent, and a nil-index there turns "tell me what went
+wrong" into a second thing that went wrong.
+
 ## Not verified in game
 
 Everything here is reasoned, syntax-checked (`luac5.1`) and covered by the offline

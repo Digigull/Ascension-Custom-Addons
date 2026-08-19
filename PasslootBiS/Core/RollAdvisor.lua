@@ -992,7 +992,13 @@ function PasslootBiS:HandleRoll(RollID, rollTime, itemObj, RollMethod, ctx, befo
   if not api or not api.enabled then return false end
 
   local verdict, advisorName = api:ConsultAdvisors(ctx)
-  if not verdict then return false end
+  if not verdict then
+    self:Debug("advisor: no actionable verdict; rules roll normally")
+    return false
+  end
+  self:Debug("advisor ", tostring(advisorName), " verdict: upgrade=", tostring(verdict.upgrade),
+    " highValue=", tostring(verdict.highValue), " downgrade=", tostring(verdict.downgrade),
+    " reason=", tostring(verdict.reason))
 
   -- ---- BiS Check: the top-level veto -------------------------------------
   -- Above Before Advisor AND above every trust mode, because those all answer the
@@ -1010,6 +1016,7 @@ function PasslootBiS:HandleRoll(RollID, rollTime, itemObj, RollMethod, ctx, befo
   -- held this for you" window over a roll nobody was making is pure noise, and on a
   -- boss that drops three of them it is noise three times.
   if verdict.downgrade and RollMethod ~= nil then
+    self:Debug("BiS Check: VETO -- holding the roll, fallback greed")
     self:RecordBiSDowngrade(ctx, verdict)
     local holdSecs = RollAdvisor.ResolveHoldSeconds(rollTime, api.minHold, api.margin)
     self:ShowRollConfirm(RollID, ctx, verdict, holdSecs, greedFallback, advisorName)
@@ -1021,7 +1028,15 @@ function PasslootBiS:HandleRoll(RollID, rollTime, itemObj, RollMethod, ctx, befo
   end
 
   -- A rule ticked "Before Advisor" wins everything below this line.
-  if beforeAdvisor then return false end
+  if beforeAdvisor then
+    if verdict.downgrade then
+      -- Reachable only when the veto above declined (no pending roll to stop).
+      self:Debug("BiS Check: downgrade seen but no roll pending; rule wins")
+    else
+      self:Debug("BeforeAdvisor: rule outranks the advisor for this roll")
+    end
+    return false
+  end
 
   local mode = api:GetTrustMode(advisorName)
   if mode == "advisory" then

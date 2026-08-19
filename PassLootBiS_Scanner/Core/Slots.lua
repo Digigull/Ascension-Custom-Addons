@@ -158,5 +158,15 @@ function Slots.weaponReplacementValue(equipLoc, canDW, mhScore, mhIs2H, ohAdjSco
 	return nil
 end
 
+-- Every equipLoc this addon can score, for diagnostics that need to ENUMERATE
+-- slots rather than look one up (the run-ledger dump in Scanner.lua). Derived from
+-- the table above rather than written out again, so a slot added there can never be
+-- missing here.
+Slots.DIAG_EQUIPLOCS = {}
+for equipLoc in pairs(Slots.EQUIPLOC_SLOTS) do
+	Slots.DIAG_EQUIPLOCS[#Slots.DIAG_EQUIPLOCS + 1] = equipLoc
+end
+table.sort(Slots.DIAG_EQUIPLOCS)
+
 ns.Slots = Slots
 return Slots

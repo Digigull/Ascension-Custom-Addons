@@ -2120,6 +2120,13 @@ function PasslootBiS:ProcessLootRoll(RollID, rollTime, ItemLink, attempt)
 		-- to defend, so the advisor still gets its turn.
 		local Rule = RuleID and self.db.profile.Rules[RuleID]
 		local BeforeAdvisor = (Rule and Rule.BeforeAdvisor and RollMethod ~= nil) and true or false
+		-- The one line that answers most "why didn't it do what I expected?" questions:
+		-- what matched, what it decided, and whether BiS Check is even in play.
+		self:Debug("roll ", tostring(ItemLink),
+			" rule=", tostring(Rule and Rule.Desc or "none"),
+			" method=", tostring(RollMethodKey[RollMethod] or "none"),
+			" beforeAdvisor=", tostring(BeforeAdvisor),
+			" isBiS=", tostring(IsBiS), BiSList and (" list=" .. BiSList) or "")
 		local handled = false
 		-- The gate is now consulted even for a Before Advisor rule, and told about the
 		-- tick rather than being skipped for it. BiS Check (Core/RollAdvisor.lua) has
@@ -2386,13 +2393,25 @@ function PasslootBiS:CheckRuleTables()
 	end
 end
 
+-- Trace line. Captured into the in-memory ring (Core/DebugReport.lua) whenever the
+-- trace is on, and echoed to chat only if DebugEcho is also set.
+--
+-- Buffered-but-silent is the DEFAULT on purpose: this is meant to be left running
+-- through a boss pull, and a line per rule per roll would bury the fight in chat.
+-- The ring is a plain table on the addon, never db.profile -- nothing diagnostic is
+-- ever written to SavedVariables.
 function PasslootBiS:Debug(...)
-	local DebugLine, Counter
-	if (self.DebugVar == true) then
-		DebugLine = ""
-		for Counter = 1, select("#", ...) do
-			DebugLine = DebugLine .. select(Counter, ...)
-		end
+	if (self.DebugVar ~= true) then
+		return
+	end
+	local DebugLine = ""
+	for Counter = 1, select("#", ...) do
+		DebugLine = DebugLine .. tostring(select(Counter, ...))
+	end
+	if (self.DebugCapture) then
+		self:DebugCapture(DebugLine)
+	end
+	if (self.DebugEcho) then
 		self:Print(DebugLine)
 	end
 end
@@ -2439,25 +2458,9 @@ function PasslootBiS:BiSManagerCommand(input)
 	end
 end
 
--- /plbisdebug -- flip the Debug() trace on for a run. There was no way to turn
--- DebugVar on short of editing Core/Constants.lua, which makes "tell me what the
--- addon thought it was doing" an unanswerable question during in-game testing --
--- and the roll/confirm path is the one place where the only evidence is timing.
-function PasslootBiS:DebugCommand(input)
-	input = tostring(input or ""):lower():gsub("%s", "")
-	if input == "on" then
-		self.DebugVar = true
-	elseif input == "off" then
-		self.DebugVar = false
-	else
-		self.DebugVar = not self.DebugVar
-	end
-	self:Print("debug trace " .. (self.DebugVar and "|cff33ff99on|r" or "|cffff0000off|r") ..
-		". Rolls, rule matches and bind confirms are logged to chat while it is on.")
-end
-
 if PasslootBiS.RegisterChatCommand then
-	PasslootBiS:RegisterChatCommand("plbisdebug", "DebugCommand")
+	-- /plbisdebug is registered by Core/DebugReport.lua, which owns the trace ring,
+	-- the report and the copy box.
 	PasslootBiS:RegisterChatCommand("plbismgr", "BiSManagerCommand")
 end
 

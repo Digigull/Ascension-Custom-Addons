@@ -283,6 +283,62 @@ function ns.weaponEquippedValue(equipLoc, weights)
 	return Slots.weaponReplacementValue(equipLoc, canDW, mh.score, mh.is2H, ohAdj)
 end
 
+-- The score a candidate for this slot has to beat.
+--
+-- Split out of compareRoll so the dry run (ns.API:GetLinkVerdict) reaches the SAME
+-- number a live roll would. A diagnostic that computes its own target is a
+-- diagnostic that can agree with itself while disagreeing with the feature.
+--
+-- Weapons/off-hands use the loadout rule (1H vs 2H, dual wield); everything else
+-- uses the worst equipped in the slot group (§6.2). On top of that, what you
+-- already WON this run counts as equipped, or the second shoulder of a run still
+-- reads as an upgrade over the shoulders you are technically still wearing
+-- (Core/WonLedger.lua has the full why).
+function ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+	local target = ns.weaponEquippedValue(equipLoc, weights)
+	local wins = WonLedger and WonLedger.winsFor(equipLoc)
+	if target == nil then
+		local scores = {}
+		for i, slotId in ipairs(slotIds) do
+			scores[i] = scoreEquipped(slotId, weights, subType, equipLoc)
+		end
+		if wins then scores = WonLedger.applyWins(scores, wins) end
+		target = Slots.worstEquipped(scores)
+	elseif wins then
+		-- Hand slots come back from the loadout rule as ONE already-resolved number,
+		-- not a per-slot list, so the displacement model has nothing to displace.
+		-- Raising the single bar is the honest approximation here: it can under-warn
+		-- on a dual-wield pair (a win in one hand lifts the bar for both) but never
+		-- over-warns, which is the right way round for a check whose false positive
+		-- costs you an item.
+		local best = WonLedger.bestFor(equipLoc)
+		if best and best.score > target then target = best.score end
+	end
+	return target
+end
+
+-- Score vs. target -> the three verdict inputs. Also split out so the dry run and
+-- the live roll cannot drift apart.
+--
+-- BiS Check (the third reason; see Verdict.build) is only ever raised for an item
+-- the HOST says is on a currently-rolling BiS list -- a lesser item that was never
+-- on your list is just loot, not a mistake worth interrupting for. It needs the
+-- score to be STRICTLY below the target, not merely under the upgrade threshold:
+-- an item scoring +1% against a +3% threshold is not an upgrade, but it is not a
+-- downgrade either, and vetoing that roll would be wrong.
+function ns.judge(rollScore, target, equipLoc, isBiS)
+	local isUpgrade, delta = Score.verdict(rollScore, target, db.threshold)
+	local down
+	if isBiS and not isUpgrade and rollScore > 0 then
+		local d = Score.deltaFraction(rollScore, target)
+		if d < 0 then
+			local best = WonLedger and WonLedger.bestFor(equipLoc)
+			down = { delta = d, wonName = best and best.name or nil }
+		end
+	end
+	return isUpgrade, delta, down
+end
+
 -- Shared compare core: score the rolled item vs. the worst equipped in its slot
 -- group and read the optional Auctionator high-value flag. Used by BOTH the
 -- scanner's own alert (evaluateRoll) and the roll-advisor verdict (ns.API), so the
@@ -317,48 +373,11 @@ local function compareRoll(rollID, ctx)
 
 	local isUpgrade, delta = false, 0
 	local down                    -- BiS-downgrade info for Verdict.build, or nil
+	local rollScore, target
 	if slotIds and weights and scored then
-		local rollScore = scoreRollItem(rollID, weights, subType, equipLoc)
-		-- Weapons/off-hands use the loadout rule (1H vs 2H, dual wield); everything
-		-- else uses the worst equipped in the slot group as the target (§6.2).
-		local target = ns.weaponEquippedValue(equipLoc, weights)
-		-- What you already WON this run counts as equipped for the compare, or the
-		-- second shoulder of a run still reads as an upgrade over the shoulders you
-		-- are technically still wearing (Core/WonLedger.lua has the full why).
-		local wins = WonLedger and WonLedger.winsFor(equipLoc)
-		if target == nil then
-			local scores = {}
-			for i, slotId in ipairs(slotIds) do
-				scores[i] = scoreEquipped(slotId, weights, subType, equipLoc)
-			end
-			if wins then scores = WonLedger.applyWins(scores, wins) end
-			target = Slots.worstEquipped(scores)
-		elseif wins then
-			-- Hand slots come back from the loadout rule as ONE already-resolved
-			-- number, not a per-slot list, so the displacement model has nothing to
-			-- displace. Raising the single bar is the honest approximation here: it
-			-- can under-warn on a dual-wield pair (a win in one hand lifts the bar for
-			-- both) but never over-warns, which is the right way round for a check
-			-- whose false positive costs you an item.
-			local best = WonLedger.bestFor(equipLoc)
-			if best and best.score > target then target = best.score end
-		end
-		isUpgrade, delta = Score.verdict(rollScore, target, db.threshold)
-
-		-- BiS Check (the third reason; see Verdict.build). Only ever raised for an
-		-- item the HOST says is on a currently-rolling BiS list -- a lesser item that
-		-- was never on your list is just loot, not a mistake worth interrupting for.
-		--
-		-- Strictly below the target, not merely "under the upgrade threshold": an item
-		-- scoring +1% against a +3% threshold is not an upgrade but it is not a
-		-- downgrade either, and vetoing that roll would be wrong.
-		if isBiS and not isUpgrade and rollScore > 0 then
-			local d = Score.deltaFraction(rollScore, target)
-			if d < 0 then
-				local best = WonLedger and WonLedger.bestFor(equipLoc)
-				down = { delta = d, wonName = best and best.name or nil }
-			end
-		end
+		rollScore = scoreRollItem(rollID, weights, subType, equipLoc)
+		target = ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+		isUpgrade, delta, down = ns.judge(rollScore, target, equipLoc, isBiS)
 	end
 
 	-- Optional high-value flag (Phase 4; guarded -- nil if no Auctionator fork).
@@ -450,6 +469,72 @@ function API:GetRollVerdict(rollID, ctx)
 	--     host treats it as a veto rather than an invitation.
 	local goldText = r.goldFlag and r.goldFlag.text or nil
 	return Verdict.build(r.isUpgrade, r.delta, goldText, r.down)
+end
+
+-- DIAGNOSTIC: what would this item link do if it were rolled right now?
+--
+-- Exists because BiS Check is almost impossible to test on purpose -- it needs a
+-- specific stale item to actually drop off a specific boss. This answers the same
+-- question against any link you can shift-click, using ns.effectiveTarget and
+-- ns.judge, which are the very functions the live roll path uses. If this says
+-- "downgrade" then a real roll would too.
+--
+-- Returns a REPORT, not a verdict: the host's diagnostic wants the intermediate
+-- numbers (score, target, why it was skipped) far more than the yes/no.
+--   { link, name, equipLoc, scannable, hadWeights, filtered, isBiS,
+--     score, target, isUpgrade, delta, down, verdict }
+-- `isBiS` is passed in by the host (it owns the BiS list); nil means "ask", which
+-- routes through the same ns.isBiSItem the alert path uses.
+function API:GetLinkVerdict(link, isBiS)
+	if type(link) ~= "string" or link == "" then return nil end
+	if not ScaledStats then return nil end
+	local name, _, _, _, _, itemType, subType, _, equipLoc = GetItemInfo(link)
+	if not name then
+		-- Cold cache: the query above is itself what starts the fill, so the caller
+		-- gets a "try again" rather than a wrong answer built from nils.
+		return { link = link, uncached = true }
+	end
+	if isBiS == nil then isBiS = ns.isBiSItem(link, name, nil) end
+
+	local slotIds = Slots.slotsFor(equipLoc)
+	local weights = currentWeights()
+	local scored = (not Filter) or Filter.isScored(itemType, subType, charFilter(), equipLoc)
+	local r = {
+		link = link, name = name, equipLoc = equipLoc,
+		scannable = (slotIds ~= nil), hadWeights = (weights ~= nil),
+		filtered = (slotIds ~= nil) and (not scored),
+		isBiS = isBiS and true or false,
+	}
+	if not (slotIds and weights and scored) then return r end
+
+	local stats = ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
+	r.score = Score.scoreItem(stats, weights)
+	r.target = ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+	r.isUpgrade, r.delta, r.down = ns.judge(r.score, r.target, equipLoc, r.isBiS)
+	r.verdict = Verdict.build(r.isUpgrade, r.delta, nil, r.down)
+	return r
+end
+
+-- DIAGNOSTIC: a flat copy of what the win ledger holds for this run, so the host's
+-- report can show that the run tracking is actually recording things -- the one
+-- half of BiS Check that CAN be exercised without a stale item dropping.
+-- Returns { { equipLoc, count, bestScore, bestName }, ... }, sorted.
+function API:GetRunLedger()
+	if not WonLedger then return {} end
+	local out = {}
+	for _, equipLoc in ipairs(Slots.DIAG_EQUIPLOCS or {}) do
+		local wins = WonLedger.winsFor(equipLoc)
+		if wins and #wins > 0 then
+			local best = WonLedger.bestFor(equipLoc)
+			out[#out + 1] = {
+				equipLoc = equipLoc, count = #wins,
+				bestScore = best and best.score or 0,
+				bestName = best and best.name or nil,
+			}
+		end
+	end
+	table.sort(out, function(a, b) return a.equipLoc < b.equipLoc end)
+	return out
 end
 
 -- End the current run: drop everything the win ledger collected. Called by the
