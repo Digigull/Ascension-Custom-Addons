@@ -206,11 +206,23 @@ are crafted items (blacksmithing/tailoring names). **Every key is a string name 
 keys**, so `Atr_Craft_GetRecipe`'s itemID path is dead in practice and only the name fallback
 ever fires. Worth knowing before item 12 touches name-keying.
 
-**The vellum question is still open, and the reason turned out to be a bug.**
-`AUCTIONATOR_NPC_PRICES` was empty — and stayed empty after the owner visited an enchanting and
-an alchemy supply vendor and reloaded. It was not a missing visit: `Atr_NPC_HarvestMerchant`
-could never store anything, because its file never captured `zc`. See item 14, fixed the same
-day. One supply-vendor visit *after that fix* names the vellum.
+**The vellum question is answered, 2026-08-19 — and answering it cost a bug fix.**
+`AUCTIONATOR_NPC_PRICES` was empty, and stayed empty after the owner visited two supply vendors
+and reloaded, because `Atr_NPC_HarvestMerchant` could never store anything (item 14). After that
+fix, one vendor visit filled it — and **two items sit at exactly 2g40s: `52510` and `52511`**,
+the armor and weapon vellums this server splits them into. The owner's observed price was right
+to the copper.
+
+**And the vellum was being costed from the auction house all along.** The price database carries
+both names — `Enchanting Vellum - Armor` at **6g85s** and `Enchanting Vellum - Weapon` at
+**3g22s** — which is what enchant craft costs were using, because `Atr_Craft_IDForName` sits in
+the same file as the missing `zc` capture and returned nil, so `Atr_Craft_ReagentPrice` could
+never reach its step-1 NPC branch. Every armor-vellum enchant was overstating its craft cost by
+**4g45s** and every weapon one by **82s**. Both now price at the vendor's 2g40s, which is what
+the cascade was written to do.
+
+The `ATR_ENCHANT_VELLUM_COLD = 24000` fallback turns out to have been exactly right — it was
+just never the value being used.
 
 ---
 
@@ -302,10 +314,27 @@ a reagent price or the produced item's own auction price; nothing above tests th
 `per craft x3` line makes it checkable at a glance — 91g55s97c of reagents against a 127g80s
 stack of 3 on the AH.
 
-**The 2026-08-19 dump cannot settle it: there is no alchemy in it** — and item 14 explains why.
-The profession-window harvest dropped every recipe that produces an *item*, which is all of
-alchemy, so opening the window changed nothing. Fixed the same day; the yields arrive on the
-first alchemy window opened after it. What the dump *does* prove is that
+**Settled 2026-08-19, from a live alchemy window after item 14's fix.** The harvest now stores
+**ten recipes at `made = 3`** — the Blightroot Extract flask family — and one at `made = 2`. The
+yield is being read correctly off the window; no manual-yield box is needed for these.
+
+**And the disputed number reproduces exactly.** Costing recipe `967456`'s reagents against this
+same dump's price database gives **91g55s99c per craft, 30g51s99c per flask** — the figure in
+this item, to the copper. So the arithmetic is not in question; the *inputs* are, and the
+sensitivity is concentrated in one of them:
+
+```
+Fiery Frond x1         4g55s99c
+Blightroot Extract x1 10g00s00c
+Mountain Silversage x10 8g00s00c
+Essence of Earth x2   69g00s00c   <- 75% of the craft cost
+```
+
+**Essence of Earth at 34g50s each is the whole question.** If that price is real, 30g51s99c is
+real. Nothing in the addon can check it; a glance at the auction house can. Note every reagent
+here priced from the AH — none is vendor-sold, so the NPC path does not soften it.
+
+What the earlier dump had already proved is that
 `GetTradeSkillNumMade`'s first return is **not universally clamped to 1 on this server** —
 three scroll recipes are stored `made = 2`. So a flask recorded as `made = 1` would be a real
 reading of `minMade`, not an API that always says one.
@@ -1009,8 +1038,21 @@ item 13's tidy-up rather than fixing separately.
 
 **Verified** by `luac5.1 -p`, by a repo-wide re-check that no other file has the same gap (the
 only other hit, `AuctionatorQuery.lua`, uses `zc.` in commented-out debug lines only), and by the
-two dumps that are the evidence for the diagnosis. **Not verified in game** — the check is a
-supply vendor and an alchemy window, then a dump.
+two dumps that are the evidence for the diagnosis.
+
+**Verified in game the same day**, on a third dump taken after installing the fix and opening one
+supply vendor and one alchemy window:
+
+| | before | after |
+|---|---:|---:|
+| `AUCTIONATOR_NPC_PRICES` | 0 | **9** |
+| `AUCTIONATOR_CRAFT_RECIPES` | 191 | **286** |
+| — of those, numeric keys | 0 | **95** |
+| reagents carrying an item ID | 0 | **267** |
+
+The 95 new rows are the window harvest working for the first time: ten `made = 3` flask recipes,
+`Arcanite Bar` (`12360`), and 84 others. Both vellums appeared in `NPC_PRICES` at 2g40s. Items 2,
+3 and 11 all closed on that one dump.
 
 ---
 
@@ -1077,12 +1119,12 @@ the server. Nothing else it suggested about this addon's data was ever evidence.
 | Question | Answer |
 |---|---|
 | Are scrolls named `"Scroll of <enchant>"`? | **Yes** — 88 `Scroll of Enchant ...` keys in `AUCTIONATOR_CRAFT_RECIPES`. |
-| Which item is the vellum here? | **Still open — and it exposed a bug.** `AUCTIONATOR_NPC_PRICES` stayed empty even after two supply-vendor visits: the harvest could never write (item 14). |
+| Which item is the vellum here? | **`52510` and `52511`**, both 2g40s from a vendor — after item 14's fix made the harvest able to write at all. |
 | Was enchanting really absent from the harvest? | **Confirmed fixed** — 88 of 191 recipes are enchants. |
-| What yield was harvested for a multi-output recipe? | **Not answerable yet** — no alchemy recipes at all, because the window harvest was dropping them (item 14). `made = 2` on three scrolls proves the API is not clamped to 1. |
+| What yield was harvested for a multi-output recipe? | **`made = 3`, correctly** — ten flask recipes, once item 14's fix let the window harvest store items at all. |
 | Does a market price series exist? | **No, confirmed on real data.** 5267 mean entries, 8898 samples, all bare numbers in an array, no timestamps, max 14 samples against the cap of 15. `FRAMEWORK.md` §5 stands. |
 | How many same-name variants? (item 12) | **3 trailing-space keys in 5267**, none with an unsuffixed twin. Part 1 unblocked. |
-| Is item 4's learning accumulating? | **Not yet visible** — the dump predates the merged build. |
+| Is item 4's learning accumulating? | **Still unverified** — `statKeys` is absent from all three dumps. The third was taken on the merged build but without a Finder search having run, which is what writes it. |
 | What is the price DB's shape? (item 10) | One realm key, 5267 entries, **all plain numbers**, `__dbversion = 2`. |
 
 It also produced item 13 (a third of the file is redundant), item 14 (two files never captured
@@ -1092,9 +1134,12 @@ one timestamp), and a vendor-research re-run:
 `diff-vendor-seed` reports **0 disagreements and 0 contested tuples** across 1349 obs and 453
 base facts, with 88 + 65 new real facts — see `VENDOR-PRICE-RESEARCH.md`.
 
-**Still wanted:** one merchant visit (an enchanting supplies vendor) and one alchemy window,
-then a fresh dump. Those two actions close item 2's vellum question, item 3's yield question and
-item 11's transmute question together.
+**Third dump, 2026-08-19 — after item 14's fix, one supply vendor and one alchemy window.** It
+closed items 2, 3 and 11 together, exactly as the plan above predicted once the bug eating that
+data was gone. Counts in item 14.
+
+**Still wanted:** one Finder search on the merged build, which is all item 4's `statKeys` needs
+to become visible.
 
 ## Answered by the owner, 2026-08-19
 
@@ -1109,22 +1154,21 @@ item 11's transmute question together.
 
 ## Still open
 
-- **Item 3:** whether 30g51s99c per flask is *right* — i.e. whether the reagent prices behind
-  it are. The maths and the display are settled; nothing shipped tests the inputs. The
-  `Craft cost x3` line makes it a glance: 91g55s97c of reagents against a 127g80s stack of 3.
-  **Waiting on an alchemy window being opened once _after item 14's fix_** — before it, opening
-  the window stored nothing.
-- **Item 2 (built, needs one in-game check):** whether the *weapon* vellum's name is in the
-  candidate list, and whether both vellums price from a vendor rather than the auction house.
-  `/atrprofsort stamina` answers both. Neither breaks the numbers if wrong — see item 2.
-  **Waiting on a supply vendor being opened once _after item 14's fix_** — before it, the NPC
-  price harvest could not write at all.
+- **Item 3:** whether 30g51s99c per flask is *right*. **Narrowed to one reagent, 2026-08-19:**
+  the craft cost reproduces exactly from real data, and `Essence of Earth x2` is 69g of the
+  91g56s. Whether 34g50s each is a real market price is an auction-house question, not an addon
+  one.
+- ~~**Item 2:** whether the *weapon* vellum's name is in the candidate list, and whether both
+  vellums price from a vendor rather than the auction house.~~ — **closed 2026-08-19.** Both
+  names are in the price database and both candidate names match; both vellums are vendor-sold
+  at 2g40s (`52510`, `52511`) and now price from there instead of the AH's 6g85s / 3g22s.
 - **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
   ("Already known") string.
-- **Item 11:** ~~whether the profession harvest stores transmutes at all~~ — **answered
-  2026-08-19: it did not, and the item-link theory was wrong.** The window harvest dropped every
-  recipe producing an item, because its file never captured `zc` (item 14). Fixed; re-check on
-  the next dump. Decides only whether the Sell tab and bag
+- ~~**Item 11:** whether the profession harvest stores transmutes at all~~ — **closed
+  2026-08-19.** It did not, and the item-link theory was wrong: the window harvest dropped every
+  recipe producing an item because its file never captured `zc` (item 14). After the fix,
+  `Arcanite Bar` is stored as `id = 12360, made = 1, reagents = Thorium Bar x1 + Arcane
+  Crystal x1`. Transmutes harvest fine and the client's links were never the problem. Decides only whether the Sell tab and bag
   tooltips know an `Arcanite Bar`'s craft cost with the profession window closed; the trade
   skill window is correct either way. `/atrprofsort transmute` now prints the link.
 - **Item 8:** ~~what `AUCTIONATOR_PRICE_DATABASE` actually retains~~ — **answered 2026-08-19:
