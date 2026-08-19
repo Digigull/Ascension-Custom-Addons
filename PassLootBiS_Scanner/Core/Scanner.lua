@@ -60,8 +60,8 @@ local DEFAULTS = {
 	useSoundGold  = false,  -- cue on the high-value flag -- goldThreshold is its cutoff
 	tooltip       = true,   -- annotate item tooltips with score + upgrade arrow
 	goldThreshold = 500000, -- 50g in copper, for the Auctionator flag (Phase 4)
-	-- Score equipped gear WITHOUT its enchants, so a fresh drop is compared like for
-	-- like (ns.equippedStats has the full why, including why this is off by default).
+	-- SHELVED, and forced back to false in initDB below -- there is no option for it
+	-- any more (ns.equippedStats has the why, and what it would take to bring back).
 	ignoreEnchants = false,
 	powerMode     = "off",  -- score a CoA flat Power stat: "off" | "pve" | "pvp"
 	powerWeight   = 1,      -- weight per point of the chosen Power (tunable in GUI)
@@ -90,6 +90,11 @@ local function initDB()
 	if db.minimap.angle == nil then db.minimap.angle = 220 end   -- degrees around the ring
 	if db.minimap.hide  == nil then db.minimap.hide  = false end
 	if type(db.options) ~= "table" then db.options = {} end
+	-- The "Ignore enchants on equipped gear" scoring is shelved and its checkbox is
+	-- gone (Core/Options.lua), so a `true` left in a saved DB by anyone who tried it
+	-- would be a setting with no way back off. Forced off on every load; drop this
+	-- line if the option is ever brought back.
+	db.ignoreEnchants = false
 	ns.db = db   -- share with sibling modules (Tooltip, MinimapButton, Options)
 end
 
@@ -253,25 +258,30 @@ end
 --
 -- An empty slot -> no lines -> empty stats -> score 0 (always beatable).
 --
--- db.ignoreEnchants: score the equipped item WITHOUT its enchant, by scanning its
--- link with the enchant field zeroed (Core/ItemLink.lua). The comparison is
--- otherwise unfair in a way that always points the same direction: a loot roll is
--- a fresh drop with no enchant on it, your equipped item has one, so the equipped
--- side scores high and real upgrades read as smaller than they are (or as
--- downgrades, which is what BiS Check would then veto).
+-- db.ignoreEnchants: SHELVED 2026-08 at the owner's call, after in-game testing.
+-- The branch below is left in place, but initDB forces the flag false on every load
+-- and Core/Options.lua no longer offers a box for it, so it is unreachable.
 --
--- Gems are deliberately left in. They are the same kind of player investment and
--- the same argument applies, but the owner asked about enchants; stripping sockets
--- as well would change more scores than were asked about, and it is one extra field
--- set away (ItemLink.FIELD_ENCHANT_AND_GEMS) whenever that is wanted.
+-- What it did, and why it is worth keeping the code: the compare is asymmetric in
+-- one direction. A loot roll is read with SetLootRollItem (a fresh drop, no
+-- enchant) while your equipped gear is read with SetInventoryItem (enchanted), so
+-- the equipped side carries value the candidate cannot have and real upgrades read
+-- smaller than they are. This scored the equipped item from its own link with the
+-- enchant field zeroed (Core/ItemLink.lua) to even that up.
 --
--- OFF by default, and this is the important part: it moves the equipped read from
--- SetInventoryItem (your real instance) to SetHyperlink, which LibScaledStats
--- warns "MAY be cached-first / nominal for scaled instances". On Ascension that is
--- precisely the lie the whole library exists to route around, so trading a known
--- enchant skew for a possible scaled-stat skew is not a trade to make blind.
--- /plbisdebug reports the three numbers side by side (see API:GetEnchantCheck) so
--- it can be checked on real gear before being trusted.
+-- Why it is off. It moves the equipped read to SetHyperlink, which LibScaledStats
+-- warns "MAY be cached-first / nominal for scaled instances" -- on Ascension
+-- precisely the lie that library exists to route around. /plbisdebug's [Enchant
+-- strip check] measures whether that lie is real on your gear, and on the owner's
+-- it was NOT (link and instance agreed on every slot, 2 slots carrying enchant
+-- value). So the risk did not materialise -- but the payoff turned out to be small
+-- and only on the equipped side of the compare, which made the box easy to
+-- misread: ticking it does not change what a scanned or hovered ITEM scores, only
+-- what it is measured against. Shelved rather than reverted for that reason: the
+-- measurement stands, and bringing it back is this line plus a checkbox.
+--
+-- Gems were deliberately left in, and would be one field set away
+-- (ItemLink.FIELD_ENCHANT_AND_GEMS) if this is ever revisited.
 function ns.equippedStats(slotId, subType, equipLoc)
 	if db and db.ignoreEnchants then
 		local link = GetInventoryItemLink("player", slotId)

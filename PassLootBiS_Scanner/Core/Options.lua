@@ -162,7 +162,7 @@ local function build()
 
 	frame = CreateFrame("Frame", "PLBiSScannerOptions", UIParent)
 	frame:SetWidth(320)
-	frame:SetHeight(632)
+	frame:SetHeight(606)
 	-- DRAG-FREEZE FIX: drag-safe strata + level via the shared helper (see Core/UI.lua).
 	-- HIGH + SetToplevel(true) froze the client ~1s on first drag; FULLSCREEN_DIALOG
 	-- alone still cost ~50ms on EVERY drag while the toplevel flag remained, so the
@@ -244,14 +244,10 @@ local function build()
 		end
 	end)
 
-	-- Scoring fairness, not a display option, so it sits with the scoring controls
-	-- below rather than the alert toggles above. See ns.equippedStats in Scanner.lua
-	-- for why it is off by default -- it moves the equipped read onto a code path
-	-- LibScaledStats warns can report cached stats for a scaled item, and
-	-- /plbisdebug measures whether that is true on your gear before you trust it.
-	makeCheck("Ignore enchants on equipped gear", 16, -332,
-		function() return ns.db and ns.db.ignoreEnchants end,
-		function(v) if ns.db then ns.db.ignoreEnchants = v end end)
+	-- No "Ignore enchants on equipped gear" box here. The scoring is shelved, not
+	-- deleted (ns.equippedStats in Scanner.lua, and the [Enchant strip check] table
+	-- in /plbisdebug that measured it); with the flag forced off there, a checkbox
+	-- would be one you could tick and see nothing happen.
 	makeCheck("Hide minimap button", 16, -306,
 		function() return ns.db and ns.db.minimap and ns.db.minimap.hide end,
 		function(v)
@@ -263,9 +259,9 @@ local function build()
 		end)
 
 	-- Upgrade threshold slider (0-15%, stored as a fraction in db.threshold).
-	makeLabel("Upgrade threshold", 20, -370)
+	makeLabel("Upgrade threshold", 20, -344)
 	slider = CreateFrame("Slider", "PLBiSScannerOptionsThreshold", frame, "OptionsSliderTemplate")
-	slider:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -396)
+	slider:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -370)
 	slider:SetWidth(250)
 	slider:SetMinMaxValues(0, 15)
 	slider:SetValueStep(1)
@@ -279,9 +275,9 @@ local function build()
 	end)
 
 	-- Gold threshold (Phase 4): the Auctionator high-value flag cutoff, in gold.
-	makeLabel("Gold flag threshold (g)", 20, -436)
+	makeLabel("Gold flag threshold (g)", 20, -410)
 	goldBox = CreateFrame("EditBox", "PLBiSScannerOptionsGold", frame, "InputBoxTemplate")
-	goldBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 26, -456)
+	goldBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 26, -430)
 	goldBox:SetWidth(80)
 	goldBox:SetHeight(20)
 	goldBox:SetAutoFocus(false)
@@ -299,17 +295,17 @@ local function build()
 
 	-- CoA Power scoring: pick which flat Power stat (if any) to fold into scores,
 	-- and how much a point of it is worth (db.powerMode + db.powerWeight).
-	makeLabel("Score CoA Power", 20, -484)
+	makeLabel("Score CoA Power", 20, -458)
 	powerDrop = CreateFrame("Frame", "PLBiSScannerOptionsPowerDrop", frame, "UIDropDownMenuTemplate")
-	powerDrop:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -500)
+	powerDrop:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -474)
 	UIDropDownMenu_SetWidth(powerDrop, 100)
 	UIDropDownMenu_Initialize(powerDrop, powerInit)
 
 	local wLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	wLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 196, -498)
+	wLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 196, -472)
 	wLabel:SetText("Weight")
 	powerBox = CreateFrame("EditBox", "PLBiSScannerOptionsPowerWeight", frame, "InputBoxTemplate")
-	powerBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 200, -514)
+	powerBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 200, -488)
 	powerBox:SetWidth(60)
 	powerBox:SetHeight(20)
 	powerBox:SetAutoFocus(false)
@@ -329,7 +325,7 @@ local function build()
 	local filterBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	filterBtn:SetWidth(220)
 	filterBtn:SetHeight(22)
-	filterBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -552)
+	filterBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -526)
 	filterBtn:SetText("Armor / weapon filter (char)")
 	filterBtn:SetScript("OnClick", function() Options.ToggleFilter() end)
 
@@ -348,7 +344,7 @@ local function build()
 			db.useFrame = false
 			db.useSound = false
 			db.useSoundGold = false
-			db.ignoreEnchants = false
+			db.ignoreEnchants = false   -- shelved; kept here so a stale `true` can be cleared
 			db.threshold = 0.03
 		end
 		Options.Refresh()

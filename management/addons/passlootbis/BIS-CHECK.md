@@ -90,7 +90,7 @@ positive costs you an item outright.
   early unless there is an upgrade or a gold flag, so the host's veto window is the
   only UI for it. Do not "fix" that into a second popup.
 
-## Enchants on the equipped side
+## Enchants on the equipped side — measured, then shelved
 
 The compare is asymmetric by construction and it always points one way:
 
@@ -105,26 +105,39 @@ can score below enchanted gear it would actually beat, and BiS Check vetoes a ro
 it should have allowed.** Enchant skew is a false-positive source for this feature,
 not just a cosmetic scoring wobble.
 
-`db.ignoreEnchants` (scanner options → "Ignore enchants on equipped gear") scores the
-equipped item from its own link with the enchant field zeroed
-(`Core/ItemLink.lua`). All three equipped-scan sites — `scoreEquipped`, `evalHand`
-and the hover tooltip — now go through one `ns.equippedStats`, or the tooltip and
-the roll window would quote different numbers for the same item.
+`db.ignoreEnchants` scored the equipped item from its own link with the enchant
+field zeroed (`Core/ItemLink.lua`). All three equipped-scan sites — `scoreEquipped`,
+`evalHand` and the hover tooltip — go through one `ns.equippedStats`, or the tooltip
+and the roll window would quote different numbers for the same item.
 
-**It is OFF by default, and that is deliberate.** Stripping the enchant means
-reading the equipped item through `SetHyperlink`, which LibScaledStats warns "MAY be
-cached-first / nominal for scaled instances" — on Ascension that is exactly the lie
-the library exists to route around. Trading a known, bounded enchant skew for a
-possible unbounded scaled-stat skew is not a trade to make blind.
+It shipped OFF by default, because stripping the enchant means reading the equipped
+item through `SetHyperlink`, which LibScaledStats warns "MAY be cached-first /
+nominal for scaled instances" — on Ascension exactly the lie the library exists to
+route around. Trading a known, bounded enchant skew for a possible unbounded
+scaled-stat skew is not a trade to make blind, so `/plbisdebug` measures it instead:
+every equipped slot scored three ways — `real` (`SetInventoryItem`), `link`
+(`SetHyperlink`, unmodified) and `stripped` (`SetHyperlink`, enchant zeroed).
+**`real` vs `link` is the test**: same item, two routes, so agreement means
+`SetHyperlink` is faithful here. `stripped` vs `link` is then how much enchant is in
+the score.
 
-So it is measured instead. `/plbisdebug` scores every equipped slot three ways —
-`real` (`SetInventoryItem`), `link` (`SetHyperlink`, unmodified) and `stripped`
-(`SetHyperlink`, enchant zeroed). **`real` vs `link` is the test**: those two
-describe the same item by two routes, so if they agree `SetHyperlink` is faithful
-here and the option is safe to enable; if any slot disagrees the report says do not
-enable it. `stripped` vs `link` is then simply how much enchant was in the score.
+**Measured result (2026-08, owner's gear, 17 slots): `real` and `link` agreed on
+every slot, and 2 slots carried enchant value** (feet 58.3 → 47.3, back 38.7 →
+34.0). So the scaled-stat risk did not materialise on this client.
 
-Gems are left in. Same argument applies to them, but the owner asked about enchants
+**Shelved anyway — owner's call.** The payoff is small (two slots, on gear that is
+mid-progression) and it only ever moves the equipped side of the compare, which made
+the checkbox actively misleading: ticking it does not change what a scanned or
+hovered ITEM scores, only what that item is measured against, so the obvious way to
+"check it worked" — hover the same item again — shows no change and reads as broken.
+Not worth the support surface for two slots.
+
+So: no checkbox (`Core/Options.lua`), and `initDB` forces `db.ignoreEnchants = false`
+on every load so a `true` left from testing cannot survive. The strip code, its
+self-tests and the `[Enchant strip check]` table all stay — the measurement is the
+expensive part and it is done. Bringing it back is one `initDB` line plus a box.
+
+Gems were left in. Same argument applies to them, but the owner asked about enchants
 and stripping sockets too would move more scores than were asked about. It is one
 field set away — `ItemLink.FIELD_ENCHANT_AND_GEMS`.
 

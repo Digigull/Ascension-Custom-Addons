@@ -1,10 +1,28 @@
 # In-game test plan — BoP confirms, BiS Check, enchant strip
 
-Everything on this branch is **reasoned and offline-tested only**. Nothing in this
-repo can run the 3.3.5 client, so this is the list that turns "should work" into
-"does work". Written to be picked up cold in a fresh session — if you are that
-session, read `BIND-CONFIRMS.md` and `BIS-CHECK.md` first for why any of it is
-shaped the way it is.
+Nothing in this repo can run the 3.3.5 client, so this is the list that turns
+"should work" into "does work". Written to be picked up cold in a fresh session — if
+you are that session, read `BIND-CONFIRMS.md` and `BIS-CHECK.md` first for why any
+of it is shaped the way it is.
+
+## Round 1 results (2026-08, owner)
+
+| Check | Result |
+|---|---|
+| A. Loads | **PASS** — no errors, report renders, `[Contract self-test]` all `PASS`, "BiS Check" row present |
+| B. Roll-bind popup | **not run** — needs a BoP boss drop |
+| C. Pickup-bind popup | **not run** — but the three confirm boxes it exposed were merged into one (below) |
+| D. Enchant strip | measured **safe** (link and instance agreed on all 17 slots, 2 carrying enchant value) — and then **shelved** anyway; see `BIS-CHECK.md` |
+| E. Win ledger | **not run** |
+| F. BiS Check dry run | **PASS** — a BiS glove at -4% vs equipped gave `WOULD VETO`; a non-list item did not fire |
+| G. Preview | **not run** |
+
+Two changes came out of that round, so steps below are written against them:
+
+- **The three bind-confirm boxes are now one**, `Auto-Confirm Bind Popups`, default
+  ON, covering the roll prompt, the pickup prompt and the popup-queue bit.
+- **"Ignore enchants on equipped gear" is gone** — shelved, forced off, no checkbox.
+  Step D is now a measurement to record, not a switch to decide.
 
 ## 0. Before you start
 
@@ -32,7 +50,7 @@ it will not spam your chat.
 | `/plbisdebug item <link>` | Dry-run one item through BiS Check. **Shift-click the item into the chat box after typing the command** |
 | `/plbisadvisor` | List advisors + trust modes |
 | `/plbisadvisor on` \| `off` | Master switch for the whole advisor gate |
-| `/plbisscan options` (or `/plbs options`) | Scanner settings window — the "Ignore enchants" box lives here |
+| `/plbisscan options` (or `/plbs options`) | Scanner settings window |
 | `/plbisscan spec` | Check / set the spec whose stat weights are used |
 | `/plbismgr` | BiS Manager |
 
@@ -45,9 +63,11 @@ Nothing above writes to SavedVariables. A `/reload` wipes the trace.
 2. In the report: `[Advisor]` shows the gate enabled and `PLScanner` registered;
    `[Scanner]` shows your class/spec and `weights: yes`; `[Contract self-test]` is
    all `PASS`.
-3. Interface → AddOns → PassLoot (BiS) → Options: the two new toggles are there —
-   **Auto-Confirm Bind on Roll** (should be ON) and **Auto-Confirm Bind on Pickup**
-   (should be OFF).
+3. Interface → AddOns → PassLoot (BiS) → Options: there is **one** bind-confirm
+   toggle, **Auto-Confirm Bind Popups**, and it is **ON**. If you see the old three
+   boxes, the copied-over folder is stale. `[Bind confirms]` in the report says the
+   same thing in one line — and an existing profile that had the old roll box turned
+   *off* should come through as `no`, not `yes`.
 4. Rules page: the advisor status panel has a **fourth row, "BiS Check"**, with a
    ticked checkbox.
 
@@ -69,26 +89,30 @@ The whole point: a greed roll on boss loot should no longer stop for a click.
      whole diagnosis is wrong. That is the most valuable failure to report.
 7. Multi-drop: a boss dropping several BoP items at once should need **zero** clicks.
 
-### C. The pickup-bind popup (still off by default)
-8. Tick **Auto-Confirm Bind on Pickup** in options.
+### C. The pickup-bind popup (same setting, on by default now)
+8. Nothing to tick — **Auto-Confirm Bind Popups** covers this prompt too. If you
+   would rather BoP pickups kept asking, that is the box to untick, and it takes the
+   roll confirm with it.
 9. Loot a BoP item straight off a corpse. The "this item will bind to you" prompt
    should answer itself. Look for `LOOT_BIND_CONFIRM: auto-confirming loot slot N`.
 10. If the prompt lingers on screen after the item is looted, the confirm worked but
     the hide did not — say so, it is a one-line fix (the dialog's `data` is not the
     slot on this client).
 
-### D. Enchant strip — **verify before enabling**
-11. `/plbisdebug`, read `[Enchant strip check]`. It scores every equipped slot three
+### D. Enchant strip — shelved; the table is now just a record
+The option is gone (no checkbox, forced off — `BIS-CHECK.md` has the why). What is
+left is the measurement, worth re-taking after a big gear change:
+
+11. `/plbisdebug`, read `[Enchant strip check]`. Every equipped slot scored three
     ways: `real` (true instance), `link`, `stripped`.
-12. **The verdict line is the whole test.** `real` vs `link` describe the same item
-    by two routes:
-    - *"link and instance agree on every slot"* → safe. Tick **Ignore enchants on
-      equipped gear** in `/plbisscan options`.
-    - *"N slot(s) score differently"* → **leave it off** and send me the table. It
-      means `SetHyperlink` reports cached/nominal stats for scaled items on this
-      client, which is a worse error than the enchant skew it would fix.
-13. If you do enable it, re-run `/plbisdebug` and check the same items still score
-    sanely, then confirm a known upgrade still reads as an upgrade.
+12. `real` vs `link` is the test — same item, two routes. Round 1 said *"link and
+    instance agree on every slot"*. If a later report says *"N slot(s) score
+    differently"*, that is worth sending: it means `SetHyperlink` reports
+    cached/nominal stats for scaled items here, which would matter to anything that
+    ever reads gear by link, not just to the shelved strip.
+13. `stripped` vs `link` is the size of the enchant skew you are living with. Two
+    slots in round 1. If that ever gets large across most of your gear, the strip is
+    worth reconsidering — it is one `initDB` line plus a checkbox.
 
 ### E. Win ledger (testable without any BiS drop)
 14. `/plbisdebug clear`, then loot 2–3 pieces of equippable gear in one dungeon.
@@ -128,9 +152,13 @@ single paste is usually the entire diagnosis — no need to describe it in prose
 
 ## 4. Known unverified
 
-Nothing in this branch has been confirmed in game. Highest-risk first:
+What round 1 did not reach, highest-risk first:
 
-- **The enchant strip's `SetHyperlink` path** — deliberately off; step D decides it.
+- **Both confirm paths.** Neither `CONFIRM_LOOT_ROLL: auto-confirming roll N` nor
+  `LOOT_BIND_CONFIRM: auto-confirming loot slot N` has been seen in a trace yet, so
+  the root cause in `BIND-CONFIRMS.md` is still a diagnosis. Steps B and C.
+- **The merged setting itself**, including the migration of an existing profile
+  (step A3) — reasoned and syntax-checked only.
 - **`LOOT_BIND` / `CONFIRM_LOOT_ROLL` popup hiding** — the confirm is event-driven
   and solid; the *hide* assumes the client stores the slot/rollID as the dialog's
   `data`.
@@ -138,3 +166,13 @@ Nothing in this branch has been confirmed in game. Highest-risk first:
   messages.
 - **`ZONE_CHANGED_NEW_AREA` timing** on the way out of an instance.
 - **`Interface\Buttons\Arrow-Down-Up`** existing in this build.
+- **One number worth a second look.** In the round-1 dry run of a *feet* item, the
+  report read `score 58.3 vs target 21.9`, while `[Enchant strip check]` scored the
+  equipped feet at 58.3 in the same report — those should be the same number, since
+  the target for a single-slot group is the equipped item. The gloves dry run agreed
+  exactly (43.7 vs target 45.8 = the equipped gloves), so it is not the code path
+  being wrong for everything; a cold or half-filled tooltip scan on that one slot is
+  the likeliest explanation. Re-run `/plbisdebug item` on a feet item and compare the
+  target against the equipped feet row. If it is still low, that is a real bug in
+  `ns.effectiveTarget` and it makes BiS Check **under**-fire (everything looks like
+  an upgrade), so it is worth catching.
