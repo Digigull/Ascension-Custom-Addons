@@ -359,8 +359,10 @@ end
 
 function PasslootBiS:Create_AdvisorStatusFrame()
 	local Frame = CreateFrame("Frame")
-	-- Width comes from the caller's left/right anchors; height is recomputed on
-	-- every refresh once the wrapped text has been measured.
+	-- Width is set by the caller (Core/MainGUI.lua Create_RulesFrame gives this panel
+	-- a fixed column and hands the rest of the options panel to the rule list); the
+	-- value here is only a placeholder. Height is recomputed on every refresh, once
+	-- the wrapped text has been measured.
 	Frame:SetWidth(120)
 	Frame:SetHeight(150)
 	-- Same backdrop recipe as the rule list and rule settings frames beside it

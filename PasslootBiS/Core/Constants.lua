@@ -8,6 +8,22 @@ PasslootBiS.DefaultTemplate = {
     -- [2] = "need",
     -- [3] = "greed",
   } },
+  -- Two per-rule FLAGS. Both are declared with a `false` default on purpose:
+  -- CheckRuleTables only writes a default into a rule when the default is truthy,
+  -- so declaring them here registers the key in DefaultVars WITHOUT stamping it
+  -- into every stored rule. Registering matters -- a rule carrying a key that is
+  -- not in DefaultVars is treated as "a module I can't check" and gets SKIPPED
+  -- entirely on the next CheckRuleTables pass.
+  --   * BeforeAdvisor -- this rule outranks the roll advisor: when it matches and
+  --     produces a roll, ProcessLootRoll (Core/PassLoot.lua) rolls it and never
+  --     consults the advisor gate. Ticked from the rule list's rightmost checkbox,
+  --     and set on the rules a BiS list import creates (Modules/BiSImport.lua).
+  --   * Disabled -- rule turned off from the minimap button's right-click menu
+  --     (Core/MinimapButton.lua). It has always been written at runtime; declaring
+  --     it stops a disabled rule from also being counted as an unknown-variable
+  --     rule (which left it in SkipRules even after it was re-enabled).
+  { "BeforeAdvisor", false },
+  { "Disabled", false },
 }
 -- ## The rules a profile with NO rules of its own starts with ##
 -- Seeded once per profile by PasslootBiS:SeedDefaultRules() (Core/PassLoot.lua),

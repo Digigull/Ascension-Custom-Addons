@@ -10,6 +10,13 @@ L["Allow Multiple Confirm Popups"] = true
 L["Available Filters"] = true
 L["Available Filters_Desc"] = [=[Select a filter to use.
 (Each filter must have at least one match)]=]
+-- Rule list, rightmost column (Core/MainGUI.lua). Keep the label short: it is the
+-- only one of the five with no column to its right to bound it.
+L["Before Advisor"] = true
+L["BeforeAdvisor_Desc"] = [=[This rule beats the roll advisor.
+
+When it matches, its roll is cast straight away -- no confirm popup, and no advisor
+verdict overriding it.  Rules imported with a BiS list start with this ticked.]=]
 L["Change the exception status of this filter."] = true
 L["Checking this will disable the exclusive bit to allow multiple confirmation of loot roll popups"] = true
 L["Checking this will prevent extra details from being displayed."] = true

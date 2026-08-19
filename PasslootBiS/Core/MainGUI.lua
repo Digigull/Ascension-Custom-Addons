@@ -22,6 +22,9 @@ PasslootBiS.RulesFrame = {
       ["Need"] = CheckButton {
 				["Title"] = FontString,
 			},
+      ["BeforeAdvisor"] = CheckButton {
+				["Title"] = FontString,
+			},
 		},
 		["ScrollLine6"],
 		["Add"] = Button,
@@ -180,6 +183,20 @@ function PasslootBiS:SetLootMethod(LineNum, Method)
 	end
 end
 
+-- Toggle a rule's "Before Advisor" flag from the rightmost checkbox on its line.
+-- The click has already flipped the checkbox's visual state, so read it back the
+-- way SetLootMethod does. Stored as true / nil rather than true / false, matching
+-- the addon's other runtime rule flag (Disabled, Core/MinimapButton.lua).
+function PasslootBiS:SetBeforeAdvisor(LineNum)
+	local Frame = self.RulesFrame.List
+	local RuleNum = LineNum + FauxScrollFrame_GetOffset(Frame.ScrollFrame)
+	local Rule = self.db.profile.Rules[RuleNum]
+	if (not Rule) then
+		return
+	end
+	Rule.BeforeAdvisor = Frame["ScrollLine" .. LineNum].BeforeAdvisor:GetChecked() and true or nil
+end
+
 function PasslootBiS:SetDisenchant(LineNum)
 	local Frame = self.RulesFrame.List
 	local RuleNum = LineNum + FauxScrollFrame_GetOffset(Frame.ScrollFrame)
@@ -314,6 +331,9 @@ function PasslootBiS:Rules_RuleList_OnScroll()
 			Frame["ScrollLine" .. Line].Greed:SetChecked(false)
 			Frame["ScrollLine" .. Line].Need:SetChecked(false)
 			Frame["ScrollLine" .. Line].Disenchant:SetChecked(false)
+			-- Independent of Loot: not a roll method, a priority flag.
+			Frame["ScrollLine" .. Line].BeforeAdvisor:SetChecked(
+				self.db.profile.Rules[LineNum].BeforeAdvisor and true or false)
 			for Key, Value in ipairs(self.db.profile.Rules[LineNum].Loot) do
 				if (Value == "pass") then
 					Frame["ScrollLine" .. Line].Pass:SetChecked(true)
@@ -451,28 +471,45 @@ function PasslootBiS:Create_PasslootBiSTooltip()
 	return Frame
 end
 
+-- Left column: the advisor status panel. Fixed now, because the rule list takes
+-- its width from what is left over rather than the other way round (see below).
+-- 110 is about what the panel already worked out to when it was the leftover half
+-- of a centred 413-wide list, and it wraps its own text, so a few units either way
+-- only change its height.
+local STATUS_WIDTH = 110
+local STATUS_LEFT = 4
+local STATUS_GAP = 6
+
 function PasslootBiS:Create_RulesFrame()
 	local Frame = CreateFrame("Frame")
 	Frame:SetWidth(413)
 	Frame:SetHeight(428)
 
+	-- Blizzard SetAllPoints' this frame onto InterfaceOptionsFramePanelContainer, so
+	-- it is as wide as that container — comfortably wider than the 413 the list and
+	-- settings boxes are. They used to be centred in it, which spent the slack on two
+	-- empty side margins; now the status panel takes a fixed column on the left and
+	-- BOTH boxes span from there to the right edge. That reclaimed width is what pays
+	-- for the "Before Advisor" column on every rule line, and what is left over goes
+	-- to the rule description. Both edges are anchored rather than a width guessed,
+	-- so the panel still fits the container exactly at any UI scale.
 	Frame.List = self:Create_RuleListFrame()
 	Frame.List:SetParent(Frame)
-	Frame.List:SetPoint("TOP", Frame, "TOP")
+	Frame.List:SetPoint("TOPLEFT", Frame, "TOPLEFT", STATUS_LEFT + STATUS_WIDTH + STATUS_GAP, 0)
+	Frame.List:SetPoint("TOPRIGHT", Frame, "TOPRIGHT", -4, 0)
 
 	Frame.Settings = self:Create_RuleSettingsFrame()
 	Frame.Settings:SetParent(Frame)
-	Frame.Settings:SetPoint("TOP", Frame.List, "BOTTOM")
+	Frame.Settings:SetPoint("TOPLEFT", Frame.List, "BOTTOMLEFT")
+	Frame.Settings:SetPoint("TOPRIGHT", Frame.List, "BOTTOMRIGHT")
 
-	-- Advisor status (Core/AdvisorStatus.lua) in the dead column left of the rule
-	-- list. Blizzard SetAllPoints' this frame onto InterfaceOptionsFramePanelContainer
-	-- while List/Settings sit centred (anchored "TOP"), so that column is whatever
-	-- the container is wider than 413 — anchor BOTH edges rather than guessing a
-	-- width, and the panel fits it exactly at any UI scale.
+	-- Advisor status (Core/AdvisorStatus.lua), in the column left of the rule list.
+	-- It sizes its own height to its wrapped text, so the fixed width plus this one
+	-- corner anchor is all it needs.
 	Frame.Status = self:Create_AdvisorStatusFrame()
 	Frame.Status:SetParent(Frame)
-	Frame.Status:SetPoint("TOPLEFT", Frame, "TOPLEFT", 4, -8)
-	Frame.Status:SetPoint("TOPRIGHT", Frame.List, "TOPLEFT", -6, -8)
+	Frame.Status:SetWidth(STATUS_WIDTH)
+	Frame.Status:SetPoint("TOPLEFT", Frame, "TOPLEFT", STATUS_LEFT, -8)
 
 	-- Blizzard Interface Options Panel stuff:
 	Frame.name = L["PasslootBiS"]
@@ -482,7 +519,7 @@ end
 
 function PasslootBiS:Create_RuleListFrame()
 	local Frame = CreateFrame("Frame")
-	Frame:SetWidth(413)
+	Frame:SetWidth(413) -- placeholder: Create_RulesFrame anchors both edges instead
 	Frame:SetHeight(130)
 	Frame:SetBackdrop({
 		["bgFile"] = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -502,7 +539,11 @@ function PasslootBiS:Create_RuleListFrame()
 
 	Frame.ScrollFrame = CreateFrame("ScrollFrame", "PasslootBiS_Rules_Scroll", Frame, "FauxScrollFrameTemplate")
 	Frame.ScrollFrame:SetPoint("TOPLEFT", Frame, "TOPLEFT", 0, -8)
-	Frame.ScrollFrame:SetWidth(381)
+	-- Right edge rather than a fixed width, since the list frame is now as wide as
+	-- the options panel allows. -32 is the room FauxScrollFrameTemplate's scrollbar
+	-- wants OUTSIDE the scroll frame's right edge — the same gap the old fixed
+	-- 381-in-413 pair left it.
+	Frame.ScrollFrame:SetPoint("TOPRIGHT", Frame, "TOPRIGHT", -32, -8)
 	Frame.ScrollFrame:SetHeight(96)
 	Frame.ScrollFrame:SetScript("OnVerticalScroll", function(frame, offset)
 		FauxScrollFrame_OnVerticalScroll(frame, offset, 16, function() self:Rules_RuleList_OnScroll() end)
@@ -511,12 +552,16 @@ function PasslootBiS:Create_RuleListFrame()
 
 	Frame.ScrollLine1 = self:Create_RuleListScrollLine()
 	Frame.ScrollLine1:SetParent(Frame)
+	-- Both edges again: a line's checkbox columns hang off its RIGHT edge
+	-- (Create_RuleListScrollLine), so every line has to span the scroll frame.
 	Frame.ScrollLine1:SetPoint("TOPLEFT", Frame.ScrollFrame, "TOPLEFT", 8, 0)
+	Frame.ScrollLine1:SetPoint("TOPRIGHT", Frame.ScrollFrame, "TOPRIGHT", 6, 0)
 	Frame.ScrollLine1.LineNum = 1
 	for Index = 2, 6 do
 		Frame["ScrollLine" .. Index] = self:Create_RuleListScrollLine()
 		Frame["ScrollLine" .. Index]:SetParent(Frame)
 		Frame["ScrollLine" .. Index]:SetPoint("TOPLEFT", Frame["ScrollLine" .. (Index - 1)], "BOTTOMLEFT")
+		Frame["ScrollLine" .. Index]:SetPoint("TOPRIGHT", Frame["ScrollLine" .. (Index - 1)], "BOTTOMRIGHT")
 		Frame["ScrollLine" .. Index].LineNum = Index
 	end
 
@@ -588,6 +633,25 @@ function PasslootBiS:Create_RuleListFrame()
 	end)
 	Frame.Down:SetText(L["Down"])
 
+	-- The four buttons split the row evenly instead of being a fixed 90 each: 90x4
+	-- plus the three 10px gaps exactly filled the old 413-wide box, and the box is
+	-- now as wide as the options panel allows. They stay chained left-to-right, so
+	-- setting one width lays out the whole row. OnSizeChanged catches Blizzard
+	-- sizing the options panel; the direct call covers the pre-display width.
+	local function LayoutButtons(ListFrame)
+		local Width = ListFrame:GetWidth() or 413
+		local ButtonWidth = math.floor((Width - 12 - 11 - 30) / 4) -- left inset, right inset, 3 gaps
+		if (ButtonWidth < 60) then
+			ButtonWidth = 60
+		end
+		ListFrame.Add:SetWidth(ButtonWidth)
+		ListFrame.Remove:SetWidth(ButtonWidth)
+		ListFrame.Up:SetWidth(ButtonWidth)
+		ListFrame.Down:SetWidth(ButtonWidth)
+	end
+	Frame:SetScript("OnSizeChanged", function(ListFrame) LayoutButtons(ListFrame) end)
+	LayoutButtons(Frame)
+
 	return Frame
 end
 
@@ -625,7 +689,7 @@ PasslootBiS.EasyMenu_RuleListMenu = {
 
 function PasslootBiS:Create_RuleListScrollLine()
 	local Frame = CreateFrame("Button")
-	Frame:SetWidth(379)
+	Frame:SetWidth(379) -- placeholder: Create_RuleListFrame anchors both edges instead
 	Frame:SetHeight(16)
 	Frame:SetScript("OnEnter",
 		function(frame) self:ShowTooltip(L["Rule List"], L["Click to select and edit this rule."]) end)
@@ -663,14 +727,11 @@ function PasslootBiS:Create_RuleListScrollLine()
 	Frame.Highlight:Hide()
 
 	Frame.Text = Frame:CreateFontString(nil, "BACKGROUND", "ChatFontSmall")
-	Frame.Text:SetPoint("TOPLEFT", Frame, "TOPLEFT", 0, 0)
-	Frame.Text:SetWidth(155)
 	Frame.Text:SetHeight(16)
 	Frame.Text:SetJustifyH("LEFT")
 
 	Frame.Need = self:Create_CheckBox()
 	Frame.Need:SetParent(Frame)
-	Frame.Need:SetPoint("TOPLEFT", Frame.Text, "TOPRIGHT")
 	Frame.Need:SetScript("OnClick", function(frame, button) self:SetLootMethod(Frame.LineNum, "need") end)
 	Frame.Need:SetScript("OnEnter",
 		function()
@@ -681,7 +742,6 @@ function PasslootBiS:Create_RuleListScrollLine()
 
 	Frame.Disenchant = self:Create_CheckBox()
 	Frame.Disenchant:SetParent(Frame)
-	Frame.Disenchant:SetPoint("TOPLEFT", Frame.Need, "TOPRIGHT", 40, 0)
 	-- Frame.Disenchant:SetScript("OnClick", function(frame, button) self:SetDisenchant(Frame.LineNum) end)
 	Frame.Disenchant:SetScript("OnClick", function(frame, button) self:SetLootMethod(Frame.LineNum, "de") end)
 	Frame.Disenchant:SetScript("OnEnter",
@@ -690,7 +750,6 @@ function PasslootBiS:Create_RuleListScrollLine()
 
 	Frame.Greed = self:Create_CheckBox()
 	Frame.Greed:SetParent(Frame)
-	Frame.Greed:SetPoint("TOPLEFT", Frame.Disenchant, "TOPRIGHT", 40, 0)
 	Frame.Greed:SetScript("OnClick", function(frame, button) self:SetLootMethod(Frame.LineNum, "greed") end)
 	Frame.Greed:SetScript("OnEnter",
 		function()
@@ -701,7 +760,6 @@ function PasslootBiS:Create_RuleListScrollLine()
 
 	Frame.Pass = self:Create_CheckBox()
 	Frame.Pass:SetParent(Frame)
-	Frame.Pass:SetPoint("TOPLEFT", Frame.Greed, "TOPRIGHT", 40, 0)
 	Frame.Pass:SetScript("OnClick", function(frame, button) self:SetLootMethod(Frame.LineNum, "pass") end)
 	Frame.Pass:SetScript("OnEnter",
 		function()
@@ -710,6 +768,38 @@ function PasslootBiS:Create_RuleListScrollLine()
 		end)
 	Frame.Pass.Text:SetText(L["Pass"])
 
+	-- "Before Advisor" — NOT a roll method, so it gets its own setter rather than
+	-- joining the four above in Loot. Ticked, a match on this rule is rolled straight
+	-- away and the roll advisor is never consulted (Core/PassLoot.lua ProcessLootRoll):
+	-- no held-confirm popup, no trust-mode auto-cast overriding it. Unticked — the
+	-- default for a hand-made rule — the advisor keeps its say. The rules a BiS list
+	-- import writes tick it (Modules/BiSImport.lua): your BiS picks are the whole
+	-- point of the list, so nothing should get to talk you out of them.
+	Frame.BeforeAdvisor = self:Create_CheckBox()
+	Frame.BeforeAdvisor:SetParent(Frame)
+	Frame.BeforeAdvisor:SetScript("OnClick", function(frame, button) self:SetBeforeAdvisor(Frame.LineNum) end)
+	Frame.BeforeAdvisor:SetScript("OnEnter",
+		function() self:ShowTooltip(L["Before Advisor"], L["BeforeAdvisor_Desc"]) end)
+	Frame.BeforeAdvisor.Text:SetText(L["Before Advisor"])
+
+	-- Column layout, in one block here because it runs RIGHT to LEFT: the five
+	-- checkboxes hang off the line's right edge as a fixed-width cluster and the
+	-- description takes everything left of them, so the wider the options panel lets
+	-- the rule list be, the more of a long rule name you can read. Sizing (every
+	-- label is drawn to the RIGHT of its box, GameFontNormalSmall):
+	--   * 36 between columns, down from 40 to buy back some of what the fifth column
+	--     costs. Still ~11 clear of the widest label it has to span ("Greed").
+	--   * 84 held back at the far right for "Before Advisor", much the longest of the
+	--     five labels and the only one with nothing to its right to bound it.
+	-- Cluster total 308, which leaves the description ~155 — what it used to be given
+	-- outright — on the narrowest panel this client shows, and more on a roomier one.
+	Frame.BeforeAdvisor:SetPoint("TOPRIGHT", Frame, "TOPRIGHT", -84, 0)
+	Frame.Pass:SetPoint("TOPRIGHT", Frame.BeforeAdvisor, "TOPLEFT", -36, 0)
+	Frame.Greed:SetPoint("TOPRIGHT", Frame.Pass, "TOPLEFT", -36, 0)
+	Frame.Disenchant:SetPoint("TOPRIGHT", Frame.Greed, "TOPLEFT", -36, 0)
+	Frame.Need:SetPoint("TOPRIGHT", Frame.Disenchant, "TOPLEFT", -36, 0)
+	Frame.Text:SetPoint("TOPLEFT", Frame, "TOPLEFT", 0, 0)
+	Frame.Text:SetPoint("TOPRIGHT", Frame.Need, "TOPLEFT", -4, 0)
 
 	return Frame
 end
@@ -731,7 +821,7 @@ end
 
 function PasslootBiS:Create_RuleSettingsFrame()
 	local Frame = CreateFrame("Frame")
-	Frame:SetWidth(413)
+	Frame:SetWidth(413) -- placeholder: Create_RulesFrame anchors both edges instead
 	Frame:SetHeight(298)
 	Frame:SetBackdrop({
 		["bgFile"] = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -764,9 +854,15 @@ function PasslootBiS:Create_RuleSettingsFrame()
 		self:Rules_RuleList_OnScroll()
 	end)
 
+	-- The two filter boxes are a fixed-width pair (190 + 213, butted together), so
+	-- centre them as one unit: this box is no longer a fixed 413 they happened to
+	-- fill, it spans the options panel (Create_RulesFrame). Everything else in here
+	-- is centred on the box already — the description edit box above, and the module
+	-- rule widgets below (Core/ModulesGUI.lua) — and the Add/Remove/Exception buttons
+	-- hang off these two, so they follow.
 	Frame.AvailableFilters = self:Create_RuleAvailableFiltersFrame()
 	Frame.AvailableFilters:SetParent(Frame)
-	Frame.AvailableFilters:SetPoint("TOPLEFT", Frame, "TOPLEFT", 5, -51)
+	Frame.AvailableFilters:SetPoint("TOPLEFT", Frame, "TOP", -202, -51)
 
 	Frame.ActiveFilters = self:Create_RuleActiveFiltersFrame()
 	Frame.ActiveFilters:SetParent(Frame)
