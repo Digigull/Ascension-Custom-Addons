@@ -33,15 +33,16 @@ if not rawget(_G, "CreateFrame") then
 	return
 end
 
-local Score       = ns.Score
-local Slots       = ns.Slots
-local SpecWeights = ns.SpecWeights
-local Filter      = ns.Filter
-local Alert       = ns.Alert
-local Auctionator = ns.Auctionator
-local Verdict     = ns.Verdict
-local WonLedger   = ns.WonLedger
-local ItemLink    = ns.ItemLink
+local Score         = ns.Score
+local Slots         = ns.Slots
+local SpecWeights   = ns.SpecWeights
+local CustomWeights = ns.CustomWeights
+local Filter        = ns.Filter
+local Alert         = ns.Alert
+local Auctionator   = ns.Auctionator
+local Verdict       = ns.Verdict
+local WonLedger     = ns.WonLedger
+local ItemLink      = ns.ItemLink
 
 local ScaledStats  -- resolved from LibStub at login
 
@@ -66,8 +67,9 @@ local DEFAULTS = {
 	ignoreEnchants = true,
 	powerMode     = "off",  -- score a CoA flat Power stat: "off" | "pve" | "pvp"
 	powerWeight   = 1,      -- weight per point of the chosen Power (tunable in GUI)
-	-- minimap = { angle, hide } and options = { point, x, y } are seeded in
-	-- initDB() (nested tables, kept out of the flat DEFAULTS copy loop).
+	-- minimap = { angle, hide }, options = { point, x, y } and customWeights (the
+	-- per-spec weight overrides) are seeded in initDB() -- nested tables, kept out of
+	-- the flat DEFAULTS copy loop.
 }
 
 local db   -- PassLootBiS_ScannerDB, populated on ADDON_LOADED
@@ -91,6 +93,11 @@ local function initDB()
 	if db.minimap.angle == nil then db.minimap.angle = 220 end   -- degrees around the ring
 	if db.minimap.hide  == nil then db.minimap.hide  = false end
 	if type(db.options) ~= "table" then db.options = {} end
+	-- Per-spec weight overrides: customWeights[class][spec][weightKey] = number.
+	-- Account-wide and keyed by spec rather than by character -- Core/CustomWeights.lua
+	-- has the reasoning. An empty table means every spec scores with its shipped
+	-- weights, which is exactly what an older DB without the key does.
+	if type(db.customWeights) ~= "table" then db.customWeights = {} end
 	-- One-time flip: "ignore enchants" went from an off-by-default experiment to the
 	-- default way gear is scored, once /plbisdebug measured the SetHyperlink read as
 	-- faithful on this client. The loop above only fills in ABSENT keys and every DB
@@ -155,8 +162,12 @@ local function currentWeights()
 	end
 	local w = SpecWeights.get(data, chardb.class, chardb.spec)
 	if not w then return nil end
-	-- Fold in the user's chosen CoA Power stat (pvePower/pvpPower), if any. Returns
-	-- a copy, so the shared spec weights are never mutated.
+	-- Fold in this spec's user overrides (the Weights window), then the chosen CoA
+	-- Power stat. ORDER MATTERS: the Power dropdown owns pvePower/pvpPower and must
+	-- write them last, which is why the weights editor refuses those two keys
+	-- (Core/CustomWeights.lua). Both calls return a copy on change and the original
+	-- otherwise, so the shared Data/Weights.lua table is never mutated.
+	w = CustomWeights.apply(w, CustomWeights.get(db.customWeights, chardb.class, chardb.spec))
 	return SpecWeights.withPower(w, db.powerMode, db.powerWeight)
 end
 
@@ -867,6 +878,24 @@ local function debugCollect()
 		table.sort(wk)
 		add("spec: " .. tostring(chardb.class) .. " / " .. tostring(chardb.spec))
 		add("weight keys: " .. table.concat(wk, ", "))
+		-- Custom weights are invisible in the line above (an override just changes a
+		-- number), so spell them out: a mis-typed weight is the first thing to suspect
+		-- when a score looks wrong, and this is where that shows.
+		local over = CustomWeights.get(db.customWeights, chardb.class, chardb.spec)
+		if over then
+			local shipped = SpecWeights.get(rawget(_G, "PLBiSScannerWeights"), chardb.class, chardb.spec) or {}
+			local keys = {}
+			for k in pairs(over) do keys[#keys + 1] = k end
+			table.sort(keys)
+			local parts = {}
+			for i = 1, #keys do
+				local k = keys[i]
+				parts[i] = k .. "=" .. tostring(over[k]) .. " (shipped " .. tostring(shipped[k] or 0) .. ")"
+			end
+			add("custom weights: " .. table.concat(parts, ", "))
+		else
+			add("custom weights: none (shipped values)")
+		end
 	else
 		add("weights: NONE resolved (class=" .. tostring(chardb.class) .. " spec=" .. tostring(chardb.spec) .. ")")
 	end
@@ -1031,7 +1060,7 @@ SlashCmdList["PLBISSCAN"] = function(msg)
 		chat("scanning: " .. (db.enabled and "|cff00ff00on|r" or "|cffff0000off|r")
 			.. ", spec: " .. (chardb.class and chardb.spec and (chardb.class .. " / " .. chardb.spec) or "|cffff0000none|r")
 			.. ", threshold: " .. string.format("+%d%%", math.floor(db.threshold * 100 + 0.5)))
-		chat("commands: options | filter | on | off | toggle | threshold <n%> | spec | spec <Class> | <Spec> | frame | chat | sound | soundgold | tooltip | debug | price <item>")
+		chat("commands: options | filter | weights | on | off | toggle | threshold <n%> | spec | spec <Class> | <Spec> | frame | chat | sound | soundgold | tooltip | debug | price <item>")
 	elseif cmd == "on" then
 		db.enabled = true; chat("scanning |cff00ff00on|r.")
 	elseif cmd == "off" then
@@ -1052,6 +1081,14 @@ SlashCmdList["PLBISSCAN"] = function(msg)
 			ns.Options.Toggle()
 		else
 			chat("options window unavailable.")
+		end
+	elseif cmd == "weights" then
+		-- Per-spec weight overrides. Same window as the options button; the command
+		-- exists so it is reachable without opening the options window first.
+		if ns.Options and ns.Options.ToggleWeights then
+			ns.Options.ToggleWeights()
+		else
+			chat("weights window unavailable.")
 		end
 	elseif cmd == "filter" then
 		-- Per-character armor/weapon inclusion picker.

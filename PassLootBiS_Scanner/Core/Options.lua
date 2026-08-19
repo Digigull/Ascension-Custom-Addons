@@ -32,8 +32,9 @@ if not rawget(_G, "CreateFrame") then
 	return Options
 end
 
-local SpecWeights = ns.SpecWeights
-local Filter      = ns.Filter
+local SpecWeights   = ns.SpecWeights
+local CustomWeights = ns.CustomWeights
+local Filter        = ns.Filter
 
 local frame          -- the window
 local classDrop, specDrop, powerDrop
@@ -45,6 +46,12 @@ local filterFrame            -- the per-character armor/weapon filter window
 local filterChecks = {}      -- { {cb, cat, key}, ... } so RefreshFilter() can repaint
 local dwSlider               -- dual-wield off-hand DPS % slider (per character)
 local filterRefreshing = false
+
+local weightsFrame           -- the per-spec stat-weight editor window
+local weightsBtn             -- the button on the main window that opens it
+local weightRows = {}        -- { {key, label, box}, ... } so RefreshWeights() can repaint
+local weightsSpecFS          -- "Class / Spec" heading inside the editor
+local weightsRefreshing = false
 
 local function weightsDB() return rawget(_G, "PLBiSScannerWeights") end
 
@@ -202,6 +209,18 @@ local function build()
 	specDrop:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -112)
 	UIDropDownMenu_SetWidth(specDrop, 160)
 	UIDropDownMenu_Initialize(specDrop, specInit)
+
+	-- Weights: opens the per-spec stat-weight editor. Parked to the RIGHT of the two
+	-- dropdowns and vertically between them, because it belongs to the pair -- what it
+	-- edits is the weight table the class/spec pick above resolves to, and nothing else
+	-- in this window. Its label grows a "*" while the chosen spec has overrides, so the
+	-- main window says at a glance that scores are not the shipped ones.
+	weightsBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	weightsBtn:SetWidth(84)
+	weightsBtn:SetHeight(22)
+	weightsBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 218, -87)
+	weightsBtn:SetText("Weights")
+	weightsBtn:SetScript("OnClick", function() Options.ToggleWeights() end)
 
 	-- Toggles (each bound to a db field).
 	makeCheck("Enable scanning", 16, -150,
@@ -515,6 +534,189 @@ local function buildFilter()
 end
 
 ----------------------------------------------------------------------
+-- Per-spec stat weight editor
+----------------------------------------------------------------------
+-- A separate floating frame with one number box per weight key, opened by the
+-- "Weights" button next to the class/spec dropdowns. Shows the ACTIVE weight for
+-- every stat -- the shipped Data/Weights.lua value, or the user's override where
+-- there is one -- and writes overrides to db.customWeights[class][spec] through
+-- the pure core (Core/CustomWeights.lua), which is also where the "why account-wide
+-- and keyed by spec" reasoning lives.
+--
+-- Two conventions the boxes rely on, both so the store only ever holds real edits:
+--   * an EMPTY box clears the override (back to the shipped number), and
+--   * typing the shipped number back clears it too.
+-- That keeps "gold label" meaning exactly "differs from what ships", instead of
+-- slowly degrading into "was touched once".
+--
+-- pvePower / pvpPower are deliberately absent: the "Score CoA Power" dropdown on
+-- the main window owns those two and applies them AFTER this merge, so an editable
+-- box here would be silently overwritten. See Core/CustomWeights.lua.
+
+local WEIGHT_ROW_H   = 26    -- vertical pitch of one stat row
+local WEIGHT_ROWS    = 16    -- rows per column (32 keys / 2 columns)
+local WEIGHT_COL_X   = { 20, 200 }
+local WEIGHT_TOP_Y   = -72   -- first row's box, from the frame's TOPLEFT
+
+local WEIGHT_CUSTOM_COLOR  = { 1, 0.82, 0 }        -- gold: overridden
+local WEIGHT_SHIPPED_COLOR = { 0.75, 0.75, 0.75 }  -- grey: shipped value
+local WEIGHT_IDLE_COLOR    = { 0.4, 0.4, 0.4 }     -- dim: no spec picked, nothing to edit
+
+-- The shipped (pre-override) weights for the current character's spec, or nil.
+local function shippedWeights()
+	local cdb = ns.chardb
+	if not (cdb and cdb.class and cdb.spec) then return nil end
+	return SpecWeights.get(weightsDB(), cdb.class, cdb.spec)
+end
+
+local function customStore() return ns.db and ns.db.customWeights end
+
+-- Numbers as the user typed them, not as %f: tostring uses %.14g here, so 1.387
+-- stays "1.387" and 14 stays "14" rather than "14.000000".
+local function fmtWeight(v)
+	return tostring(tonumber(v) or 0)
+end
+
+-- Read one box back into the store. Empty or shipped-valued -> clear the override;
+-- anything unparseable -> leave the store alone and let the repaint undo the typo.
+-- Negative weights are allowed on purpose (a stat you want scored AGAINST an item).
+local function commitWeight(box)
+	if weightsRefreshing then return end
+	local cdb = ns.chardb
+	local store = customStore()
+	local shipped = shippedWeights()
+	if not (cdb and cdb.class and cdb.spec and store and shipped) then
+		box:ClearFocus()
+		Options.RefreshWeights()
+		return
+	end
+
+	local text = (box:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if text == "" then
+		CustomWeights.set(store, cdb.class, cdb.spec, box.weightKey, nil)
+	else
+		local n = tonumber(text)
+		if n then
+			if n == (shipped[box.weightKey] or 0) then
+				CustomWeights.set(store, cdb.class, cdb.spec, box.weightKey, nil)
+			else
+				CustomWeights.set(store, cdb.class, cdb.spec, box.weightKey, n)
+			end
+		end
+	end
+
+	box:ClearFocus()
+	Options.RefreshWeights()
+	Options.Refresh()   -- the main window's button carries the "*" custom marker
+end
+
+-- One "Label [ 1.387 ]" row. The label hangs off the box so the two stay vertically
+-- centred on each other whatever the font metrics do.
+local function makeWeightRow(entry, x, y)
+	local box = CreateFrame("EditBox", "PLBiSScannerWeightBox" .. entry.key, weightsFrame, "InputBoxTemplate")
+	box:SetPoint("TOPLEFT", weightsFrame, "TOPLEFT", x + 112, y)
+	box:SetWidth(56)
+	box:SetHeight(20)
+	box:SetAutoFocus(false)
+	box:SetMaxLetters(8)   -- decimals and a leading minus, so not SetNumeric
+	box.weightKey = entry.key
+
+	local fs = weightsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	fs:SetPoint("LEFT", box, "LEFT", -110, 0)
+	fs:SetJustifyH("LEFT")
+	fs:SetText(entry.label)
+
+	box:SetScript("OnEnterPressed", commitWeight)
+	box:SetScript("OnEditFocusLost", commitWeight)
+	box:SetScript("OnEscapePressed", function(self)
+		self:ClearFocus()
+		Options.RefreshWeights()
+	end)
+
+	weightRows[#weightRows + 1] = { key = entry.key, label = fs, box = box }
+	return box
+end
+
+local function buildWeights()
+	if weightsFrame then return weightsFrame end
+	if not CustomWeights then return nil end
+
+	-- NAME CARE: CreateFrame publishes the name as a global, so this must NOT be
+	-- "PLBiSScannerWeights" -- that is the baked weights table from Data/Weights.lua,
+	-- and naming the frame that overwrites it the moment the editor is first opened
+	-- (every spec then resolves to nil weights and nothing scores again until
+	-- /reload). Same reason the boxes below are ...WeightBox<key>.
+	weightsFrame = CreateFrame("Frame", "PLBiSScannerWeightsWindow", UIParent)
+	weightsFrame:SetWidth(380)
+	weightsFrame:SetHeight(590)
+	-- DRAG-FREEZE FIX: drag-safe strata + level via the shared helper, no toplevel
+	-- (Core/UI.lua). The +20 level bump is only about our own windows: this one opens
+	-- from a button on PLBiSScannerOptions and can be up at the same time as
+	-- PLBiSScannerFilter (+10), so it takes the next step up rather than tying.
+	ns.UI.applyWindowChrome(weightsFrame, 20)
+	ns.UI.applyDarkBackdrop(weightsFrame)
+	weightsFrame:EnableMouse(true)
+	weightsFrame:SetMovable(true)
+	weightsFrame:RegisterForDrag("LeftButton")
+	weightsFrame:SetScript("OnDragStart", function(f) f:StartMoving() end)
+	weightsFrame:SetScript("OnDragStop", function(f) f:StopMovingOrSizing() end)
+
+	local title = weightsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	title:SetPoint("TOP", weightsFrame, "TOP", 0, -14)
+	title:SetText("Stat weights")
+
+	weightsSpecFS = weightsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	weightsSpecFS:SetPoint("TOP", weightsFrame, "TOP", 0, -32)
+
+	local hint = weightsFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	hint:SetPoint("TOP", weightsFrame, "TOP", 0, -50)
+	hint:SetText("Gold = your value. Empty a box to restore the shipped one.")
+
+	local close = CreateFrame("Button", nil, weightsFrame, "UIPanelCloseButton")
+	close:SetPoint("TOPRIGHT", weightsFrame, "TOPRIGHT", -6, -6)
+	close:SetScript("OnClick", function() Options.HideWeights() end)
+
+	-- Two columns, filled top-to-bottom: CustomWeights.KEYS is ordered so the first
+	-- column is the offense/throughput half and the second the defensive one.
+	for i, entry in ipairs(CustomWeights.KEYS) do
+		local col = (i - 1) < WEIGHT_ROWS and 1 or 2
+		local row = (i - 1) % WEIGHT_ROWS
+		makeWeightRow(entry, WEIGHT_COL_X[col], WEIGHT_TOP_Y - row * WEIGHT_ROW_H)
+	end
+
+	-- Says what a weight IS, because the numbers only make sense relative to each
+	-- other: the score is a dot product of the item's stats and these (Core/Score.lua),
+	-- so doubling every one of them changes nothing.
+	local note = weightsFrame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	note:SetPoint("TOPLEFT", weightsFrame, "TOPLEFT", 20, -496)
+	note:SetWidth(340)
+	note:SetJustifyH("LEFT")
+	note:SetText("Score is stats x weights, so only the ratios matter. CoA Power is set "
+		.. "by the Power dropdown on the settings window, not here.")
+
+	local reset = CreateFrame("Button", nil, weightsFrame, "UIPanelButtonTemplate")
+	reset:SetWidth(180)
+	reset:SetHeight(22)
+	reset:SetPoint("BOTTOM", weightsFrame, "BOTTOM", 0, 16)
+	reset:SetText("Reset this spec to shipped")
+	reset:SetScript("OnClick", function()
+		local cdb = ns.chardb
+		local store = customStore()
+		if cdb and cdb.class and cdb.spec and store then
+			CustomWeights.clear(store, cdb.class, cdb.spec)
+		end
+		Options.RefreshWeights()
+		Options.Refresh()
+	end)
+
+	tinsert(UISpecialFrames, "PLBiSScannerWeightsWindow")   -- ESC closes it
+	weightsFrame:ClearAllPoints()
+	weightsFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+	weightsFrame:Hide()
+	return weightsFrame
+end
+
+----------------------------------------------------------------------
 -- Public API
 ----------------------------------------------------------------------
 
@@ -547,7 +749,20 @@ function Options.Refresh()
 		powerBox:SetText(tostring(db.powerWeight or 1))
 	end
 
+	-- "Weights *" while the chosen spec has overrides, so a tuned spec is visible
+	-- without opening the editor -- and so a forgotten edit is findable when scores
+	-- stop matching what the shipped table would give.
+	if weightsBtn then
+		local n = CustomWeights and CustomWeights.count(db.customWeights, cdb.class, cdb.spec) or 0
+		weightsBtn:SetText(n > 0 and "Weights *" or "Weights")
+	end
+
 	refreshing = false
+
+	-- The editor is a separate window that can be open while the spec is changed
+	-- here; repaint it so it never shows another spec's numbers. Outside the
+	-- `refreshing` guard because it repaints its own controls under its own guard.
+	Options.RefreshWeights()
 end
 
 function Options.Show()
@@ -603,6 +818,73 @@ function Options.ToggleFilter()
 		filterFrame:Hide()
 	else
 		Options.ShowFilter()
+	end
+end
+
+-- Repaint every weight box from (shipped weights + this spec's overrides). Safe to
+-- call when the editor has never been built or no spec is picked.
+function Options.RefreshWeights()
+	if not weightsFrame then return end
+	local cdb = ns.chardb or {}
+	local shipped = shippedWeights()
+	local over = CustomWeights.get(customStore(), cdb.class, cdb.spec)
+
+	weightsRefreshing = true
+
+	if shipped then
+		weightsSpecFS:SetText(cdb.class .. " / " .. cdb.spec)
+		weightsSpecFS:SetTextColor(1, 0.82, 0)
+	else
+		-- No spec picked (or none matching the saved names): the editor has nothing to
+		-- write to, so it says so rather than offering boxes that silently discard.
+		weightsSpecFS:SetText("No spec selected -- pick one in the settings window")
+		weightsSpecFS:SetTextColor(1, 0.3, 0.3)
+	end
+
+	for _, row in ipairs(weightRows) do
+		local custom = over and over[row.key]
+		local c
+		if not shipped then
+			c = WEIGHT_IDLE_COLOR
+		elseif custom ~= nil then
+			c = WEIGHT_CUSTOM_COLOR
+		else
+			c = WEIGHT_SHIPPED_COLOR
+		end
+		row.label:SetTextColor(c[1], c[2], c[3])
+
+		-- Never stomp the box the user is typing in (Refresh runs on every commit).
+		if not row.box:HasFocus() then
+			if shipped then
+				row.box:SetText(fmtWeight(custom ~= nil and custom or (shipped[row.key] or 0)))
+			else
+				row.box:SetText("")
+			end
+		end
+		-- With no spec there is nowhere to store an edit, so the boxes stop taking one.
+		row.box:EnableMouse(shipped ~= nil)
+	end
+
+	weightsRefreshing = false
+end
+
+function Options.ShowWeights()
+	if not buildWeights() then return end
+	Options.RefreshWeights()
+	weightsFrame:Show()
+	ns.UI.frontOnOpen(weightsFrame, 20)   -- front-of-strata on open; no Raise(), see Core/UI.lua
+end
+
+function Options.HideWeights()
+	if weightsFrame then weightsFrame:Hide() end
+end
+
+function Options.ToggleWeights()
+	if not buildWeights() then return end
+	if weightsFrame:IsShown() then
+		weightsFrame:Hide()
+	else
+		Options.ShowWeights()
 	end
 end
 

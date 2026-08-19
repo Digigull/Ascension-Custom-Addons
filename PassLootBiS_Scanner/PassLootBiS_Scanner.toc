@@ -21,6 +21,7 @@ Core\Score.lua
 Core\Slots.lua
 Core\ItemLink.lua
 Core\SpecWeights.lua
+Core\CustomWeights.lua
 Core\Filter.lua
 Core\Verdict.lua
 Core\WonLedger.lua
