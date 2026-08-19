@@ -868,12 +868,6 @@ function Atr_Init()
 	recommendElements[6] = _G["Atr_Recommend_Basis_Text"];
 	recommendElements[7] = _G["Atr_RecommendItem_Tex"];
 
-	-- 8 is the SELL header name's hover target (see Atr_Sell_HeaderHoverEnsure).
-	-- It rides in this table so Atr_Show/HideElems take it down with the rest of
-	-- the block -- notably the unconditional HideElems on every tab switch, which
-	-- is what stops an invisible hover lingering over another tab's header.
-	recommendElements[8] = Atr_Sell_HeaderHoverEnsure ();
-
 	-- create the lines that appear in the item history scroll pane
 
 	local line, n;
@@ -2264,6 +2258,7 @@ end
 ATR_SELL_GEOM = {
     "Atr_StackPrice", "Atr_StackPriceGold", "Atr_StackPriceSilver", "Atr_StackPriceCopper",
     "Atr_ItemPrice",  "Atr_ItemPriceGold",  "Atr_ItemPriceSilver",  "Atr_ItemPriceCopper",
+    "Atr_StackPriceText", "Atr_ItemPriceText",
     "Atr_CreateAuctionButton", "Atr_Batch_Stacksize_Text",
     "Atr_StartingPriceDiscountText", "Atr_Duration_Text", "Atr_Duration", "Atr_Deposit_Text",
     "Atr_RecommendItem_Tex", "Atr_Recommend_Text", "Atr_Recommend_Basis_Text",
@@ -2333,11 +2328,17 @@ ATR_SELL_LIST_H = 74;       -- results scroll height; 4 rows at 16px
 ATR_SELL_HB_Y = -268;       -- Atr_HeadingsBar TOPLEFT y (tabs follow it)
 ATR_SELL_SF_Y = -313;       -- AuctionatorScrollFrame TOPLEFT y (45 below the bar)
 ATR_SELL_SCANBTN_Y = 2;     -- Scan Inventory button y vs the divider top edge
-ATR_SELL_NAME_W = 215;      -- header item-name budget, before the basis note
+-- Item-name budget.  This used to be 215 -- the header strip's width before the
+-- basis note.  The name now lives in the 170px left column, above the drop box,
+-- so it is the column that sets the budget: same value as the drop hint's, for
+-- the same reason (5px inside the column a side).  Names chop harder than they
+-- did in the header; the full one is on the drop box's tooltip.
+ATR_SELL_NAME_W = 160;
 
--- Put the selected item's name in the header strip, chopped to fit.  3.3.5
--- FontStrings wrap once a width is set and nothing clips them, so the string
--- is measured down rather than bounded.
+-- Put the selected item's name above the drop box, chopped to fit.  (It was the
+-- header strip's title until 2026-08; the widget is the same one, moved by
+-- Atr_ApplySellExpandedLayout.)  3.3.5 FontStrings wrap once a width is set and
+-- nothing clips them, so the string is measured down rather than bounded.
 function Atr_Sell_SetHeaderName (itemName, itemLink)
 
     local fs = Atr_Recommend_Text;
@@ -2372,74 +2373,44 @@ function Atr_Sell_SetHeaderName (itemName, itemLink)
         end
     end
 
-    Atr_Sell_HeaderHoverEnsure();
+    Atr_Sell_HeaderApply();
 end
 
--- Hover target for the header name.
+-- The SELL header strip is emptied, and stays emptied.
 --
--- The SELL header used to open with a 37px item icon (Atr_RecommendItem_Tex)
--- and the tooltip hung off it.  The icon is gone from this tab (owner's
--- request, 2026-08) and the name has moved into the space it left, so the
--- hover has to move onto the name.  Two things that forces:
+-- Three things used to live in the band above the inventory: a 37px item icon,
+-- the item name, and the recommended price in two flavours with a "based on"
+-- note.  Owner's request (2026-08): the name moves into the left column, above
+-- the drop box, and everything else in that band goes.  What is listed below is
+-- therefore hidden outright on this tab.
 --
---   * A FontString cannot take OnEnter, so an invisible Button is parked over
---     it.  Its width is the MEASURED string, not ATR_SELL_NAME_W: the name is
---     chopped to fit, so how wide it actually is only becomes known after
---     Atr_Sell_SetHeaderName has run.  Hence "Ensure" -- this is called again
---     every time the header name or icon is rewritten.
---   * The tooltip owner has to be a SHOWN frame.  GameTooltip:SetOwner on a
---     hidden one anchors nothing, and Atr_Idle re-calls Atr_ShowRecTooltip on
---     every frame while the tooltip is up, so the old icon cannot stay owner.
+-- Hiding has to be re-applied, not done once.  Every widget here is a member of
+-- recommendElements, and Atr_ShowElems shows that table wholesale after a post;
+-- the icon is additionally re-shown by Atr_SetTextureButton.  So this is called
+-- again from every path that rewrites the header -- hence "Apply" -- and always
+-- AFTER those calls, never before.
 --
--- The icon frame itself is left where it is, just hidden.  It still draws the
--- searched item on the BUY tab, which shares this header, and it is listed in
--- ATR_SELL_GEOM -- hiding rather than moving keeps that save/restore honest.
--- Everything here is therefore gated on the SELL tab being the selected one.
+-- They are NOT dropped from recommendElements: Atr_HideElems is what hides them
+-- in the first place, including the unconditional one on every tab switch, and
+-- nothing in the XML marks them hidden at load.
 --
--- Visibility is not decided here alone: the frame is element 8 of
--- recommendElements, so Atr_Show/HideElems take it down with the rest of the
--- block.  Mirroring the name below covers the one path that shows the name on
--- its own after a HideElems (Atr_ShowItemNameAndTexture).
-ATR_SELL_HOVER_PAD = 2;     -- slack around the measured string, each side
+-- Gated on the SELL tab because the header is shared with BUY, where the icon
+-- still draws the searched item (Atr_ShowItemNameAndTexture).
+ATR_SELL_HEADER_HIDDEN = {
+    "Atr_RecommendItem_Tex",
+    "Atr_Recommend_Basis_Text",
+    "Atr_RecommendPerStack_Text", "Atr_RecommendPerStack_Price",
+    "Atr_RecommendPerItem_Text",  "Atr_RecommendPerItem_Price",
+};
 
-function Atr_Sell_HeaderHoverEnsure ()
+function Atr_Sell_HeaderApply ()
 
-    local fs = Atr_Recommend_Text;
-    if (not fs) then return nil; end
+    if (not Atr_IsTabSelected or not Atr_IsTabSelected (SELL_TAB)) then return; end
 
-    local hover = Atr_Sell_HeaderHover;
-    if (not hover) then
-        hover = CreateFrame ("Button", "Atr_Sell_HeaderHover", fs:GetParent());
-        hover:SetScript ("OnEnter", function () Atr_ShowRecTooltip(); end);
-        hover:SetScript ("OnLeave", function () Atr_HideRecTooltip(); end);
-        Atr_Sell_HeaderHover = hover;
+    for _, name in ipairs (ATR_SELL_HEADER_HIDDEN) do
+        local f = _G[name];
+        if (f) then f:Hide(); end
     end
-
-    local onSell = (Atr_IsTabSelected and Atr_IsTabSelected (SELL_TAB)) and true or false;
-
-    if (not onSell) then
-        hover:Hide();
-        return hover;
-    end
-
-    if (Atr_RecommendItem_Tex) then Atr_RecommendItem_Tex:Hide(); end
-
-    -- GetStringHeight is the drawn height; GetHeight on a FontString that was
-    -- never sized reports the same thing, and is the fallback only because a
-    -- zero-height Button swallows nothing and the hover would silently die.
-    local w = fs:GetStringWidth() or 0;
-    local h = (fs.GetStringHeight and fs:GetStringHeight()) or fs:GetHeight() or 0;
-    if (w < 1) then w = 1;  end
-    if (h < 1) then h = 12; end
-
-    hover:ClearAllPoints();
-    hover:SetPoint ("TOPLEFT", fs, "TOPLEFT", -ATR_SELL_HOVER_PAD, ATR_SELL_HOVER_PAD);
-    hover:SetWidth  (w + ATR_SELL_HOVER_PAD * 2);
-    hover:SetHeight (h + ATR_SELL_HOVER_PAD * 2);
-
-    if (fs:IsShown()) then hover:Show(); else hover:Hide(); end
-
-    return hover;
 end
 
 -- Vertical flow of the left column below the price rows.  Two states, one
@@ -2460,7 +2431,9 @@ function Atr_Sell_ReflowControls (itemPriceShown)
 
     if (not gSellLayoutExpandedApplied or not Atr_SellControls) then return; end
 
-    local base = itemPriceShown and -162 or -124;
+    -- -162 / -124 in earlier versions; the same two gaps below the price block,
+    -- so this moves with it rather than having to be re-tuned alongside it.
+    local base = itemPriceShown and (ATR_SELL_PRICE_Y - 80) or (ATR_SELL_PRICE_Y - 42);
 
     for _, row in ipairs (ATR_SELL_FLOW) do
         local f = _G[row[1]];
@@ -2510,8 +2483,19 @@ end
 
 ATR_SELL_COL_MID   = 85;        -- Atr_SellControls is 170 wide
 ATR_SELL_DROP_BOX  = 51;        -- the 37px icon plus 7px inside the border a side
-ATR_SELL_DROP_Y    = -18;       -- box top, column-local; the caption sits above it
+ATR_SELL_TITLE_Y   = -2;        -- item name top, column-local -- the slot the
+                                -- caption used to hold
+ATR_SELL_DROP_Y    = -18;       -- box top, column-local; the name sits above it
 ATR_SELL_HINT_W    = 160;       -- caption budget, 5px inside the column a side
+
+-- Top of the "Buyout Price" label, and the origin every row below it is
+-- measured from.  It was -82, hardcoded in the XML, with the four rows under it
+-- carrying the literals -94 / -128 / -140 and -162 / -124.  Those are exactly
+-- the offsets below, so parameterising changed nothing -- and then moving the
+-- caption from above the box to below it needed the whole block 8px lower, all
+-- at once.  The two labels are positioned from Lua now, which is why they had
+-- to join ATR_SELL_GEOM.
+ATR_SELL_PRICE_Y   = -90;
 ATR_SELL_DROP_HINT       = "Drop an item here to sell";
 ATR_SELL_DROP_HINT_SHORT = "Drop an item to sell";
 
@@ -2587,23 +2571,42 @@ function Atr_ApplySellExpandedLayout()
     -- The name string duplicated the header; the icon stays as the drop target.
     if (Atr_SellControls_TexName) then Atr_SellControls_TexName:Hide(); end
 
-    -- Caption, box and icon are all placed from the column's TOP CENTRE.
+    -- Name, box, icon and caption are all placed from the column's TOP CENTRE.
     -- Centring by a computed left offset would mean trusting this client's
-    -- font metrics for the caption and hardcoding the icon's size for the box;
+    -- font metrics for the strings and hardcoding the icon's size for the box;
     -- a TOP anchor on an unsized FontString and a CENTER anchor on the icon
     -- both stay correct if either of those changes.
     local zone = Atr_Sell_DropZoneEnsure();
 
-    if (Atr_SellDropHint) then
-        Atr_SellDropHint:ClearAllPoints();
-        Atr_SellDropHint:SetPoint ("TOP", col, "TOPLEFT", ATR_SELL_COL_MID, -4);
-        Atr_SellDropHint:Show();
+    -- The item name takes the slot the caption held, directly above the box it
+    -- names (owner's request, 2026-08).  It is a region of the PANEL anchored to
+    -- a child frame, which is legal and needs no reparenting -- Atr_SellControls
+    -- paints nothing, so there is no layer for the name to disappear behind.
+    -- Atr_ResetSellExpandedLayout puts it back in the header for the other tabs;
+    -- it is in ATR_SELL_GEOM, so that is automatic.
+    if (Atr_Recommend_Text) then
+        Atr_Recommend_Text:ClearAllPoints();
+        Atr_Recommend_Text:SetPoint ("TOP", col, "TOPLEFT", ATR_SELL_COL_MID, ATR_SELL_TITLE_Y);
     end
 
     if (zone) then
         zone:ClearAllPoints();
         zone:SetPoint ("TOP", col, "TOPLEFT", ATR_SELL_COL_MID, ATR_SELL_DROP_Y);
         zone:Show();
+    end
+
+    -- The caption moves below the box, under the item it is telling you to drop.
+    -- Anchored to the box rather than to a column offset so it keeps following
+    -- it; ATR_SELL_PRICE_Y is what bought the room for it.
+    if (Atr_SellDropHint) then
+        Atr_SellDropHint:ClearAllPoints();
+        if (zone) then
+            Atr_SellDropHint:SetPoint ("TOP", zone, "BOTTOM", 0, -1);
+        else
+            Atr_SellDropHint:SetPoint ("TOP", col, "TOPLEFT", ATR_SELL_COL_MID,
+                                       ATR_SELL_DROP_Y - ATR_SELL_DROP_BOX - 1);
+        end
+        Atr_SellDropHint:Show();
     end
 
     if (Atr_SellControls_Tex) then
@@ -2616,6 +2619,15 @@ function Atr_ApplySellExpandedLayout()
             Atr_SellControls_Tex:SetPoint ("TOP", col, "TOPLEFT", ATR_SELL_COL_MID,
                                            ATR_SELL_DROP_Y - 7);
         end
+
+        -- The item tooltip belongs on the item, and the item is in this box
+        -- (owner's request, 2026-08).  Set from here rather than in the XML
+        -- because the XML button is shared with the panel's other tabs, the same
+        -- reason the rest of this layout is built in Lua.  Nothing is clobbered:
+        -- the XML gives this button OnClick and the two drag handlers, no hover.
+        -- An empty box shows nothing -- Atr_ShowRecTooltip has no link to open.
+        Atr_SellControls_Tex:SetScript ("OnEnter", function () Atr_ShowRecTooltip(); end);
+        Atr_SellControls_Tex:SetScript ("OnLeave", function () Atr_HideRecTooltip(); end);
     end
 
     -- The Ignore button sits at the far left of the column, tucked against the
@@ -2645,8 +2657,21 @@ function Atr_ApplySellExpandedLayout()
         frame:SetPoint ("TOPLEFT", col, "TOPLEFT", 6, y);
     end
 
-    money (Atr_StackPrice, Atr_StackPriceGold, Atr_StackPriceSilver, Atr_StackPriceCopper, -94);
-    money (Atr_ItemPrice,  Atr_ItemPriceGold,  Atr_ItemPriceSilver,  Atr_ItemPriceCopper, -140);
+    -- Both labels came from the XML at -82 / -128 and were never moved from here.
+    -- They are now, because the whole block had to drop 8px to clear the caption
+    -- that moved under the drop box.  Offsets from ATR_SELL_PRICE_Y are the gaps
+    -- the XML already had, so the arrangement is unchanged, only lower.
+    if (Atr_StackPriceText) then
+        Atr_StackPriceText:ClearAllPoints();
+        Atr_StackPriceText:SetPoint ("TOPLEFT", col, "TOPLEFT", 10, ATR_SELL_PRICE_Y);
+    end
+    if (Atr_ItemPriceText) then
+        Atr_ItemPriceText:ClearAllPoints();
+        Atr_ItemPriceText:SetPoint ("TOPLEFT", col, "TOPLEFT", 10, ATR_SELL_PRICE_Y - 46);
+    end
+
+    money (Atr_StackPrice, Atr_StackPriceGold, Atr_StackPriceSilver, Atr_StackPriceCopper, ATR_SELL_PRICE_Y - 12);
+    money (Atr_ItemPrice,  Atr_ItemPriceGold,  Atr_ItemPriceSilver,  Atr_ItemPriceCopper, ATR_SELL_PRICE_Y - 58);
 
     if (Atr_CreateAuctionButton) then Atr_CreateAuctionButton:SetWidth (160); end
 
@@ -2654,51 +2679,26 @@ function Atr_ApplySellExpandedLayout()
     -- called at the end of this function once the applied flag is up -- the
     -- helper guards on that flag, so calling it from here would no-op.
 
-    ---- 2. header strip: the recommend block moves into the light band ----
+    ---- 2. header strip: emptied ----
 
-    -- Two rows.  Row 1 is the item name and the basis note; row 2 carries both
-    -- prices.  The basis note anchors to Atr_FullScanButton's LEFT edge so the
-    -- right end of the strip stays measured, not guessed.
+    -- SUPERSEDED (2026-08).  This section used to lay the recommend block out
+    -- across the band above the inventory: two rows, the item icon and name and
+    -- the "based on" note on the first, the recommended price per stack and per
+    -- item on the second, with both money frames anchored by their RIGHT edge
+    -- because a SmallMoneyFrame lays its coins out from there.
     --
-    -- Row 1 used to open with the item icon at (6, -37), 37px wide, with the
-    -- name beside it at 48.  The icon is dropped from this tab (owner's
-    -- request, 2026-08) and the name takes the x it vacated.  The icon is not
-    -- moved out of the way here -- Atr_Sell_HeaderHoverEnsure hides it, which
-    -- leaves its ATR_SELL_GEOM entry and its BUY-tab use alone.
+    -- The owner asked for that band cleared.  The name has already been placed,
+    -- in section 1, above the drop box; everything else is hidden by
+    -- Atr_Sell_HeaderApply.  There is nothing left here to position -- the
+    -- widgets keep their stock XML anchors, which is what the other tabs want
+    -- anyway, and Atr_ResetSellExpandedLayout restores them for those tabs from
+    -- ATR_SELL_GEOM regardless.
     --
-    -- ATR_SELL_NAME_W is deliberately NOT widened by the 42px this frees: the
-    -- basis note is anchored from the right, so the extra room shows up as
-    -- clearance between the two rather than as a longer name.  Widen it there
-    -- if longer names are wanted.
-    if (Atr_Recommend_Text) then
-        Atr_Recommend_Text:ClearAllPoints();
-        Atr_Recommend_Text:SetPoint ("LEFT", panel, "TOPLEFT", 6, -48);
-    end
-    Atr_Sell_HeaderHoverEnsure();
-    if (Atr_Recommend_Basis_Text and Atr_FullScanButton) then
-        Atr_Recommend_Basis_Text:ClearAllPoints();
-        Atr_Recommend_Basis_Text:SetPoint ("RIGHT", Atr_FullScanButton, "LEFT", -8, 6);
-    end
-
-    -- SmallMoneyFrames lay their coins out from the RIGHT, which is why both
-    -- of these are anchored by their right edge: the figure stays put and
-    -- grows leftward as the amount gets bigger.
-    if (Atr_RecommendPerStack_Price) then
-        Atr_RecommendPerStack_Price:ClearAllPoints();
-        Atr_RecommendPerStack_Price:SetPoint ("RIGHT", panel, "TOPLEFT", 180, -66);
-    end
-    if (Atr_RecommendPerStack_Text) then
-        Atr_RecommendPerStack_Text:ClearAllPoints();
-        Atr_RecommendPerStack_Text:SetPoint ("LEFT", panel, "TOPLEFT", 185, -66);
-    end
-    if (Atr_RecommendPerItem_Price) then
-        Atr_RecommendPerItem_Price:ClearAllPoints();
-        Atr_RecommendPerItem_Price:SetPoint ("RIGHT", panel, "TOPLEFT", 400, -66);
-    end
-    if (Atr_RecommendPerItem_Text) then
-        Atr_RecommendPerItem_Text:ClearAllPoints();
-        Atr_RecommendPerItem_Text:SetPoint ("LEFT", panel, "TOPLEFT", 405, -66);
-    end
+    -- The band itself is left empty rather than closed up: raising the inventory
+    -- into it would move the results block and the Current/Ledger tabs with it,
+    -- which is a separate decision.  ATR_SELL_HB_Y / ATR_SELL_SF_Y are where
+    -- that would be tuned.
+    Atr_Sell_HeaderApply();
 
     ---- 3. inventory: flush to the divider, up into the old results area ----
 
@@ -3312,10 +3312,10 @@ function Atr_ShowItemNameAndTexture(itemName)
 	Atr_SetTextureButton ("Atr_RecommendItem_Tex", 1, gCurrentPane.activeScan.itemLink);
 
 	-- After, not before: the call above shows the icon, and on the SELL tab the
-	-- icon is meant to stay hidden.  This also refits the hover to the name that
-	-- was just written -- note this path sets the name directly rather than
-	-- through Atr_Sell_SetHeaderName, so it needs its own call.
-	Atr_Sell_HeaderHoverEnsure ();
+	-- icon is meant to stay hidden.  (This path is the BUY tab's, where the icon
+	-- is wanted, so the call is a no-op there -- it is here because the two tabs
+	-- share this header and only the selected one decides.)
+	Atr_Sell_HeaderApply ();
 end
 
 
@@ -3692,7 +3692,7 @@ function Atr_UpdateRecommendation (updatePrices)
 	Atr_RecommendPerStack_Text:SetText (string.format (ZT("for your stack of %d"), Atr_StackSize()));
 
 	Atr_SetTextureButton ("Atr_RecommendItem_Tex", Atr_StackSize(), gCurrentPane.activeScan.itemLink);
-	Atr_Sell_HeaderHoverEnsure ();		-- re-hides the icon, refits the name hover
+	Atr_Sell_HeaderApply ();			-- Atr_ShowElems just re-showed the whole strip
 
 	MoneyFrame_Update ("Atr_RecommendPerItem_Price",  zc.round(new_Item_BuyoutPrice));
 	MoneyFrame_Update ("Atr_RecommendPerStack_Price", zc.round(new_Item_BuyoutPrice * Atr_StackSize()));
@@ -3833,12 +3833,17 @@ function Atr_ShowRecTooltip ()
 		if (num < 1) then num = 1; end;
 		
 		-- Owner is whatever the pointer is actually over.  On the SELL tab that is
-		-- the header name's hover frame; the icon it replaced is hidden there, and
-		-- SetOwner on a hidden frame anchors the tooltip to nothing.  Atr_Idle
-		-- re-runs this every frame while the tooltip is up, so it has to keep
-		-- resolving to a shown frame, not just at OnEnter.
-		local owner = (Atr_Sell_HeaderHover and Atr_Sell_HeaderHover:IsShown())
-		              and Atr_Sell_HeaderHover or Atr_RecommendItem_Tex;
+		-- the drop box, and the header icon is hidden there; everywhere else it is
+		-- still the header icon.  Resolved on each call, not captured once:
+		-- Atr_Idle re-runs this every frame while the tooltip is up, and SetOwner
+		-- on a hidden frame anchors the tooltip to nothing.
+		--
+		-- IsVisible, not IsShown: the drop box is a child of Atr_SellControls, and
+		-- a shown child of a hidden parent still reports IsShown.
+		local owner = Atr_RecommendItem_Tex;
+		if (Atr_SellControls_Tex and Atr_SellControls_Tex:IsVisible()) then
+			owner = Atr_SellControls_Tex;
+		end
 
 		GameTooltip:SetOwner(owner, "ANCHOR_RIGHT");
 		GameTooltip:SetHyperlink (link, num);
@@ -4331,7 +4336,7 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 			Atr_Sell_SetHeaderName (string.format (ZT("Auction created for %s"), gJustPosted_ItemName), nil);
 			MoneyFrame_Update ("Atr_RecommendPerStack_Price", gJustPosted_BuyoutPrice);
 			Atr_SetTextureButton ("Atr_RecommendItem_Tex", gJustPosted_StackSize, gJustPosted_ItemLink);
-			Atr_Sell_HeaderHoverEnsure ();		-- re-hides the icon, refits the name hover
+			Atr_Sell_HeaderApply ();		-- Atr_SetTextureButton just re-showed the icon
 
 			gCurrentPane.currIndex = gCurrentPane.activeScan:FindInSortedData (gJustPosted_StackSize, gJustPosted_BuyoutPrice);
 

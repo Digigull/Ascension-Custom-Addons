@@ -51,42 +51,57 @@ Two things to be careful of:
 **Open:** the drop zone (`Atr_Sell_DropZoneEnsure`, `Auctionator.lua:2443`) is a *separate*
 37px target in the left column and is not what this item is about. Leave it.
 
+**Revised on sight of it (owner, 2026-08-19).** The first cut hid the icon and moved the
+hover onto the name where the icon had been. Seeing it in game, the owner asked for the header
+band cleared outright instead: the item name goes into the left column, in the slot the
+"Drop an item here to sell" caption held; that caption drops to under the box; the hover moves
+to **the drop box**, so the tooltip is on the item you are actually selling; and the recommended
+price rows go with the icon. That is what is built.
+
 **Built.** All in `Auctionator.lua`; the XML is untouched.
 
-- **`Atr_Sell_HeaderHoverEnsure`** (next to `Atr_Sell_SetHeaderName`) is the whole feature: it
-  hides `Atr_RecommendItem_Tex`, and creates/refits `Atr_Sell_HeaderHover`, an invisible
-  `Button` sat over the name string. Sized from `GetStringWidth` — the *measured* string, not
-  `ATR_SELL_NAME_W` — because the name is chopped to fit, so its real width is only known once
-  `Atr_Sell_SetHeaderName` has run. Hence "Ensure": it is called again on every path that
-  rewrites the header, which is what makes it survive the block being re-shown wholesale.
-- **The icon is hidden, never moved or removed.** Its `ATR_SELL_GEOM` entry, its XML and its
-  `Atr_SetTextureButton` feeds all stay. That matters because **the header is shared with the
-  BUY tab**, where the icon still draws the searched item — so every part of this is gated on
-  `Atr_IsTabSelected(SELL_TAB)`, and off the SELL tab `Ensure` only hides the hover.
-- **Ordering is the load-bearing detail.** Both `Atr_ShowElems(recommendElements)` and
-  `Atr_SetTextureButton` call `Show()` on the icon, so `Ensure` is called *after* each of the
-  three `Atr_SetTextureButton ("Atr_RecommendItem_Tex", …)` sites, not before.
-- **Hide is not left to `Ensure` alone.** The hover is `recommendElements[8]`, so
-  `Atr_Show/HideElems` take it down with the block — in particular the unconditional
-  `Atr_HideElems` on every tab switch, which is what stops an invisible hover lingering over
-  another tab's header. `Ensure` additionally mirrors `Atr_Recommend_Text:IsShown()`, covering
-  the one path that shows the name on its own after a `HideElems`
-  (`Atr_ShowItemNameAndTexture`).
-- **`Atr_ShowRecTooltip` now resolves its owner** to the hover frame when that is shown, and
-  falls back to the icon otherwise (the BUY tab). It has to *resolve*, not be set once:
-  `Atr_Idle` re-calls this every frame while the tooltip is up, and `SetOwner` on a hidden
-  frame anchors nothing.
-- **The name slides left**, `LEFT (48, -48)` → `LEFT (6, -48)`, into the x the 37px icon
-  occupied. `Atr_ResetSellExpandedLayout` puts it back for the other tabs via `ATR_SELL_GEOM`.
-- **`ATR_SELL_NAME_W` was deliberately left at 215.** The basis note is anchored from the
-  right, so the 42px this frees shows up as clearance between name and note, not as room for a
-  longer name. Widening it is a separate, one-line decision if longer names are wanted.
+- **`Atr_Sell_HeaderApply`** (next to `Atr_Sell_SetHeaderName`) hides everything in
+  `ATR_SELL_HEADER_HIDDEN`: the icon, the "based on" note, and both recommended-price rows with
+  their captions. Hiding is **re-applied, not done once** — every one of those is a member of
+  `recommendElements`, which `Atr_ShowElems` shows wholesale after a post, and the icon is
+  additionally re-shown by `Atr_SetTextureButton`. So it is called from every path that rewrites
+  the header, and always *after* those calls.
+- **They stay in `recommendElements`.** `Atr_HideElems` is what hides them in the first place —
+  including the unconditional one on every tab switch — and nothing in the XML marks them hidden
+  at load. Dropping them from the table would leave them shown for one frame after login.
+- **The header is shared with the BUY tab**, where the icon still draws the searched item, so
+  `Atr_Sell_HeaderApply` is a no-op unless `Atr_IsTabSelected(SELL_TAB)`.
+- **The name moves into the column**, `TOP` of `Atr_SellControls` at `ATR_SELL_TITLE_Y`. It is a
+  region of `Atr_Main_Panel` anchored to a child frame, which is legal and needs no reparenting:
+  `Atr_SellControls` paints nothing, so there is no layer for it to disappear behind. It is in
+  `ATR_SELL_GEOM`, so leaving the tab puts it back in the header for BUY.
+- **`ATR_SELL_NAME_W` drops 215 → 160.** The budget is now the 170px column, not the header
+  strip, so it matches `ATR_SELL_HINT_W` for the same reason. Names chop harder than they did;
+  the full one is on the tooltip.
+- **The caption moves under the box**, anchored to the box's `BOTTOM` rather than to a column
+  offset, so it follows if the box moves.
+- **The price block below had to drop 8px** to clear it. `ATR_SELL_PRICE_Y` (-90, was -82 in the
+  XML) is now the origin every row under it is measured from — the `-94 / -128 / -140` and
+  `-162 / -124` literals were exactly these offsets from -82, so parameterising them changed
+  nothing and then moved the whole block at once. `Atr_StackPriceText` and `Atr_ItemPriceText`
+  are positioned from Lua for the first time, which is why they had to join `ATR_SELL_GEOM`.
+- **The tooltip is wired onto `Atr_SellControls_Tex`** from the layout, not the XML — the button
+  is shared with the panel's other tabs, the same reason the rest of this layout is built in
+  Lua. Nothing is clobbered: the XML gives that button `OnClick` and the two drag handlers, no
+  hover. An empty box shows nothing, since `Atr_ShowRecTooltip` has no link to open.
+- **`Atr_ShowRecTooltip` resolves its owner per call**, not once: `Atr_Idle` re-runs it every
+  frame while the tooltip is up, and `SetOwner` on a hidden frame anchors nothing. It picks the
+  drop box when that is *visible* — `IsVisible`, not `IsShown`, because a shown child of a
+  hidden parent still reports `IsShown` — and the header icon otherwise.
 
-**Verified** by `luac5.1 -p` and by reading every path that shows the icon or the header name.
-**Not verified in-game** — in particular the hover's fit around the quality-coloured string
-(colour escapes are excluded from `GetStringWidth`, which is the assumption the width rests on)
-and the tooltip's `ANCHOR_RIGHT` placement now that its owner sits at x 6 rather than the
-icon's, so it opens further right across the header.
+**Left alone deliberately:** the emptied header band is *not* closed up. Raising the inventory
+into it would move the results block and the Current/Ledger tabs with it, which is a separate
+decision; `ATR_SELL_HB_Y` / `ATR_SELL_SF_Y` are where that would be tuned.
+
+**Verified** by `luac5.1 -p` and by reading every path that shows the icon, the price rows or the
+header name. **Not verified in-game** — the vertical arithmetic in the left column is the part
+to look at first: the caption now sits between the box and the "Buyout Price" label with 8px of
+clearance, computed from assumed `GameFontNormalSmall` metrics rather than measured.
 
 ---
 
