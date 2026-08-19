@@ -115,10 +115,26 @@ end
 
 function module.Widget:SetMatch(itemObj, Tooltip)
 	module.CurrentMatch = { itemObj.isBloodforged, itemObj.isHeroic, itemObj.isMythic, itemObj.isAscended, itemObj.isWorldforged }
-	module:Debug("Exceptionaltem: " .. "true" and itemObj.isBloodforged or "false"
-		.. "," .. "true" and itemObj.isHeroic or "false"
-		.. "," .. "true" and itemObj.isMythic or "false"
-		.. "," .. "true" and itemObj.isAscended or "false" .. " (" .. itemObj.link .. ")")
+	-- Operator precedence, fixed 2026-08. This line used to read
+	--   "Exceptionaltem: " .. "true" and itemObj.isBloodforged or "false" .. ...
+	-- and `..` binds tighter than `and`/`or`, so the whole thing collapsed to
+	-- (truthy string) and isBloodforged or (...) -- which handed Debug a raw BOOLEAN.
+	-- Concatenating that threw "attempt to concatenate a boolean value"
+	-- (Core/ModulesGUI.lua) from inside SetMatch, and SetMatch runs for every widget
+	-- at the top of EvaluateItem with no pcall anywhere up the chain -- so a single
+	-- forged drop took START_LOOT_ROLL down with it and the item was never
+	-- auto-rolled. On Ascension that is common loot, not an edge case.
+	--
+	-- It only fired while the trace was on (Prototypes:Debug returns early otherwise),
+	-- which made it a Heisenbug: turning tracing on to find out why a roll was missed
+	-- was itself what made the roll get missed. See
+	-- management/addons/passlootbis/BIND-CONFIRMS.md.
+	--
+	-- isWorldforged was missing from the line entirely; it is in CurrentMatch above
+	-- and in GetMatch below, so it belongs in the trace too.
+	module:Debug(string.format("Exceptionaltem: bloodforged=%s heroic=%s mythic=%s ascended=%s worldforged=%s (%s)",
+		tostring(itemObj.isBloodforged), tostring(itemObj.isHeroic), tostring(itemObj.isMythic),
+		tostring(itemObj.isAscended), tostring(itemObj.isWorldforged), tostring(itemObj.link)))
 end
 
 function module.Widget:GetMatch(RuleNum, Index)

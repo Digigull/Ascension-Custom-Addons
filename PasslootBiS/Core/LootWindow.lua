@@ -10,12 +10,14 @@ what, and who won).
 §8.6 note (SUPERSEDED, kept for context): the original concern was that on this
 client StaticPopups/overlays render BEHIND the Interface Options window, so the
 window was put on a high strata to avoid disappearing behind it. The window now
-sits on MEDIUM on purpose — see the strata comment in CreateLootWindow. Rendering
-under the Blizzard panels is the intended behaviour for a persistent log you leave
-open while playing, so what §8.6 treated as a failure mode is now the design. The
-old fallback (rendering the log on an options page instead) is therefore moot.
-(MEDIUM, not the LOW this first moved to: LOW is *also* where the action bars and
-unit frames live, and they drew straight through the window. See the same comment.)
+sits LOW on purpose — see the strata comment in CreateLootWindow. Rendering under
+the Blizzard panels is the intended behaviour for a persistent log you leave open
+while playing, so what §8.6 treated as a failure mode is now the design. The old
+fallback (rendering the log on an options page instead) is therefore moot.
+(It has been LOW → MEDIUM → LOW: MEDIUM cleared the action bars and unit frames,
+which share LOW, but put the window in front of the character sheet and the auction
+house. The current placement pairs LOW with a high frame level, which the first LOW
+placement did not have. Same comment has the whole history.)
 
 All addon state lives here (the runtime log + persistence + redraw); the module
 only parses chat and pushes events in via LootTracker_Record / LootTracker_OpenRoll.
@@ -412,27 +414,33 @@ function PasslootBiS:CreateLootWindow()
 	-- singleton window that never needs click-to-raise, so dropping the flag gives
 	-- 0 spikes on drag. (see DRAGFREEZE note — the "0 spikes" cure)
 	--
-	-- MEDIUM strata + a fixed high frame level: this is a persistent floating log you
-	-- leave open while playing, so it should sit UNDER the default Blizzard panels
-	-- (bags, character sheet, world map — HIGH and above) the way a damage meter does,
-	-- rather than covering them. Note this reverses the original §8.6 choice in the
-	-- file header, which put the window high specifically so it would not disappear
-	-- behind the Interface Options window — that is now the accepted, intended
-	-- behaviour: the log is not something you read while configuring the addon.
+	-- LOW strata + a fixed high frame level (WINDOW_STRATA_UNDER_PANELS, Core/PassLoot.lua):
+	-- this is a persistent floating log you leave open while playing, so it should sit
+	-- UNDER anything you are actually interacting with, the way a damage meter does,
+	-- rather than covering it. Note this reverses the original §8.6 choice in the file
+	-- header, which put the window high specifically so it would not disappear behind
+	-- the Interface Options window — that is now the accepted, intended behaviour: the
+	-- log is not something you read while configuring the addon.
 	--
-	-- It was on LOW for exactly that reason and had to come up one step: LOW is also
-	-- where Blizzard's action bars and unit frames live, and they are toplevel, so
-	-- clicking one lifted it over the log. The strata + level pair lives in
-	-- Core/PassLoot.lua (ApplyWindowChrome) — read the comment there before changing
-	-- it; the level is what keeps a bar addon on the same strata from drawing through.
+	-- Superseded, and worth reading before "fixing" this back: the window sat on LOW,
+	-- came up to MEDIUM because Blizzard's toplevel bars and unit frames share LOW and
+	-- lifted over it on a click, and has now gone back down — because MEDIUM turned
+	-- out to put it in front of the character sheet and the auction house, which take
+	-- MEDIUM's default level and only raise when clicked (owner's report 2026-08).
+	-- Covering a panel you are using is the worse of the two, so LOW wins.
 	--
-	-- Safe on MEDIUM only because there is no SetToplevel above: a toplevel window
-	-- would restack the MEDIUM strata on every drag, the same mechanism as the HIGH
+	-- What is different this time is the frame level. The old LOW placement had no
+	-- level of its own, so the bars beat it at rest; 100 clears their resting levels,
+	-- and only an actual CLICK on an overlapping bar or unit frame can still lift one
+	-- in front. If that turns out to be worse in practice than what it fixed, drop the
+	-- second argument here and the window is back on MEDIUM.
+	--
+	-- Safe on either strata only because there is no SetToplevel above: a toplevel
+	-- window would restack its strata on every drag, the same mechanism as the HIGH
 	-- freeze. That is also why ToggleLootWindow no longer calls Raise(): Raise() IS
-	-- that restack, cheap on a sparse strata like the old LOW but not on a populated
-	-- one. The fixed level gives the same front-on-open for free, and — like Raise()
-	-- — cannot cross strata, so the window still stays under the Blizzard panels.
-	PasslootBiS:ApplyWindowChrome(f)
+	-- that restack. The fixed level gives the same front-on-open for free, and — like
+	-- Raise() — cannot cross strata, so the window still stays under the panels.
+	PasslootBiS:ApplyWindowChrome(f, PasslootBiS.WINDOW_STRATA_UNDER_PANELS)
 	PasslootBiS:ApplyDarkBackdrop(f)   -- shared house chrome (Core/PassLoot.lua)
 	f:EnableMouse(true)
 	f:SetMovable(true)
@@ -537,10 +545,12 @@ function PasslootBiS:ToggleLootWindow(show)
 	if (show) then
 		self:LootWindow_Render()
 		f:Show()
-		-- Front-of-strata on open without a restack. Deliberately NOT f:Raise() — on
-		-- MEDIUM that is the drag-freeze pass; re-asserting the window's own level
-		-- reorders nothing (see ApplyWindowChrome in Core/PassLoot.lua).
-		self:ApplyWindowChrome(f)
+		-- Front-of-strata on open without a restack. Deliberately NOT f:Raise() — that
+		-- is the drag-freeze pass itself; re-asserting the window's own strata + level
+		-- reorders nothing (see ApplyWindowChrome in Core/PassLoot.lua). The strata
+		-- argument has to be repeated here: this re-applies the window's chrome, so
+		-- leaving it off would quietly promote the window back to MEDIUM on every open.
+		self:ApplyWindowChrome(f, PasslootBiS.WINDOW_STRATA_UNDER_PANELS)
 	else
 		f:Hide()
 	end

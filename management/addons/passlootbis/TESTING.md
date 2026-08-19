@@ -82,15 +82,31 @@ The whole point: a greed roll on boss loot should no longer stop for a click.
 
 5. Run a dungeon. On a **BoP** boss drop that your "Catch All → Greed" rule covers,
    the roll should be cast and confirmed with **no popup left on screen**.
+   - Make a point of watching a **Bloodforged / Heroic / Mythic / Ascended** drop go
+     past with the trace on. That combination used to throw and skip the roll
+     entirely (`Modules/ExceptionalItem.lua`); it should now trace one
+     `(ExceptionalItem) Exceptionaltem: bloodforged=... ` line and roll normally.
 6. If a popup still appears, `/plbisdebug` immediately and copy it out. The lines to
    look for in `[Trace]`:
-   - `CONFIRM_LOOT_ROLL: auto-confirming roll N` — we answered it; if a popup is
-     still up, the hide failed rather than the confirm.
-   - `not our roll, leaving the popup` — that was a **manual** roll, which is meant
-     to keep its prompt. Not a bug.
+   - `CONFIRM_LOOT_ROLL: auto-confirming roll N (addon-cast)` — we answered it; if a
+     popup is still up, the hide failed rather than the confirm.
+   - `... (hand-cast)` — a roll **you** clicked. Also answered now; the prompt no
+     longer survives just because the click was yours.
+   - `... (addon-cast, link changed)` / `... (addon-cast, roll no longer live)` — the
+     prompt was answered, but our ledger and the client disagree about that rollID.
+     Nothing depends on it any more, so nothing breaks — report it anyway, it is the
+     open question in `BIND-CONFIRMS.md`.
    - **no `CONFIRM_LOOT_ROLL` line at all** — the event never reached us, and my
      whole diagnosis is wrong. That is the most valuable failure to report.
+   - **no lines at all for an item that dropped** — evaluation threw before the first
+     `Checking rule`. That is what a forged drop used to do while tracing was on
+     (`BIND-CONFIRMS.md`, second round); a **red Lua error** on screen is the tell,
+     and it is worth pasting whatever the error says even if the run looks fine.
 7. Multi-drop: a boss dropping several BoP items at once should need **zero** clicks.
+   - Then roll **Greed by hand** on a BoP drop your rules passed on. That prompt
+     should answer itself too — the behaviour this round added — and the trace line
+     should read `(hand-cast)`. A **disenchant** rolled by hand still asks; that one
+     is deliberate.
 
 ### C. The pickup-bind popup (same setting, on by default now)
 8. Nothing to tick — **Auto-Confirm Bind Popups** covers this prompt too. If you

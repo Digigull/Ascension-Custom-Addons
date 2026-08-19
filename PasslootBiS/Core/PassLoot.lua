@@ -7,11 +7,11 @@ local LDB = LibStub:GetLibrary("LibDataBroker-1.1")
 local rollQueue = {}
 
 -- Rolls THIS ADDON cast, as RollID -> the item link that was up when we cast.
--- Read by the CONFIRM_LOOT_ROLL handler so the bind warning is auto-answered only
--- for rolls the addon made on your behalf. A Need you clicked yourself keeps its
--- "this will bind to you" prompt -- that is the stock client's safety net on a
--- deliberate action, and silently removing it is not what auto-rolling was asked
--- to do.
+-- Read by the CONFIRM_LOOT_ROLL handler, which no longer GATES on it: every
+-- Need/Greed bind prompt is answered now, hand-cast ones included (the why is on
+-- that handler). What this still buys is the trace -- "addon-cast" vs "hand-cast"
+-- on the auto-confirm line, which is the first question any "why did it roll that?"
+-- report has to answer.
 --
 -- The value is the LINK, not `true`, because rollIDs are recycled within a session.
 -- A mark left behind by a cast that never drew a confirm (any non-BoP roll) would
@@ -469,9 +469,11 @@ end
 -- AutoConfirmBinds governs, because it is not an independent decision -- it only
 -- ever changes what happens to prompts this addon is already answering. With
 -- auto-confirm on, letting the queue show at once means anything we deliberately do
--- NOT answer (a roll you cast by hand, a disenchant) appears immediately instead of
--- waiting behind a popup that is about to be hidden. With it off, the client's own
--- behaviour is what the user asked for, so we put the bit back.
+-- NOT answer (a disenchant) appears immediately instead of waiting behind a popup
+-- that is about to be hidden -- and, more to the point since hand-cast rolls are
+-- answered too, that several BoP drops at once are all answered in the same breath
+-- rather than one popup per click. With it off, the client's own behaviour is what
+-- the user asked for, so we put the bit back.
 function PasslootBiS:SetExclusiveConfirmPopupBit()
 	if (StaticPopupDialogs and StaticPopupDialogs.CONFIRM_LOOT_ROLL) then -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
 		if (self.db.profile.AutoConfirmBinds) then
@@ -1358,8 +1360,14 @@ end
 -- MEDIUM, not LOW: LOW is where Blizzard's action bars and unit frames live, and
 -- they are toplevel, so clicking one restacks LOW and lifts it over anything of ours
 -- sitting there. MEDIUM clears them and still leaves the window UNDER the Blizzard
--- panels on HIGH and above (bags, character sheet, world map), which is the layering
--- custom UI is expected to take.
+-- panels on HIGH and above (bags, world map), which is the layering custom UI is
+-- expected to take.
+--
+-- The catch, found in the field 2026-08: the character sheet and the auction house
+-- are NOT on HIGH. They take the default MEDIUM and they only raise within it when
+-- you CLICK them, so a panel opened by keybind or by an NPC sits at its default low
+-- level and this window's 100 covers it. A window you want under those panels needs
+-- WINDOW_STRATA_UNDER_PANELS below, not a lower level here.
 --
 -- The level matters as much as the strata: bar addons (Bartender among them) default
 -- to MEDIUM too, and within one strata the higher frame level wins. Blizzard's frames
@@ -1379,9 +1387,29 @@ end
 PasslootBiS.WINDOW_STRATA = "MEDIUM"
 PasslootBiS.WINDOW_LEVEL = 100
 
-function PasslootBiS:ApplyWindowChrome(frame)
+-- One step down, for a window that must never cover a Blizzard panel you are
+-- interacting with. Owner's call 2026-08, on the Loot Rolls window specifically: it
+-- was drawing over the character sheet and the auction house, both of which sit on
+-- MEDIUM at a low level (see above), and a log you leave open all session has no
+-- business in front of a panel you are actively using.
+--
+-- The frame level stays 100, and that is the half that was missing the last time this
+-- window lived on LOW. LOW at a default level put it under Blizzard's bars and unit
+-- frames outright; at 100 it clears their resting levels.
+--
+-- The residual cost, stated because it is the reason this is not the house default:
+-- Blizzard's bars and unit frames are `toplevel` on LOW, and a toplevel raise beats
+-- any fixed level, so CLICKING one where it overlaps this window will lift it in
+-- front until something restacks. That is a narrower failure than covering the
+-- character sheet, but it is not nothing — if it bites, moving a window back is one
+-- argument at its ApplyWindowChrome call.
+PasslootBiS.WINDOW_STRATA_UNDER_PANELS = "LOW"
+
+-- `strata` overrides WINDOW_STRATA for one window (pass WINDOW_STRATA_UNDER_PANELS);
+-- the level is shared, since it means the same thing on either strata.
+function PasslootBiS:ApplyWindowChrome(frame, strata)
 	if not frame or type(frame.SetFrameStrata) ~= "function" then return frame end
-	frame:SetFrameStrata(self.WINDOW_STRATA)
+	frame:SetFrameStrata(strata or self.WINDOW_STRATA)
 	if type(frame.SetFrameLevel) == "function" then
 		frame:SetFrameLevel(self.WINDOW_LEVEL)
 	end
@@ -1988,17 +2016,44 @@ function PasslootBiS:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
 	if (type(RollID) ~= "number" or RollMethod == self.RollMethod.de) then
 		return
 	end
-	-- Only rolls the addon itself cast (see CastRolls). The event fires for a roll
-	-- you clicked by hand too, and answering that one for you would remove a prompt
-	-- the client puts on a deliberate action -- a different feature from the one
-	-- being asked for here, and not one anybody opted into.
+	-- EVERY Need/Greed bind prompt is answered, whoever cast the roll.
+	--
+	-- Superseded: this used to be scoped to rolls the addon itself cast (CastRolls),
+	-- on the argument that a Need or Greed you clicked by hand should keep the
+	-- client's "are you sure" prompt, because the client puts it on a deliberate
+	-- action. Field report from a full dungeon run: the popup still had to be clicked
+	-- several times, and the trace was three "not our roll, leaving the popup" lines
+	-- with no auto-confirm anywhere. The pickup prompt's reasoning (LOOT_BIND_CONFIRM
+	-- below) applies here word for word -- the box only appears because you chose that
+	-- roll, so "yes" has been the answer in every case that has come up -- and a
+	-- setting that reads "answer bind prompts for me" but answers only the half of
+	-- them the addon cast itself is exactly the half-working switch this file already
+	-- merged three boxes to stop shipping.
+	--
+	-- Disenchant is still never folded in: it returns above and keeps the per-rule
+	-- Confirm DE opt-in (Modules/ConfirmDE.lua).
+	--
+	-- CastRolls survives the change as a TRACE ledger rather than a gate. Whether the
+	-- prompt followed our own cast is the first thing a "why did this roll happen?"
+	-- question needs, and the three not-ours cases are worth telling apart because
+	-- they read very differently: no ledger entry is a genuine hand roll; a live link
+	-- that no longer matches means the rollID was recycled between the cast and the
+	-- prompt; a nil link means the roll went away underneath us. If auto-rolled BoP
+	-- loot ever prompts again, that word is the whole diagnosis.
 	local cast = self.CastRolls[RollID]
-	if (not cast or cast ~= GetLootRollItemLink(RollID)) then
-		self:Debug("CONFIRM_LOOT_ROLL " .. RollID .. ": not our roll, leaving the popup")
-		return
+	local live = GetLootRollItemLink(RollID)
+	local origin
+	if (not cast) then
+		origin = "hand-cast"
+	elseif (cast == live) then
+		origin = "addon-cast"
+	elseif (not live) then
+		origin = "addon-cast, roll no longer live"
+	else
+		origin = "addon-cast, link changed"
 	end
 	self.CastRolls[RollID] = nil
-	self:Debug("CONFIRM_LOOT_ROLL: auto-confirming roll " .. RollID)
+	self:Debug("CONFIRM_LOOT_ROLL: auto-confirming roll " .. RollID .. " (" .. origin .. ")")
 	self:ConfirmRollOnce(RollID, RollMethod)
 end
 

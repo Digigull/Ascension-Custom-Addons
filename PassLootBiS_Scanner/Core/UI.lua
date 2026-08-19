@@ -66,6 +66,16 @@ ns.UI = UI
 -- A MEDIUM + SetToplevel window would restack the MEDIUM strata on every drag, the
 -- same mechanism as the HIGH freeze.
 --
+-- NOTE (2026-08 field finding, recorded here because it reads as a surprise): "the
+-- Blizzard panels" is not one layer. Bags are HIGH and the Interface Options window
+-- is DIALOG, so MEDIUM does stay under those -- but the character sheet and the
+-- auction house take MEDIUM's own default level and only raise within it when you
+-- CLICK them, so a MEDIUM window at level 100 sits in FRONT of them when they are
+-- opened by keybind or by an NPC. The two windows where that mattered were moved down
+-- to LOW (the PassLoot Loot Rolls window and the cpp meter, both persistent logs left
+-- open while playing). These stay on MEDIUM by the owner's call: they are windows you
+-- open deliberately, use, and close, not ones parked on screen all session.
+--
 -- NOTE: this is for windows that are fine being covered by the Blizzard panels. It
 -- is deliberately NOT used for two kinds of window in this addon:
 --   * the debug copy box (Core/Scanner.lua) -- a copy/paste popup you open to

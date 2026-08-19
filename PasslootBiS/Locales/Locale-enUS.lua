@@ -9,16 +9,19 @@ L["Add this filter."] = true
 -- General options: the one bind-confirm switch (Core/PassLoot.lua,
 -- CONFIRM_LOOT_ROLL + LOOT_BIND_CONFIRM). It replaced three boxes -- roll, pickup,
 -- and the popup-queue bit -- so the tooltip has to say all three things it now
--- does, and the two it still deliberately does NOT do (hand-cast rolls,
--- disenchant), because those are what a user reads this tooltip to find out.
+-- does, and the one it still deliberately does NOT do (disenchant), because that is
+-- what a user reads this tooltip to find out. Hand-cast rolls used to be on that
+-- "does not" list and are now covered too; see the CONFIRM_LOOT_ROLL handler.
 L["Auto-Confirm Bind Popups"] = true
-L["AutoConfirmBinds_Desc"] = [=[Automatically answer Accept on the "this item will bind to you" warning -- both the one the addon's own Need/Greed roll raises, and the one you get taking a bind-on-pickup item out of a loot window.
+L["AutoConfirmBinds_Desc"] = [=[Automatically answer Accept on the "this item will bind to you" warning -- the one a Need or Greed roll raises, and the one you get taking a bind-on-pickup item out of a loot window.
 
 Without this, an auto-roll on BoP loot stops at that popup and waits for a click -- which is most of what a boss drops, so it looks like the rule did not fire at all.
 
-It also lets the client show several of these prompts at once instead of queueing them one at a time, so anything not answered for you appears straight away.
+Rolls you click yourself are answered too, not just the addon's own. The prompt only appears because you already chose that roll, and having to click it again a few times a run was the whole reason this exists.
 
-Two things it does not touch. A Need or Greed you click yourself still asks, as it always did. Disenchant rolls still use the per-rule Confirm DE filter, which asks you first.
+It also lets the client show several of these prompts at once instead of queueing them one at a time, so a boss dropping several BoP items needs no clicks at all.
+
+One thing it does not touch: disenchant rolls still use the per-rule Confirm DE filter, which asks you first.
 
 Careful: accepting binds the item to you permanently.]=]
 L["Available Filters"] = true
