@@ -730,6 +730,53 @@ function PasslootBiS:BiSListRuleKeySet(base)
 	return set
 end
 
+-- Is this item on a BiS list that is CURRENTLY ROLLING, and if so which list?
+-- The host half of BiS Check: an advisor cannot see the BiS list (it lives in these
+-- rules), so this answer is put on the roll ctx for it (see ProcessLootRoll).
+--
+-- "Currently rolling" is the rule entries, not BiSManage. BiSManage is the full
+-- imported list including items the user has unticked, and an unticked item never
+-- produces a roll to warn about — warning on it would be noise about a decision the
+-- user already made.
+--
+-- Exception entries (the tuple's 3rd field) are skipped: an exception means "match
+-- everything EXCEPT this", so the item is explicitly NOT wanted and is the opposite
+-- of a BiS pick.
+--
+-- Deliberately uncached. It runs a handful of times per boss, costs one pass over
+-- the rules with an early exit, and allocates nothing — where a cache would need
+-- invalidating from import, Apply, delete, every rule edit and every profile
+-- switch, and would answer stale exactly when the user had just fixed their list.
+function PasslootBiS:IsBiSItem(id, name)
+	local rules = self.db and self.db.profile and self.db.profile.Rules
+	if type(rules) ~= "table" then return false, nil end
+	local idKey = id and tostring(id) or nil
+	if not idKey and not name then return false, nil end
+
+	for i = 1, #rules do
+		local rule = rules[i]
+		local base = rule and baseFromDesc(rule.Desc)
+		if base then
+			if idKey and type(rule.ItemIDs) == "table" then
+				for _, tuple in ipairs(rule.ItemIDs) do
+					if not tuple[3] and tostring(tuple[1]) == idKey then return true, base end
+				end
+			end
+			if name and type(rule.Items) == "table" then
+				for _, tuple in ipairs(rule.Items) do
+					-- Exact-match entries only. A BiS list only ever emits "Exact" names
+					-- (BiSImport invariant), and a substring rule the user hand-added to
+					-- the same list is not a BiS pick for a specific item.
+					if not tuple[3] and tuple[2] == "Exact" and tuple[1] == name then
+						return true, base
+					end
+				end
+			end
+		end
+	end
+	return false, nil
+end
+
 -- Gather ALL of a BiS list's items for the manager view. When the list has stored
 -- `mgr` metadata (the normal case) that is the membership — every item, whether or
 -- not it currently rolls — each tagged with `.rolls` (is it in the rules now?).
@@ -1628,7 +1675,14 @@ function PasslootBiS:OnEnable()
 	-- flipping the option takes effect immediately with no re-registration dance.
 	self:RegisterEvent("LOOT_BIND_CONFIRM")
 	self:RegisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
-	self:RegisterEvent("PLAYER_ENTERING_WORLD", "ClearItemCache")
+	self:RegisterEvent("PLAYER_ENTERING_WORLD", "OnEnteringWorld")
+	-- End-of-run watch for BiS Check's cleanup suggestion (Core/BiSCleanup.lua).
+	-- Two events for one question ("did the zone change?"), because neither fires on
+	-- every route out of an instance; the handler de-duplicates on the zone name.
+	-- PLAYER_ENTERING_WORLD is the OTHER half and is handled via OnEnteringWorld --
+	-- AceEvent keeps ONE handler per event per object, so registering it a second
+	-- time here would silently REPLACE the item-cache reset rather than add to it.
+	self:RegisterEvent("ZONE_CHANGED_NEW_AREA", "BiSCleanup_ZoneCheck")
 	-- events that require the event details and also fire with BAG_UPDATE
 	C_Hook:Register(self, "BAG_ITEM_REMOVED, BAG_ITEM_COUNT_CHANGED")
 
@@ -1655,6 +1709,7 @@ function PasslootBiS:OnDisable()
 	self:UnregisterEvent("LOOT_BIND_CONFIRM")
 	self:UnregisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
 	self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+	self:UnregisterEvent("ZONE_CHANGED_NEW_AREA")
 	-- events that require the event details and also fire a BAG_UPDATE
 	C_Hook:Unregister(self, "BAG_ITEM_REMOVED, BAG_ITEM_COUNT_CHANGED")
 	self:UnregisterEvent("START_LOOT_ROLL")
@@ -1758,6 +1813,15 @@ end
 
 function PasslootBiS:ClearItemCache(...)
 	QueueOperations["reset"] = true
+end
+
+-- The single PLAYER_ENTERING_WORLD handler. Two unrelated things want that event
+-- and AceEvent stores exactly ONE handler per event per object, so a second
+-- RegisterEvent for it replaces the first instead of adding to it. Anything else
+-- that comes to need this event belongs in here, not in another RegisterEvent.
+function PasslootBiS:OnEnteringWorld(...)
+	self:ClearItemCache(...)
+	self:BiSCleanup_ZoneCheck()
 end
 
 function PasslootBiS:ASCENSION_STORE_COLLECTION_ITEM_LEARNED(Event, ID, ...)
@@ -1912,13 +1976,21 @@ function PasslootBiS:ProcessLootRoll(RollID, rollTime, ItemLink, attempt)
 		-- or auto-cast, casting exactly ONE RollOnLoot via QueueRoll. The whole gate is
 		-- pcall-wrapped so a buggy advisor can never break the roll: on abstain / error
 		-- / advisory mode we queue the rule-computed RollMethod exactly as before.
+		-- isBiS/bisList are the host's half of BiS Check: the BiS list lives HERE, in
+		-- the rules, and an advisor has no way to see it. The scanner reads these off
+		-- ctx to decide whether a low score is worth warning about at all (a lesser
+		-- item that was never on your list is just loot, not a mistake).
+		local IsBiS, BiSList = self:IsBiSItem(itemObj and itemObj.id, itemObj and itemObj.name)
 		local ctx = {
 			itemLink = ItemLink,
+			itemName = itemObj and itemObj.name or nil,
 			rollID   = RollID,
 			slot     = itemObj and itemObj.equipSlot or nil,
 			canNeed  = CanRoll.need and true or false,
 			canGreed = CanRoll.greed and true or false,
 			canDe    = CanRoll.de and true or false,
+			isBiS    = IsBiS,
+			bisList  = BiSList,
 			passlootDecision = RollMethod and RollMethodKey[RollMethod] or nil,
 		}
 		-- "Before Advisor" (the rightmost checkbox on the rule list): a rule ticked
@@ -1930,8 +2002,16 @@ function PasslootBiS:ProcessLootRoll(RollID, rollTime, ItemLink, attempt)
 		local Rule = RuleID and self.db.profile.Rules[RuleID]
 		local BeforeAdvisor = (Rule and Rule.BeforeAdvisor and RollMethod ~= nil) and true or false
 		local handled = false
-		if self.API and not BeforeAdvisor then
-			local ok, res = pcall(self.HandleRoll, self, RollID, rollTime, itemObj, RollMethod, ctx)
+		-- The gate is now consulted even for a Before Advisor rule, and told about the
+		-- tick rather than being skipped for it. BiS Check (Core/RollAdvisor.lua) has
+		-- to outrank Before Advisor, and it cannot outrank a gate it never reaches --
+		-- the stale-BiS rolls it exists to stop come from BiS-imported rules, which
+		-- ship with Before Advisor already ticked. HandleRoll honours the tick itself,
+		-- immediately below its veto, so every other rule keeps beating the advisor
+		-- exactly as before.
+		if self.API then
+			local ok, res = pcall(self.HandleRoll, self, RollID, rollTime, itemObj, RollMethod, ctx,
+				BeforeAdvisor)
 			handled = ok and res
 		end
 		if not handled and RollMethod and RollMethod ~= nil then

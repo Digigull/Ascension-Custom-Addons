@@ -22,6 +22,7 @@ Core\Slots.lua
 Core\SpecWeights.lua
 Core\Filter.lua
 Core\Verdict.lua
+Core\WonLedger.lua
 
 # --- Optional integrations (guarded global reads). MUST load before Scanner,
 #     which captures ns.Auctionator as a load-time local (nil if loaded later). ---

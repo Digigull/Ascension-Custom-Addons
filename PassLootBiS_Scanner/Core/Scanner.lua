@@ -40,6 +40,7 @@ local Filter      = ns.Filter
 local Alert       = ns.Alert
 local Auctionator = ns.Auctionator
 local Verdict     = ns.Verdict
+local WonLedger   = ns.WonLedger
 
 local ScaledStats  -- resolved from LibStub at login
 
@@ -161,6 +162,76 @@ function ns.setSpec(class, spec)
 end
 
 ----------------------------------------------------------------------
+-- BiS-list membership + the run's win ledger (BiS Check)
+----------------------------------------------------------------------
+-- The BiS list belongs to PasslootBiS, not to us. Two ways to reach the answer,
+-- in order of trust:
+--   1. the roll ctx the host puts on the advisor call -- authoritative, already
+--      computed, and the only one available mid-roll for free;
+--   2. host.API:IsBiSItem(id, name) -- for the scanner's own alert path, which is
+--      driven off a link with no ctx anywhere near it.
+-- Both guarded: PasslootBiS is an OptionalDep, so with no host at all this simply
+-- answers false and BiS Check never fires (there is no BiS list to be stale).
+
+local function itemIdFromLink(link)
+	if type(link) ~= "string" then return nil end
+	local id = link:match("|Hitem:(%d+)")
+	return id and tonumber(id) or nil
+end
+
+function ns.isBiSItem(link, name, ctx)
+	if type(ctx) == "table" and ctx.isBiS ~= nil then
+		return ctx.isBiS and true or false
+	end
+	local host = rawget(_G, "PasslootBiS")
+	if not (host and host.API and type(host.API.IsBiSItem) == "function") then
+		return false
+	end
+	local ok, isBiS = pcall(host.API.IsBiSItem, host.API, itemIdFromLink(link), name)
+	return (ok and isBiS) and true or false
+end
+
+-- Loot-message patterns, built once at login from the client's own globals so the
+-- match follows whatever locale is running. Order matters -- see WonLedger.
+local lootPatterns
+
+local function buildLootPatterns()
+	if lootPatterns then return lootPatterns end
+	lootPatterns = {}
+	-- The "...x3." stacked forms MUST come first: the plain form's (.+) would
+	-- otherwise capture the count along with the link.
+	local formats = {
+		rawget(_G, "LOOT_ITEM_SELF_MULTIPLE"),
+		rawget(_G, "LOOT_ITEM_PUSHED_SELF_MULTIPLE"),
+		rawget(_G, "LOOT_ITEM_SELF"),
+		rawget(_G, "LOOT_ITEM_PUSHED_SELF"),
+	}
+	for i = 1, #formats do
+		local p = WonLedger and WonLedger.toPattern(formats[i])
+		if p then lootPatterns[#lootPatterns + 1] = p end
+	end
+	return lootPatterns
+end
+
+-- Record an item that just entered YOUR bags, so the rest of the run compares
+-- against it. Deliberately hooked on receipt rather than on winning a roll: master
+-- loot, personal loot and a free-for-all pickup all end the same way, and this
+-- catches every route in one place.
+--
+-- An item with no equipLoc (trash, reagents, quest items) scores nothing and is
+-- dropped by WonLedger.record, so no filtering is needed here.
+local function recordWin(link)
+	if not (WonLedger and ScaledStats) then return end
+	local weights = currentWeights()
+	if not weights then return end
+	local name, _, _, _, _, _, subType, _, equipLoc = GetItemInfo(link)
+	if not equipLoc or equipLoc == "" then return end
+	if not Slots.slotsFor(equipLoc) then return end
+	local stats = ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
+	WonLedger.record(equipLoc, Score.scoreItem(stats, weights), link, name)
+end
+
+----------------------------------------------------------------------
 -- The compare flow
 ----------------------------------------------------------------------
 
@@ -218,7 +289,11 @@ end
 -- two can never disagree. Returns a compare table, or nil if there's no roll link.
 -- `scannable` is false for non-equippable slots or when no spec weights are picked
 -- (then isUpgrade=false, delta=0); the gold flag is still evaluated in both cases.
-local function compareRoll(rollID)
+-- `ctx` is the host's roll context (PasslootBiS ProcessLootRoll), present only on
+-- the advisor path. Its isBiS field is the ONLY way this addon can know an item is
+-- on a BiS list -- that list lives in the host's rules. On the scanner's own alert
+-- path there is no ctx, so we ask the host directly through its published API.
+local function compareRoll(rollID, ctx)
 	local link = GetLootRollItemLink(rollID)
 	if not link then return nil end
 
@@ -233,6 +308,7 @@ local function compareRoll(rollID)
 	end
 
 	local name, _, _, _, _, itemType, subType, _, equipLoc, texture = GetItemInfo(link)
+	local isBiS = ns.isBiSItem(link, name, ctx)
 	local slotIds = Slots.slotsFor(equipLoc)
 	local weights = currentWeights()
 	-- Per-character armor/weapon filter: an unchecked category scores 0 (never an
@@ -240,19 +316,49 @@ local function compareRoll(rollID)
 	local scored = (not Filter) or Filter.isScored(itemType, subType, charFilter(), equipLoc)
 
 	local isUpgrade, delta = false, 0
+	local down                    -- BiS-downgrade info for Verdict.build, or nil
 	if slotIds and weights and scored then
 		local rollScore = scoreRollItem(rollID, weights, subType, equipLoc)
 		-- Weapons/off-hands use the loadout rule (1H vs 2H, dual wield); everything
 		-- else uses the worst equipped in the slot group as the target (§6.2).
 		local target = ns.weaponEquippedValue(equipLoc, weights)
+		-- What you already WON this run counts as equipped for the compare, or the
+		-- second shoulder of a run still reads as an upgrade over the shoulders you
+		-- are technically still wearing (Core/WonLedger.lua has the full why).
+		local wins = WonLedger and WonLedger.winsFor(equipLoc)
 		if target == nil then
 			local scores = {}
 			for i, slotId in ipairs(slotIds) do
 				scores[i] = scoreEquipped(slotId, weights, subType, equipLoc)
 			end
+			if wins then scores = WonLedger.applyWins(scores, wins) end
 			target = Slots.worstEquipped(scores)
+		elseif wins then
+			-- Hand slots come back from the loadout rule as ONE already-resolved
+			-- number, not a per-slot list, so the displacement model has nothing to
+			-- displace. Raising the single bar is the honest approximation here: it
+			-- can under-warn on a dual-wield pair (a win in one hand lifts the bar for
+			-- both) but never over-warns, which is the right way round for a check
+			-- whose false positive costs you an item.
+			local best = WonLedger.bestFor(equipLoc)
+			if best and best.score > target then target = best.score end
 		end
 		isUpgrade, delta = Score.verdict(rollScore, target, db.threshold)
+
+		-- BiS Check (the third reason; see Verdict.build). Only ever raised for an
+		-- item the HOST says is on a currently-rolling BiS list -- a lesser item that
+		-- was never on your list is just loot, not a mistake worth interrupting for.
+		--
+		-- Strictly below the target, not merely "under the upgrade threshold": an item
+		-- scoring +1% against a +3% threshold is not an upgrade but it is not a
+		-- downgrade either, and vetoing that roll would be wrong.
+		if isBiS and not isUpgrade and rollScore > 0 then
+			local d = Score.deltaFraction(rollScore, target)
+			if d < 0 then
+				local best = WonLedger and WonLedger.bestFor(equipLoc)
+				down = { delta = d, wonName = best and best.name or nil }
+			end
+		end
 	end
 
 	-- Optional high-value flag (Phase 4; guarded -- nil if no Auctionator fork).
@@ -269,6 +375,8 @@ local function compareRoll(rollID)
 		texture   = texture,
 		equipLoc  = equipLoc,
 		bop       = bop,
+		isBiS     = isBiS,
+		down      = down,
 		scannable = (slotIds ~= nil),
 		hadWeights = (weights ~= nil),
 		filtered  = (slotIds ~= nil) and (not scored),  -- excluded by the char filter
@@ -307,7 +415,7 @@ local function evaluateRoll(rollID)
 		slotName = slotName,
 		delta    = r.isUpgrade and r.delta or nil,
 		goldText = r.goldFlag and r.goldFlag.text or nil,
-		isBiS    = false,   -- TODO: mark BiS picks from an imported list (§6.3)
+		isBiS    = r.isBiS, -- from the host's BiS list (§6.3); see ns.isBiSItem
 	}, db)
 end
 
@@ -323,9 +431,9 @@ end
 
 local API = {}
 
-function API:GetRollVerdict(rollID)
+function API:GetRollVerdict(rollID, ctx)
 	if not db or not db.enabled then return nil end
-	local r = compareRoll(rollID)
+	local r = compareRoll(rollID, ctx)
 	if not r then return nil end
 	-- Two independent reasons to advise a roll, with DIFFERENT scope:
 	--   * stat upgrade  -- gated by the equip filter + a scannable slot + weights.
@@ -336,8 +444,20 @@ function API:GetRollVerdict(rollID)
 	--     compareRoll). This is INDEPENDENT of the character's equip filter and of
 	--     equippability: a BoE weapon of any type, a recipe, a trade good worth gold
 	--     is still worth greeding. So it must NOT be filter-gated.
+	--   * downgrade    -- BiS Check. Set only for an item the host says is on a
+	--     currently-rolling BiS list AND that scores below what it would replace
+	--     (compareRoll). Unlike the two above it is a reason NOT to roll, and the
+	--     host treats it as a veto rather than an invitation.
 	local goldText = r.goldFlag and r.goldFlag.text or nil
-	return Verdict.build(r.isUpgrade, r.delta, goldText)
+	return Verdict.build(r.isUpgrade, r.delta, goldText, r.down)
+end
+
+-- End the current run: drop everything the win ledger collected. Called by the
+-- host when the zone changes (Core/BiSCleanup.lua), which is where "a run" is
+-- defined -- the scanner does not watch zones itself, so the host's suggestion
+-- window and this ledger can never disagree about when the run ended.
+function API:EndRun()
+	if WonLedger then WonLedger.clear() end
 end
 
 -- Readiness snapshot for a host that wants to SHOW whether the scanner can
@@ -413,6 +533,9 @@ ef:RegisterEvent("ADDON_LOADED")
 ef:RegisterEvent("PLAYER_LOGIN")
 ef:RegisterEvent("START_LOOT_ROLL")
 ef:RegisterEvent("CANCEL_LOOT_ROLL")
+-- Feeds the run's win ledger (BiS Check): what actually landed in your bags this
+-- run is what the rest of the run gets compared against.
+ef:RegisterEvent("CHAT_MSG_LOOT")
 
 local function scannerOnEvent(_, event, arg1)
 	if event == "ADDON_LOADED" then
@@ -442,6 +565,12 @@ local function scannerOnEvent(_, event, arg1)
 		pcall(evaluateRoll, arg1)
 	elseif event == "CANCEL_LOOT_ROLL" then
 		if Alert and Alert.Hide then Alert.Hide() end
+	elseif event == "CHAT_MSG_LOOT" then
+		-- pcall for the same reason START_LOOT_ROLL has one: a scoring error here
+		-- must never surface as a Lua error on every item you pick up.
+		local link = WonLedger and
+			WonLedger.linkFromLootMessage(arg1, buildLootPatterns()) or nil
+		if link then pcall(recordWin, link) end
 	end
 end
 

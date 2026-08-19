@@ -455,3 +455,27 @@ L["AdvisorStatus_ValueNoData_Tip"] = "Auctionator is loaded but has no prices ye
 L["AdvisorStatus_ValueReady_Tip"] = "Auction prices are available, so items worth gold are flagged even when they are not an upgrade."
 L["AdvisorStatus_PricesLine"] = "Prices known: %s items"
 L["AdvisorStatus_GoldLine"] = "Flags items worth %dg or more"
+
+-- BiS Check (2026-08): the roll advisor's third reason -- an item that is on your
+-- BiS list but scores BELOW what you would replace, so the rule is about to Need
+-- something worse than you already have. Core/RollAdvisor.lua vetoes the roll and
+-- shows the held-confirm window with this headline; Core/BiSCleanup.lua offers the
+-- end-of-run tidy-up. Keep the headline SHORT -- it shares one line with a down
+-- arrow in a window only 220px wide by default.
+L["RollAdvisor_BiSDowngrade"] = "BiS, but lower"
+L["AdvisorStatus_BiSLabel"] = "BiS Check"
+L["AdvisorStatus_BiSNoList"] = "No BiS list"
+L["AdvisorStatus_BiSNoList_Tip"] = "Nothing to check against: no BiS list is imported, so no roll can be a stale BiS pick. Import one on the Import BiS page."
+L["AdvisorStatus_BiSNoSpec_Tip"] = "No stat weights are selected, so nothing can be scored -- and a downgrade cannot be spotted without a score. Pick a spec with /plbisscan spec."
+L["AdvisorStatus_BiSReady_Tip"] = "A roll on a BiS-list item that scores below what you would replace is held for you instead of auto-rolled -- including on rules ticked Before Advisor."
+L["AdvisorStatus_BiSListsLine"] = "BiS lists watched: %d"
+
+-- The end-of-run cleanup suggestion (Core/BiSCleanup.lua). It only ever unticks
+-- "auto-roll" -- the item stays on the list -- and the wording has to make that
+-- plain, or accepting it reads as deleting your BiS list.
+L["BiSCleanup_Title"] = "BiS list looks out of date"
+L["BiSCleanup_Blurb"] = "These items are on your BiS list but scored below your gear this run. Untick them so they stop auto-rolling? They stay on the list either way."
+L["BiSCleanup_Apply"] = "Stop rolling these"
+L["BiSCleanup_Keep"] = "Keep them"
+L["BiSCleanup_More"] = "...and %d more."
+L["BiSCleanup_Done"] = "BiS Check: stopped auto-rolling on %d item(s). They are still on the list -- re-tick them in the BiS Manager."
