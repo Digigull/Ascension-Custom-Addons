@@ -604,9 +604,18 @@ generous cap plus a documented pruning rule (oldest first) over silent eviction,
 mean DB's random eviction (`FRAMEWORK.md` §5 — it destroyed the ordering there and cannot be
 undone). Decide the cap before writing rows, not after the file gets large.
 
-**Scope question still open:** whether the first version covers vendor buy/sell and mail, or
-auction house activity only. That is the difference between one event source and five, and it
-decides whether the Ledger ships in one pass or two.
+**Scope, answered by the owner 2026-08-19: auction house activity only for v1.** One event
+source instead of five, so the Ledger ships in one pass. Concretely v1 records the buy loop's
+purchases, the sale/expiry/cancellation mail path and the deposit paid at post time — and leaves
+vendor buy/sell and the merchant window alone.
+
+Two things that follow, and both are cheap now and expensive later:
+
+- **The `src` tag ships in v1 anyway** even though only auction-house values are ever written to
+  it. It is one field, and adding it later means every existing row has an unknowable source.
+- **"Vendor" rows are absent, not zero.** Nothing in v1 should compute a total that silently
+  assumes vendor activity did not happen; a report that says "auction house only" is honest,
+  one that says "profit" is not.
 
 This item is the prerequisite for items 8 and 9. Build it first.
 
@@ -1364,6 +1373,11 @@ to become visible.
   Alchemy window before any manual-yield UI is written.
 - **Item 4:** **learn the stats, don't seed them.** No static stat list — the addon remembers
   what it has seen and offers that from then on.
+- **Item 6:** the toggle goes in the **Finder options panel**, not the control row — that row is
+  full (see the item).
+- **Item 12 part 1:** **option B** — the scan keeps the item's real name and the variant rides in
+  the lookup key, so a bucket split can never invent a price-database row.
+- **Item 7:** **auction house activity only for v1.** Vendor and mail are a later pass.
 
 ## Still open
 
