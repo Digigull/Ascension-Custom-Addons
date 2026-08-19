@@ -73,6 +73,26 @@ function Atr_Craft_ReagentPrice(id, name)
     return price;
 end
 
+-- RECIPE YIELD ---------------------------------------------------------------
+
+-- How many items one craft of trade skill row i produces.  The ONE place
+-- GetTradeSkillNumMade is read, so the harvest, the live cost and the profit
+-- sort can never disagree about a recipe's yield -- they each used to read it
+-- for themselves.
+--
+-- The function returns minMade, maxMade.  We use minMade, deliberately: for a
+-- variable-yield recipe (1-3 gems) costing at the low end overstates the
+-- per-item cost, which is the safe direction to be wrong in.  On the recipe
+-- that prompted the multi-output work -- Distilled Flask of the Unyielding --
+-- the client reports min = max = 3, so the choice does not bite there;
+-- /atrprofsort prints both returns so a row where it would can be spotted.
+function Atr_Craft_RowYield(i)
+    if (type(GetTradeSkillNumMade) ~= "function") then return 1; end
+    local made = tonumber((GetTradeSkillNumMade(i))) or 1;   -- extra parens: minMade only
+    if (made < 1) then made = 1; end
+    return made;
+end
+
 -- ENCHANTING -----------------------------------------------------------------
 --
 -- Enchanting is the one profession whose recipes produce no item, and that is
@@ -231,12 +251,7 @@ function Atr_Craft_Harvest()
                     madeID = ItemID and tonumber((ItemID(madeLink))) or nil;   -- extra parens: ItemID returns 3 values
                 end
                 if (madeID) then
-                    local made = 1;
-                    if (GetTradeSkillNumMade) then
-                        local lo = GetTradeSkillNumMade(i);
-                        made = tonumber(lo) or 1;
-                        if (made < 1) then made = 1; end
-                    end
+                    local made = Atr_Craft_RowYield(i);
 
                     local reagents = {};
                     local numR = GetTradeSkillNumReagents and GetTradeSkillNumReagents(i) or 0;
@@ -315,9 +330,27 @@ function Atr_Craft_GetCraftCost(link, name)
         total = total + Atr_Craft_VellumCost(rec.vellum);
     end
 
+    -- The yield, and the one place it can be a guess.  A record harvested from
+    -- a RECIPE ITEM's tooltip carries made = 1 by assumption, because a recipe
+    -- tooltip never prints the yield (see Atr_Craft_HarvestRecipeTooltip).  For
+    -- those records -- and only those -- ask the open profession window what
+    -- the recipe really makes.  Without this, a multi-output craft whose recipe
+    -- the player happened to hover reports the cost of a WHOLE craft against
+    -- ONE item's sale price: precisely the mismatch multi-output recipes were
+    -- reported with.  A window-harvested record read the real API and is left
+    -- alone, and with no window open the live lookup returns nil, so the
+    -- assumption simply stands as before.
     local made = rec.made or 1;
+    if (rec.byTooltip) then
+        local live = Atr_Craft_LiveYieldForItem(link, name);
+        if (live) then made = live; end
+    end
     if (made < 1) then made = 1; end
-    return math.floor(total / made);
+
+    -- Second return is the yield: a caller showing the figure to a human needs
+    -- to be able to say "each" rather than leave per-item and per-craft numbers
+    -- looking like they belong to the same craft.
+    return math.floor(total / made), made;
 end
 
 -- True when we have a harvested recipe for this item at all, regardless of
@@ -493,10 +526,14 @@ end
 -- disables the feature and falls straight back to the stock list rather than
 -- leaving a broken window.
 --
--- Profit per item = the produced item's auction price (Atr_GetAuctionPrice)
--- minus what its reagents cost, divided by the recipe's yield.  Reagent cost
--- goes through Atr_Craft_ReagentPrice at the top of this file -- the one cascade
--- the Crafted Goods Margin filter uses too, so the two never drift apart.
+-- Profit per CRAFT = (the produced item's auction price, Atr_GetAuctionPrice,
+-- minus its per-item reagent cost) times the recipe's yield.  One craft is what
+-- the ranking compares, because one craft is what a press of Create costs you
+-- and earns you; a recipe making 3 at 12g each beats one making 1 at 20g.  The
+-- yield is printed on the row whenever it is more than 1, so the figure is
+-- never mistaken for a per-item one.  Reagent cost goes through
+-- Atr_Craft_ReagentPrice at the top of this file -- the one cascade the Crafted
+-- Goods Margin filter uses too, so the two never drift apart.
 --
 -- Two rows do not fit that sentence and are handled where it says so above:
 --   * An ENCHANT has no produced item, so its market price is looked up under
@@ -506,21 +543,20 @@ end
 --     whatever GetTradeSkillNumMade says; `/atrprofsort <name>` prints both of
 --     that function's returns so a suspect row can be checked against reality.
 
--- Per-item craft COST for trade-skill row i, in copper, read live from the open
--- window, or nil when a reagent can't be priced.  Independent of the produced
--- item's own market price, so the craft-cost tooltip can show a cost even for an
--- item that has never been on the AH.  Global for the harness.
+-- Per-item craft COST for trade-skill row i, in copper, or nil when a reagent
+-- can't be priced.  Read live from the open window, and independent of the
+-- produced item's own market price, so the craft-cost tooltip can show a cost
+-- even for an item that has never been on the AH.
+--
+-- Returns  cost, made  -- the cost is PER ITEM (the reagent total divided by the
+-- yield) and `made` is that yield, so a caller rendering the number for a human
+-- can label which of the two scales it is on.  Global for the harness.
 function Atr_ProfSort_RowCost(i)
     if (type(GetTradeSkillInfo) ~= "function") then return nil; end
     local _, skillType = GetTradeSkillInfo(i);
     if (skillType == "header") then return nil; end
 
-    local made = 1;
-    if (type(GetTradeSkillNumMade) == "function") then
-        local lo = GetTradeSkillNumMade(i);
-        made = tonumber(lo) or 1;
-        if (made < 1) then made = 1; end
-    end
+    local made = Atr_Craft_RowYield(i);
 
     local numR = (type(GetTradeSkillNumReagents) == "function") and (GetTradeSkillNumReagents(i) or 0) or 0;
     if (numR == 0) then return nil; end
@@ -541,12 +577,14 @@ function Atr_ProfSort_RowCost(i)
         total = total + Atr_Craft_VellumCost(Atr_Craft_VellumKind((GetTradeSkillInfo(i))));
     end
 
-    return math.floor(total / made);
+    return math.floor(total / made), made;
 end
 
 -- Per-item craft profit for trade-skill row i, in copper, or nil when it can't
 -- be totalled (not a real recipe, unpriced produced item, or any reagent we
--- can't price).  Returns  profit, cost, sell  so a caller can show the parts.
+-- can't price).  Returns  profit, cost, sell, made  -- the first three PER ITEM
+-- and `made` the recipe's yield, so a caller can present per-craft figures
+-- without reading the yield a second time and risking a different answer.
 -- Global so the mock-WoW harness can unit-test the maths without a real window.
 function Atr_ProfSort_RowProfit(i)
     if (type(GetTradeSkillInfo) ~= "function") then return nil; end
@@ -565,23 +603,21 @@ function Atr_ProfSort_RowProfit(i)
     local sell = (Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(sellName)) or nil;
     if (sell == nil or sell <= 0) then return nil; end   -- no market price to rank on
 
-    local cost = Atr_ProfSort_RowCost(i);
+    local cost, made = Atr_ProfSort_RowCost(i);
     if (cost == nil) then return nil; end
 
-    return (sell - cost), cost, sell;
+    return (sell - cost), cost, sell, (made or 1);
 end
 
--- Craft cost for a produced item, read LIVE from the open profession window by
--- matching the item to the recipe that makes it.  Returns  cost, found  where
--- found is true when a matching recipe row exists at all (so the tooltip can
--- say "cost unknown" rather than nothing when the row is there but a reagent
--- isn't priced).  This is the reliable path on the Ascension client, where the
--- background harvest into AUCTIONATOR_CRAFT_RECIPES can miss recipes whose
--- reagent item links come back nil.  Global for the harness.
-function Atr_Craft_LiveCostForItem(link, name)
-    if (type(GetNumTradeSkills) ~= "function") then return nil, false; end
+-- The index of the row in the OPEN profession window that makes this item, or
+-- nil when no window is open or nothing in it makes the item.  Split out of
+-- Atr_Craft_LiveCostForItem because the yield is wanted from the same row and
+-- by the same three-way match; two copies of the match would be two chances to
+-- answer differently for the same item.  Global for the harness.
+function Atr_Craft_FindRowForItem(link, name)
+    if (type(GetNumTradeSkills) ~= "function") then return nil; end
     local n = GetNumTradeSkills() or 0;
-    if (n <= 0) then return nil, false; end
+    if (n <= 0) then return nil; end
 
     local wantID;
     if (type(link) == "number") then
@@ -608,28 +644,65 @@ function Atr_Craft_LiveCostForItem(link, name)
             if (not matched and name and madeName and Atr_Craft_ScrollName(madeName) == name) then
                 matched = true;
             end
-            if (matched) then
-                return Atr_ProfSort_RowCost(i), true;   -- cost may be nil (a reagent unpriced), but the recipe exists
-            end
+            if (matched) then return i; end
         end
     end
-    return nil, false;
+    return nil;
 end
 
--- Walk the open trade skill and return  order, profitByIndex  where order is a
--- list of REAL skill indices (headers dropped) ranked profit-descending, and
--- profitByIndex maps each of those indices to its per-item profit (nil =
--- unpriceable).  Priced recipes rank above every unpriceable one; ties and
--- unpriceable rows keep their original list order (a stable sort).  Global for
--- the harness.
+-- Craft cost for a produced item, read LIVE from the open profession window by
+-- matching the item to the recipe that makes it.  Returns  cost, found, made
+-- where found is true when a matching recipe row exists at all (so the tooltip
+-- can say "cost unknown" rather than nothing when the row is there but a
+-- reagent isn't priced) and made is that recipe's yield.  This is the reliable
+-- path on the Ascension client, where the background harvest into
+-- AUCTIONATOR_CRAFT_RECIPES can miss recipes whose reagent item links come back
+-- nil.  Global for the harness.
+function Atr_Craft_LiveCostForItem(link, name)
+    local i = Atr_Craft_FindRowForItem(link, name);
+    if (i == nil) then return nil, false; end
+
+    local cost, made = Atr_ProfSort_RowCost(i);   -- cost may be nil (a reagent unpriced), but the recipe exists
+    return cost, true, (made or Atr_Craft_RowYield(i));
+end
+
+-- How many items one craft of this item's recipe makes, read live from the open
+-- profession window, or nil when no open row makes it.  The authority a stored
+-- record's ASSUMED yield defers to (see Atr_Craft_GetCraftCost).  Global for the
+-- harness.
+function Atr_Craft_LiveYieldForItem(link, name)
+    local i = Atr_Craft_FindRowForItem(link, name);
+    if (i == nil) then return nil; end
+    return Atr_Craft_RowYield(i);
+end
+
+-- Walk the open trade skill and return  order, profitByIndex, madeByIndex where
+-- order is a list of REAL skill indices (headers dropped) ranked
+-- profit-descending, profitByIndex maps each of those indices to its profit
+-- (nil = unpriceable) and madeByIndex to the recipe's yield.  Priced recipes
+-- rank above every unpriceable one; ties and unpriceable rows keep their
+-- original list order (a stable sort).  Global for the harness.
+--
+-- THE PROFIT HERE IS PER CRAFT, NOT PER ITEM.  That is the figure one press of
+-- Create actually earns, and it is the only one that ranks two recipes fairly
+-- against each other: a flask that makes 3 at 12g each beats a potion that
+-- makes 1 at 20g, because the same single craft, off one set of reagents, is
+-- worth 36g rather than 20g.  Ranking on the per-item figure quietly answered a
+-- different question, and -- with nothing on the row saying which scale it was
+-- on -- read as the row disagreeing with itself on a multi-output recipe.
+-- Atr_ProfSort_RowProfit still returns per-item figures; the multiply is here,
+-- where the ranking decision lives.
 function Atr_ProfSort_BuildOrder()
     local n = (type(GetNumTradeSkills) == "function") and (GetNumTradeSkills() or 0) or 0;
-    local entries, profitByIndex = {}, {};
+    local entries, profitByIndex, madeByIndex = {}, {}, {};
     for i = 1, n do
         local _, skillType = GetTradeSkillInfo(i);
         if (skillType and skillType ~= "header") then
-            local p = Atr_ProfSort_RowProfit(i);
+            local p, _, _, made = Atr_ProfSort_RowProfit(i);
+            made = made or 1;
+            if (p ~= nil) then p = p * made; end
             profitByIndex[i] = p;
+            madeByIndex[i]   = made;
             entries[#entries + 1] = { index = i, profit = p, seq = #entries + 1 };
         end
     end
@@ -644,7 +717,7 @@ function Atr_ProfSort_BuildOrder()
 
     local order = {};
     for k, e in ipairs(entries) do order[k] = e.index; end
-    return order, profitByIndex;
+    return order, profitByIndex, madeByIndex;
 end
 
 -- Compact signed copper -> short coloured string ("+12g" / "-3s" / "+40c").
@@ -682,7 +755,8 @@ local Atr_ProfSort_OrigUpdate;                 -- saved stock TradeSkillFrame_Up
 local gProfSort_Check;                          -- the checkbox frame
 local gProfSort_Broken   = false;               -- a render error disables us for the session
 local gProfSort_Order    = nil;                 -- cached ranked index list
-local gProfSort_Profit   = nil;                 -- cached index -> profit map
+local gProfSort_Profit   = nil;                 -- cached index -> PER-CRAFT profit map
+local gProfSort_Made     = nil;                 -- cached index -> recipe yield
 local gProfSort_Sig      = nil;                 -- signature the cache was built for
 local gProfSort_InRemap  = false;               -- guards our own remap against re-entry
 local gProfSort_Suspend  = false;               -- true while expanding categories: skip the sort pass
@@ -731,7 +805,7 @@ local function Atr_ProfSort_Remap()
 
     local sig = Atr_ProfSort_Signature();
     if (sig ~= gProfSort_Sig or gProfSort_Order == nil) then
-        gProfSort_Order, gProfSort_Profit = Atr_ProfSort_BuildOrder();
+        gProfSort_Order, gProfSort_Profit, gProfSort_Made = Atr_ProfSort_BuildOrder();
         gProfSort_Sig = sig;
     end
     local order   = gProfSort_Order or {};
@@ -765,8 +839,17 @@ local function Atr_ProfSort_Remap()
                     math.floor((color.b or 1) * 255 + 0.5)) or "ffffff";
                 local shown = "|cff" .. hex .. base .. "|r";
 
+                -- The profit is for ONE CRAFT (see Atr_ProfSort_BuildOrder).  A
+                -- recipe that makes more than one gets its yield printed beside
+                -- the figure, so a row can never be read as a per-item number
+                -- when it is not one -- the mismatch that made multi-output
+                -- recipes look wrong on both this list and the tooltip.
                 local profit = gProfSort_Profit and gProfSort_Profit[realIndex];
-                if (profit ~= nil) then shown = shown .. "  " .. Atr_ProfSort_MoneyShort(profit); end
+                if (profit ~= nil) then
+                    shown = shown .. "  " .. Atr_ProfSort_MoneyShort(profit);
+                    local made = gProfSort_Made and gProfSort_Made[realIndex];
+                    if (made and made > 1) then shown = shown .. "|cff8888ffx" .. made .. "|r"; end
+                end
 
                 btn:SetText(shown);
 
@@ -866,7 +949,7 @@ end
 
 -- Re-rank and redraw now (e.g. right after the box is clicked).
 local function Atr_ProfSort_Refresh()
-    gProfSort_Order, gProfSort_Profit, gProfSort_Sig = nil, nil, nil;   -- force a rebuild
+    gProfSort_Order, gProfSort_Profit, gProfSort_Made, gProfSort_Sig = nil, nil, nil, nil;   -- force a rebuild
     if (type(TradeSkillFrame_Update) == "function") then TradeSkillFrame_Update(); end
 end
 
@@ -925,7 +1008,7 @@ if (type(CreateFrame) == "function") then
     cf:RegisterEvent("TRADE_SKILL_SHOW");
     cf:SetScript("OnEvent", function()
         Atr_ProfSort_CreateCheckbox();
-        gProfSort_Order, gProfSort_Profit, gProfSort_Sig = nil, nil, nil;   -- new window -> rebuild
+        gProfSort_Order, gProfSort_Profit, gProfSort_Made, gProfSort_Sig = nil, nil, nil, nil;   -- new window -> rebuild
         if (Atr_ProfSort_Enabled() and not gProfSort_Broken) then Atr_ProfSort_ExpandAll(); end
     end);
 end
@@ -1008,14 +1091,25 @@ if (SlashCmdList) then
                     local sell     = Atr_GetAuctionPrice and tonumber(Atr_GetAuctionPrice(sellName)) or nil;
                     local cost     = Atr_ProfSort_RowCost(i);
                     local profit   = Atr_ProfSort_RowProfit(i);
+                    local made     = Atr_Craft_RowYield(i);
 
                     add("    [" .. i .. "] " .. rname .. (isEnch and "   (enchant)" or ""));
                     add("        NumMade:  min=" .. tostring(lo) .. "  max=" .. tostring(hi)
                         .. "   (cost maths uses min)");
                     add("        sells as: " .. sellName);
-                    add("        sell=" .. Atr_ProfSort_Money(sell)
+                    add("        per item:    sell=" .. Atr_ProfSort_Money(sell)
                         .. "  cost=" .. Atr_ProfSort_Money(cost)
-                        .. "  profit=" .. Atr_ProfSort_Money(profit) .. "   (all per item)");
+                        .. "  profit=" .. Atr_ProfSort_Money(profit));
+                    -- BOTH scales, always, each labelled.  Printing one set of
+                    -- figures next to a yield left the reader to work out which
+                    -- scale they were on -- the whole multi-output confusion in
+                    -- a single line.  When the yield is 1 the two lines agree,
+                    -- which costs one line and settles the question outright.
+                    add("        per craft x" .. made .. ": sell="
+                        .. Atr_ProfSort_Money(sell and (sell * made) or nil)
+                        .. "  cost=" .. Atr_ProfSort_Money(cost and (cost * made) or nil)
+                        .. "  profit=" .. Atr_ProfSort_Money(profit and (profit * made) or nil)
+                        .. "   <- what the list ranks on");
                 end
             end
             if (shown == 0) then add("    (no open recipe matched)"); end
