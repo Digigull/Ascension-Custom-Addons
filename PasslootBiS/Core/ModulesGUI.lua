@@ -103,7 +103,12 @@ function PasslootBiS.Prototypes:AddWidget(Widget)
   -- table.sort(PasslootBiS.RuleWidgets, function(a, b) if ( a.PreferredPriority < b.PreferredPriority ) then return true end end)
   table.sort(PasslootBiS.RuleWidgets, function(a, b) if ( (a.Info[3] < b.Info[3]) or ((a.Info[3] == b.Info[3]) and (a.PreferredPriority < b.PreferredPriority)) ) then return true end end)
   Widget:ClearAllPoints()
-  Widget:SetPoint("TOP", PasslootBiS.RulesFrame.Settings, "BOTTOM", ((Widget.XPaddingLeft or 0) - (Widget.XPaddingRight or 0)) / 2, 83 - (Widget.YPaddingTop or 0))
+  -- Anchored under the filter lists' button row, NOT up from the settings box's
+  -- bottom edge as this used to be: that box no longer has a fixed height (it takes
+  -- whatever the options panel leaves below the rule list, Core/MainGUI.lua), so
+  -- anchoring to its bottom would slide the widget up into the filter lists. -27
+  -- from the filter boxes' bottom is exactly where this sat when the box was 298.
+  Widget:SetPoint("TOP", PasslootBiS.RulesFrame.Settings.AvailableFilters, "BOTTOM", ((Widget.XPaddingLeft or 0) - (Widget.XPaddingRight or 0)) / 2, -27 - (Widget.YPaddingTop or 0))
   Widget:SetParent(PasslootBiS.RulesFrame.Settings)
   Widget:Hide()
   PasslootBiS.PluginInfo[Module] = PasslootBiS.PluginInfo[Module] or {}

@@ -22,6 +22,13 @@ rules — one matched by item ID, one by exact name — which you can then edit 
 the Rules list like any other rule. Plain and compressed (`PLBIS1Z:`) strings are
 both accepted.
 
+A new list's rules land in the **Before Advisor** section at the top of the rule
+list, so your BiS picks are matched before any catch-all rule and before the roll
+advisor gets a say. Move them with Up/Down or untick the box if you would rather
+they didn't. Re-importing a list you already have, or re-applying a tick selection
+from the BiS Manager, rebuilds those rules where they stand and leaves both
+choices alone.
+
 Matching is deliberately restricted to item ID and exact name. It never emits
 ilvl, quality or stat filters, because link-derived stats are unreliable on this
 client for scaled instances.
@@ -48,6 +55,23 @@ it never rolls itself. Each advisor has a trust mode:
   roll window and holds the auto-roll; you click Need/Greed/Pass, or the timer
   expires and the rule-computed roll goes through
 - `trust` — the advisor's verdict is taken
+
+Any single rule can opt out of all of that with the **Before Advisor** checkbox at
+the right of its line in the rule list: when a rule ticked there matches and has a
+roll to cast, that roll goes out immediately and no advisor is consulted.
+
+The rule list shows this as two sections, which is also the order rules are tried
+in — top to bottom, first match wins:
+
+| Section | Numbered | What it is |
+|---|---|---|
+| **Before Advisor** | `01)` `02)` | Tried first, and rolled without asking the advisor |
+| **After Advisor** | `1)` `2)` | Everything else — the advisor gets its say on these |
+
+Each section is ordered on its own: Up and Down move a rule within its section, and
+the Before Advisor checkbox is what carries it across the divider. Ticking it lifts
+the rule to the bottom of the upper section; unticking drops it to the top of the
+lower one, so it keeps the neighbours it had.
 
 [PassLootBiS Scanner](../PassLootBiS_Scanner) is the reference consumer.
 

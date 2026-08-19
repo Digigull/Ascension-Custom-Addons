@@ -924,10 +924,12 @@ function PasslootBiS:ApplyBiSManager()
 		end
 	end
 
-	-- Rebuild the two rules from exactly the ticked items (empty lists -> no rule).
-	removeRuleByDesc(rules, base .. LIST_ID_SUFFIX)
-	removeRuleByDesc(rules, base .. LIST_NAME_SUFFIX)
+	-- Rebuild the two rules from exactly the ticked items. ApplyToRules rebuilds each
+	-- one WHERE IT STANDS and drops the one a now-empty list no longer needs, so this
+	-- keeps the priority the user gave the list and their Before Advisor tick --
+	-- deleting the rules here first (as this used to) threw both away on every apply.
 	BiS.ApplyToRules({ ids = ids, names = names, roll = roll, desc = base }, "replace", rules)
+	self:PartitionRules(rules) -- keep the two rule-list sections truthful
 
 	-- Selection committed; clear staging for this list.
 	self.BiSManagerStaging = self.BiSManagerStaging or {}
@@ -936,9 +938,14 @@ function PasslootBiS:ApplyBiSManager()
 	self.BiSManagerStatus = "|cff55ff55" ..
 		string.format(L["BiSManager_Applied"], rolled, #items, tostring(base)) .. "|r"
 
-	-- Keep the main rule-list selection valid, redraw it, then refresh this page.
-	if self.CurrentRule and self.CurrentRule > #rules then self.CurrentRule = nil end
-	if self.RulesFrame and self.Rules_RuleList_OnScroll then self:Rules_RuleList_OnScroll() end
+	-- Drop the main rule-list selection, redraw it, then refresh this page. Clearing
+	-- rather than clamping: rebuilding a list can add or drop a rule above the
+	-- selected one, and a highlight left on a shifted index points at the wrong rule.
+	self.CurrentRule = 0
+	if self.RulesFrame and self.Rules_RuleList_OnScroll then
+		self:Rules_RuleList_OnScroll()
+		self:DisplayCurrentRule()   -- clears the filter/description half for "no rule"
+	end
 	self:RefreshBiSManager()
 end
 
@@ -1546,12 +1553,11 @@ function PasslootBiS:DoBiSImport()
 	end
 	parsed.desc = base
 
-	-- Clean overwrite: drop any existing rules for this list first, so a re-import
-	-- with (say) no name items doesn't leave a stale "(Suffix)" rule behind. A
-	-- brand-new unique name matches nothing here.
-	removeRuleByDesc(rules, base .. LIST_ID_SUFFIX)
-	removeRuleByDesc(rules, base .. LIST_NAME_SUFFIX)
-
+	-- Clean overwrite is ApplyToRules' job now: it rebuilds a rule this list already
+	-- owns in place (keeping its priority and its Before Advisor tick) and drops the
+	-- one a re-import with, say, no name items no longer needs. A brand-new unique
+	-- name owns nothing, so its rules are new and land at the top of the list.
+	--
 	-- Build the initial roll rules. When the string carries `mgr` metadata we roll
 	-- only on items from roll-window sources (dungeon / raid / forged) — the rest
 	-- stay on the list as data (visible + toggleable in the BiS Manager) but off the
@@ -1567,6 +1573,7 @@ function PasslootBiS:DoBiSImport()
 	local ok = BiS.ApplyToRules(
 		{ ids = rollSet.ids, names = rollSet.names, roll = parsed.roll, desc = base },
 		"replace", rules)
+	self:PartitionRules(rules) -- keep the two rule-list sections truthful
 	if ok then
 		-- Stash this list's per-item manager metadata (ALL items — source + match
 		-- key) for the BiS Manager page. nil when the string carried no `mgr` block
@@ -1585,12 +1592,13 @@ function PasslootBiS:DoBiSImport()
 		self.BiSManagerStaging[base] = {}
 		self:RefreshBiSManager()
 
-		-- keep the rule-list selection valid, then redraw it
-		if self.CurrentRule and self.CurrentRule > #rules then
-			self.CurrentRule = nil
-		end
+		-- Drop the rule-list selection, then redraw it: an import inserts its rules at
+		-- the top, so every index below them has moved and a highlight left where it
+		-- was would point at the wrong rule.
+		self.CurrentRule = 0
 		if self.RulesFrame and self.Rules_RuleList_OnScroll then
 			self:Rules_RuleList_OnScroll()
+			self:DisplayCurrentRule()   -- clears the filter/description half for "no rule"
 		end
 	else
 		self:SetImportStatus(L["ImportBiS_Failed"], true)
@@ -1651,6 +1659,7 @@ function PasslootBiS:OnProfileChanged()
 	-- Now we check our rules to see if all variables are set.
 	-- We could check profile variables, but some modules need more than just setting defaults, they need to act on them.
 	self:CheckRuleTables()
+	self:PartitionRules() -- Before Advisor rules to the front; see the function's note
 	self:Rules_RuleList_OnScroll()
 	self:DisplayCurrentRule()
 	self:ResetCache()
@@ -1854,8 +1863,16 @@ function PasslootBiS:ProcessLootRoll(RollID, rollTime, ItemLink, attempt)
 			canDe    = CanRoll.de and true or false,
 			passlootDecision = RollMethod and RollMethodKey[RollMethod] or nil,
 		}
+		-- "Before Advisor" (the rightmost checkbox on the rule list): a rule ticked
+		-- there OUTRANKS the advisor. When such a rule matched AND produced a roll
+		-- method, roll it straight away and never consult the gate -- no popup, no
+		-- advisor auto-cast to argue with. A rule that matched but rolls nothing
+		-- (empty Loot, or nothing it wanted was allowed on this roll) has no decision
+		-- to defend, so the advisor still gets its turn.
+		local Rule = RuleID and self.db.profile.Rules[RuleID]
+		local BeforeAdvisor = (Rule and Rule.BeforeAdvisor and RollMethod ~= nil) and true or false
 		local handled = false
-		if self.API then
+		if self.API and not BeforeAdvisor then
 			local ok, res = pcall(self.HandleRoll, self, RollID, rollTime, itemObj, RollMethod, ctx)
 			handled = ok and res
 		end
@@ -2030,6 +2047,51 @@ function PasslootBiS:SeedDefaultRules()
 	for _, Rule in ipairs(self.DefaultRules or {}) do
 		table.insert(Profile.Rules, self:CopyTable(Rule))
 	end
+end
+
+-- Keep a rules array PARTITIONED: every rule ticked "Before Advisor" first, then
+-- everything else. That partition is not cosmetic -- it is what makes the rule
+-- list's two sections (Core/MainGUI.lua) the real roll order rather than a picture
+-- of one. Rules are evaluated top-down and the first match wins, so a rule that
+-- claims to be checked "before the advisor" has to actually sit above the rules
+-- that aren't.
+--
+-- The sort is STABLE, which is what gives ticking and unticking their obvious
+-- behaviour for free: a rule ticked at the bottom rises to the END of the Before
+-- Advisor block (below the ones already there, which it was below), and unticking
+-- one drops it to the HEAD of the block underneath (above the ones it was above).
+--
+-- `rules` defaults to the current profile's. Pass `TrackIndex` to follow one rule
+-- across the move: its new index comes back, so a caller can keep the selection on
+-- the rule the user was looking at instead of on whatever now holds that number.
+function PasslootBiS:PartitionRules(rules, TrackIndex)
+	rules = rules or self.db.profile.Rules
+	if (type(rules) ~= "table") then
+		return nil
+	end
+	local Tracked = TrackIndex and rules[TrackIndex]
+	local Before, After = {}, {}
+	for _, Rule in ipairs(rules) do
+		if (Rule.BeforeAdvisor) then
+			Before[#Before + 1] = Rule
+		else
+			After[#After + 1] = Rule
+		end
+	end
+	for Index = 1, #Before do
+		rules[Index] = Before[Index]
+	end
+	for Index = 1, #After do
+		rules[#Before + Index] = After[Index]
+	end
+	if (Tracked) then
+		for Index = 1, #rules do
+			if (rules[Index] == Tracked) then
+				return Index
+			end
+		end
+	end
+	return nil
 end
 
 -- We make sure each rule has a default value

@@ -316,6 +316,11 @@ end
 --        (Core/PasslootBiS.lua:106).
 --      * Rule schema: Desc (string) + Loot (array of roll strings), per
 --        PasslootBiS.DefaultTemplate / RollOrder (Core/Constants.lua:4-22).
+--      * BeforeAdvisor (bool) is the one flag the builders set: a BiS list's picks
+--        are the whole point of importing it, so its rules outrank the roll advisor
+--        out of the box (Core/PassLoot.lua ProcessLootRoll). It is a per-rule tick
+--        the user owns from there on -- ApplyToRules never re-asserts it over a rule
+--        that already exists.
 --    Conclusion: the builders below are CORRECT as written — no index changes
 --    were needed. See docs/protocol.md §8 and CLAUDE.md for the audit trail.
 --=============================================================================
@@ -333,9 +338,10 @@ function BiSImport.BuildIDRule(parsed)
     ItemIDs[#ItemIDs + 1] = { tostring(num), false, false } -- {idStr, unused, isException}
   end
   return {
-    Desc    = descFor(parsed, "(IDs)"),
-    Loot    = { parsed.roll },
-    ItemIDs = ItemIDs,
+    Desc          = descFor(parsed, "(IDs)"),
+    Loot          = { parsed.roll },
+    BeforeAdvisor = true,
+    ItemIDs       = ItemIDs,
   }
 end
 
@@ -346,9 +352,10 @@ function BiSImport.BuildNameRule(parsed)
     Items[#Items + 1] = { name, "Exact", false }           -- {name, matchMode, isException}
   end
   return {
-    Desc  = descFor(parsed, "(Suffix)"),
-    Loot  = { parsed.roll },
-    Items = Items,
+    Desc          = descFor(parsed, "(Suffix)"),
+    Loot          = { parsed.roll },
+    BeforeAdvisor = true,
+    Items         = Items,
   }
 end
 
@@ -466,30 +473,54 @@ end
 
 -- mode: "replace" (default) or "merge". Mutates `rules` in place.
 -- returns: ok(bool), message(string), rulesApplied(number)
+--
+-- Placement (protocol §7, extended):
+--   * A rule this list does NOT already own goes to the TOP of the array, in built
+--     order (IDs then Suffix). Rules are evaluated top-down and the first match wins,
+--     so a freshly imported BiS list is useless underneath a "Catch All" greed rule.
+--     Priority is the user's from then on -- Up/Down in the rule list moves it.
+--   * A rule this list DOES already own is rebuilt where it stands, keeping both the
+--     priority the user gave it and their Before Advisor tick. That is what makes
+--     re-importing a list, or re-applying a tick selection from the BiS Manager, a
+--     content update rather than a reset.
+--   * In replace mode a rule the list owns but no longer has items for is STALE and
+--     is removed here, so callers don't need to pre-clean (which would throw the two
+--     things above away).
 function BiSImport.ApplyToRules(parsed, mode, rules)
   mode = mode or "replace"
   if type(rules) ~= "table" then return false, "no rules table provided" end
 
+  -- desc is computed for both halves whether or not the half produced a rule: it is
+  -- the key for finding what a previous import of this same list left behind.
   local built = {
-    { rule = BiSImport.BuildIDRule(parsed),   dbkey = "ItemIDs", keyOf = KEY_ID },
-    { rule = BiSImport.BuildNameRule(parsed), dbkey = "Items",   keyOf = KEY_NAME },
+    { rule = BiSImport.BuildIDRule(parsed),   desc = descFor(parsed, "(IDs)"),
+      dbkey = "ItemIDs", keyOf = KEY_ID },
+    { rule = BiSImport.BuildNameRule(parsed), desc = descFor(parsed, "(Suffix)"),
+      dbkey = "Items",   keyOf = KEY_NAME },
   }
 
   local applied = 0
+  local insertAt = 1
   for _, b in ipairs(built) do
-    if b.rule then
-      local idx = findRuleByDesc(rules, b.rule.Desc)
-      local target
-      if mode == "merge" and idx then
-        mergeList(rules[idx], b.dbkey, b.rule[b.dbkey], b.keyOf)
-        rules[idx].Loot = rules[idx].Loot or b.rule.Loot
-        target = idx
-      else
-        -- replace: overwrite an existing same-Desc rule, else append
-        target = idx or (#rules + 1)
-        rules[target] = b.rule
+    local idx = findRuleByDesc(rules, b.desc)   -- re-found per half: an insert shifts indices
+    if not b.rule then
+      if mode == "replace" and idx then
+        table.remove(rules, idx)                -- stale leftover from an earlier import
       end
-      sortRuleList(rules[target], b.dbkey)
+    elseif mode == "merge" and idx then
+      mergeList(rules[idx], b.dbkey, b.rule[b.dbkey], b.keyOf)
+      rules[idx].Loot = rules[idx].Loot or b.rule.Loot
+      sortRuleList(rules[idx], b.dbkey)
+      applied = applied + 1
+    elseif idx then
+      b.rule.BeforeAdvisor = rules[idx].BeforeAdvisor and true or nil   -- the user's tick wins
+      rules[idx] = b.rule
+      sortRuleList(rules[idx], b.dbkey)
+      applied = applied + 1
+    else
+      table.insert(rules, insertAt, b.rule)
+      sortRuleList(rules[insertAt], b.dbkey)
+      insertAt = insertAt + 1
       applied = applied + 1
     end
   end
@@ -575,8 +606,9 @@ if rawget(_G, "BISIMPORT_SELFTEST") then
     "PLBIS1:v=1;roll=need;ids=100,100,200;names=Boots of the Beast|Boots of the Beast"))
   assertEq(#p7.ids, 2, "T7 ids"); assertEq(#p7.names, 1, "T7 names")
 
-  -- A1: ApplyToRules replace — two rules appended into an empty rules array,
-  -- lists sorted to PassLoot's on-disk order (string compare for IDs).
+  -- A1: ApplyToRules replace — two rules written into an empty rules array, IDs
+  -- first, lists sorted to PassLoot's on-disk order (string compare for IDs), and
+  -- Before Advisor ticked on both (an imported BiS list outranks the roll advisor).
   local rules = {}
   local okA, msgA, n = BiSImport.Import(t1, "replace", rules)
   assert(okA, "A1 ok"); assertEq(n, 2, "A1 applied")
@@ -585,6 +617,8 @@ if rawget(_G, "BISIMPORT_SELFTEST") then
   assertEq(#rules[1].ItemIDs, 11, "A1 ruleA ids"); assertEq(#rules[2].Items, 5, "A1 ruleB names")
   assertEq(rules[1].ItemIDs[1][1], "1414521", "A1 id sort (string compare, first)")
   assertEq(rules[1].Loot[1], "need", "A1 loot")
+  assertEq(rules[1].BeforeAdvisor, true, "A1 ruleA before advisor")
+  assertEq(rules[2].BeforeAdvisor, true, "A1 ruleB before advisor")
 
   -- A2: replace again onto the same array overwrites same-Desc rules (no dupes)
   local _, _, n2 = BiSImport.Import(t1, "replace", rules)
@@ -593,6 +627,40 @@ if rawget(_G, "BISIMPORT_SELFTEST") then
   -- A3: merge unions new ids into the existing ID rule, deduping
   BiSImport.Import("PLBIS1:v=1;roll=need;desc=Ranger/Archery P0;ids=279033,999999", "merge", rules)
   assertEq(#rules[1].ItemIDs, 12, "A3 merged unique id added (11 + 999999)")
+
+  -- A4: a NEW list lands at the TOP of an array that already has rules, IDs rule
+  -- first — rules are evaluated top-down and first match wins, so an imported list
+  -- underneath a catch-all greed rule would never fire.
+  local rules4 = { { Desc = "Not Usable" }, { Desc = "Catch All" } }
+  BiSImport.Import(t1, "replace", rules4)
+  assertEq(#rules4, 4, "A4 rule count")
+  assertEq(rules4[1].Desc, "Ranger/Archery P0 (IDs)", "A4 ids rule first")
+  assertEq(rules4[2].Desc, "Ranger/Archery P0 (Suffix)", "A4 suffix rule second")
+  assertEq(rules4[3].Desc, "Not Usable", "A4 existing rules pushed down")
+
+  -- A5: re-importing a list the array already owns rebuilds each rule WHERE IT
+  -- STANDS (the user's priority survives) and keeps their Before Advisor tick,
+  -- whichever way they set it. This is what makes a re-import a content update.
+  local rules5 = { { Desc = "Not Usable" },
+                   { Desc = "Ranger/Archery P0 (IDs)", ItemIDs = {}, BeforeAdvisor = nil },
+                   { Desc = "Catch All" },
+                   { Desc = "Ranger/Archery P0 (Suffix)", Items = {}, BeforeAdvisor = true } }
+  BiSImport.Import(t1, "replace", rules5)
+  assertEq(#rules5, 4, "A5 no rules added or dropped")
+  assertEq(rules5[2].Desc, "Ranger/Archery P0 (IDs)", "A5 ids rule kept its slot")
+  assertEq(#rules5[2].ItemIDs, 11, "A5 ids rule rebuilt")
+  assertEq(rules5[2].BeforeAdvisor, nil, "A5 unticked stays unticked")
+  assertEq(rules5[4].Desc, "Ranger/Archery P0 (Suffix)", "A5 suffix rule kept its slot")
+  assertEq(rules5[4].BeforeAdvisor, true, "A5 ticked stays ticked")
+
+  -- A6: replace with nothing left for one half drops that half's stale rule (the
+  -- callers used to pre-delete both rules for this, which cost A5's placement).
+  local rules6 = {}
+  BiSImport.Import(t1, "replace", rules6)
+  assertEq(#rules6, 2, "A6 two rules to start")
+  BiSImport.Import("PLBIS1:v=1;roll=need;desc=Ranger/Archery P0;ids=279033", "replace", rules6)
+  assertEq(#rules6, 1, "A6 name rule dropped when the list has no names left")
+  assertEq(rules6[1].Desc, "Ranger/Archery P0 (IDs)", "A6 ids rule survives")
 
   -- F1: the additive farm= block parses into ranked rows (shared cross-side
   -- vector — the converter's PLBIS1_FARM_EXPECTED). Display-only; ids/names
