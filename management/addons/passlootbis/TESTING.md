@@ -169,6 +169,23 @@ The veto needs one specific item to drop, so force the situation instead:
     gold "High Value", red "BiS, but lower". That is the cheapest way to check the
     down arrow renders.
 
+### H. The Usable trace line (round-2 fix — read one trace, no setup)
+25. With the trace on, let any dungeon's loot go past, then `/plbisdebug`. Every
+    item traces one `(Usable) Usable: N (...)` line, and **N must now vary**: it read
+    a hardcoded `2 (Usable)` for every item ever scanned, so the round-1 Dire Maul
+    trace showed the `Not Usable` rule matching three items the trace itself called
+    usable. The filter was right; only its report was wrong.
+26. On an item ruled unusable the line now carries `red line: <text>` — the tooltip
+    line the client painted in its unmet-requirement red, which is the whole basis
+    for the verdict. Two things to check it against:
+    - An **already-known recipe** or one needing a profession you lack should name
+      that requirement. Those are the easy confirmations that the capture works.
+    - **Anything you can plainly wear that comes back unusable** is the finding worth
+      reporting — the round-1 trace ruled `Nightshade Boots of the Slayer` (leather,
+      requires level 54) unusable on a level-60 leather-wearing Brigand, and greeded
+      it under the `Not Usable` rule. Copy the red line; it names whichever
+      requirement Ascension is failing, and there was no way to see it before.
+
 ## 3. What to send back
 
 `/plbisdebug` after any failure, copied whole. The report already carries the
@@ -188,7 +205,16 @@ What round 1 did not reach, highest-risk first:
   and solid; the *hide* assumes the client stores the slot/rollID as the dialog's
   `data`.
 - **`LOOT_ITEM_*` chat patterns** feeding the ledger, if Ascension reworded loot
-  messages.
+  messages. Round 1 is *not* evidence against them: the one item won that run was
+  `Jasper Link of the Arcane`, an intellect ring worth 0 to a Brigand, and
+  `WonLedger.record` drops a zero score on purpose. An empty `[This run]` there is
+  the designed behaviour, not a missed match — step E still needs gear the spec
+  actually scores.
+- **Why a wearable item reads as unusable.** Round 1 greeded a pair of level-54
+  leather boots on a level-60 leather wearer under the `Not Usable` rule. The
+  `red line:` capture added in step H exists to answer this; until a trace carries
+  one, it is unknown whether `Core/Cache.lua`'s red-text test is over-matching on
+  this client or Ascension really is refusing the item.
 - **`ZONE_CHANGED_NEW_AREA` timing** on the way out of an instance.
 - **`Interface\Buttons\Arrow-Down-Up`** existing in this build.
 - **The 21.9. Highest-priority unknown on this branch, and it may be an argument

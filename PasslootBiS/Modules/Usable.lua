@@ -107,19 +107,27 @@ function module.Widget:SetException(RuleNum, Index, Value)
 end
 
 function module.Widget:SetMatch(itemObj, Tooltip)
-	local Line, Text, Red, Green, Blue, Alpha
-	local Usable = 2 -- Choices 2 is usable
 	PasslootBiS:BuildTooltipCache(itemObj)
 	local cache = PasslootBiS.TooltipCache
 
-	-- Found on line 3 of most items
-	-- Found on line 4 or most items that are unique items
-	-- Found on line 4 of heroic/colorblind mode items
-	-- Found on line 5 of heroic/colorblind that are unique items
-	-- Found on line 7 of bop, unique mounts with level requirement and riding requirements (reins of the bronze drake)
-
+	-- There is no fixed line to read: the old comment here listed which tooltip line
+	-- the requirement lands on (3 normally, 4 for unique or heroic/colorblind, 5 for
+	-- both, 7 for a BoP unique mount with a riding requirement), which is exactly why
+	-- counting lines was abandoned. Core/Cache.lua instead paints the verdict off the
+	-- COLOUR while it scans -- any line the client renders in its unmet-requirement
+	-- red (255,32,32) makes the item unusable, wherever it sits.
+	--
+	-- The trace line used to print a hardcoded 2, so it read "Usable: 2 (Usable)" for
+	-- every item ever scanned, including the ones this very filter had just ruled
+	-- unusable. A Dire Maul trace (2026-08) therefore showed the "Not Usable" rule
+	-- matching three items the trace called usable -- the filter was right and only
+	-- its own report was wrong. Print what was decided, and name the red line that
+	-- decided it: "unusable" is an inference from a colour, and an inference you
+	-- cannot audit from a trace is one you end up debugging twice.
 	module.CurrentMatch = cache.usable and 2 or 3
-	module:Debug("Usable: " .. Usable .. " (" .. module:GetUsableText(Usable) .. ")")
+	module:Debug("Usable: " .. module.CurrentMatch ..
+		" (" .. module:GetUsableText(module.CurrentMatch) .. ")" ..
+		(cache.unusableLine and ("  red line: " .. tostring(cache.unusableLine)) or ""))
 end
 
 function module.Widget:GetMatch(RuleNum, Index)

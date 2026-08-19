@@ -25,6 +25,16 @@ local function getLine(Line)
 		local Red, Green, Blue, Alpha = Line:GetTextColor()
 		if ColorCheck(Red, Green, Blue, Alpha) then
 			PasslootBiS.TooltipCache.usable = false
+			-- Keep the FIRST red line verbatim, for the trace. "Unusable" here is an
+			-- inference from a colour, so a trace that prints only the verdict cannot be
+			-- checked: a Dire Maul run (2026-08) ruled a pair of leather boots unusable on
+			-- a leather-wearing character and left nothing to say which requirement the
+			-- client had painted red. Modules/Usable.lua appends this to its trace line.
+			-- First rather than last, because later reds are usually knock-on -- a missing
+			-- profession reddens the "Requires" line and the recipe's spell line both.
+			if not PasslootBiS.TooltipCache.unusableLine then
+				PasslootBiS.TooltipCache.unusableLine = text
+			end
 		end
 		return text and text or ""
 	else
@@ -40,6 +50,7 @@ function PasslootBiS:BuildTooltipCache(item)
 	cache.Left, cache.Right = {}, {}
 	cache.link = item.link
 	cache.usable = true
+	cache.unusableLine = nil
 
 	PasslootBiSTT:ClearLines()
 	PasslootBiSTT:SetHyperlink(item.link)
