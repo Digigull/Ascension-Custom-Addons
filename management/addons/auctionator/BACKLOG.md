@@ -807,7 +807,26 @@ not this one.
 **Agreed plan: do nothing until item 7 lands**, then read the ledger's intended-vs-delivered
 columns for a real case. Recorded here only so the observation is not lost.
 
----
+**Item 7 has landed, and this stays parked (owner, 2026-08-19)** — deliberately, until a case
+that reproduces consistently turns up. That is the right call: one remembered sighting cannot be
+debugged, and guessing at it would mean building a comparison against a bug nobody can trigger.
+
+**What changed anyway is that the waiting is now productive.** The ledger records both halves
+without being asked: a `buy` row carries what the buy loop *intended* — item, stack, unit price,
+at the moment it issued `PlaceAuctionBid` — and a `won` row carries what the mail *delivered*.
+The first real run through it (2026-08-19, six purchases of Linen Cloth) matched pair for pair,
+x14/x20/x20/x20/x3/x11 on both sides, which is what a healthy purchase looks like in this data.
+
+So when it happens again the evidence will already be sitting in `AUCTIONATOR_LEDGER`, and the
+question becomes a query rather than an investigation: find a `buy` row whose `won` counterpart
+names a different item. **Nothing needs to be built to keep collecting it.** What is not yet
+written is the comparison itself — pairing buys to their deliveries is this item's own work, and
+it should be written against a real mismatched pair rather than an imagined one.
+
+Worth knowing when that day comes: pairing is not trivial. The mail carries no reference to the
+auction it came from, so buys and deliveries can only be matched on item, quantity and time
+order — and a Postal Open All delivers a batch at once, which is exactly when the ordering is
+least reliable.
 
 ---
 
