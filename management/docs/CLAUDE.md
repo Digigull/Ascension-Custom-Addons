@@ -74,7 +74,8 @@ performance one. Current decisions:
 
 | Use | Strata | Examples |
 |---|---|---|
-| Persistent window left open while playing | `LOW` | cpp meter, PassLootBiS Loot Window, BiS Scanner options/filter |
+| Persistent window left open while playing | `LOW` | cpp meter, PassLootBiS Loot Window |
+| Window that must clear the action bars / unit frames | `MEDIUM` + frame level 100 | BiS Scanner options/filter |
 | Deliberately opened; copy/paste popups | `FULLSCREEN_DIALOG` | cpp export/detail/glossary, BiS Scanner debug box |
 | Opened from *inside* the Interface Options panel | `FULLSCREEN_DIALOG` | PassLootBiS BiS Manager |
 | Attached to a Blizzard panel | match that panel | Honor Tracker panel (`HIGH`) |
@@ -83,6 +84,13 @@ Rules behind the table:
 
 - Custom UI should generally render **under** the default Blizzard panels — `LOW` is the
   house default for anything you leave open.
+- **`LOW` does not clear the action bars or the unit frames.** Blizzard's bars and unit frames
+  are on `LOW` too (and they are `toplevel`, so clicking one lifts it over your window), and bar
+  addons such as Bartender default to `MEDIUM`. A window that must never be drawn through by a
+  health bar or an action button needs `MEDIUM` **and** a frame level well above its neighbours
+  (`ns.UI.WINDOW_LEVEL` = 100 in the Scanner) — within one strata the higher level wins.
+- **Nothing on `MEDIUM` or above may call `Raise()`.** The raise is the drag-freeze restack;
+  it is only cheap on a sparse strata. Use a fixed high frame level for front-on-open instead.
 - **Exception: notifications.** A toast exists to be noticed and usually fires while bags are
   open. `PassLootBiS_Scanner/Core/Alert.lua` deliberately stays high.
 - **Exception: copy/paste boxes.** You open them to read and select text from.

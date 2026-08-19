@@ -28,8 +28,13 @@ ever raised. So WINDOW_STRATA below is chosen purely for layering, NOT for safet
 If SetToplevel is ever added back, that stops being true immediately and the strata
 becomes load-bearing again -- which is the trap this file exists to prevent.
 
-Front-on-open, the one thing the flag did usefully provide, is kept explicitly via
-UI.raiseOnOpen() in each show path: one restack on open rather than one per drag.
+Front-on-open, the one thing the flag did usefully provide, is kept without any
+restack at all: applyWindowChrome() parks the window on a fixed high frame level
+inside its strata (UI.WINDOW_LEVEL), and UI.frontOnOpen() re-asserts that in each
+show path. Frame level is a per-frame property -- setting it moves one frame, it
+does not reorder the strata -- so it costs nothing, cold or warm. That replaced
+the earlier Raise()-on-open once the windows moved up to MEDIUM: Raise() IS the
+restack the freeze is made of, and MEDIUM is not a sparse strata.
 
 See management/docs/DRAG-FREEZE.md for the full write-up.
 
@@ -46,60 +51,80 @@ end
 local UI = {}
 ns.UI = UI
 
--- Strata for the addon's movable windows. LOW deliberately: it renders above the
--- 3D world but BELOW the default Blizzard panels (character sheet, bags, world map),
--- which is the expected behaviour for custom UI -- Blizzard's own windows should
--- come out on top. Same placement Details uses for its meters.
+-- Strata for the addon's movable windows. MEDIUM deliberately: LOW put them under
+-- the default action bars and unit frames (and under Bartender's bars), so a window
+-- parked anywhere near the bottom or the top-left of the screen was drawn through by
+-- health bars and buttons. MEDIUM clears both while still staying BELOW the Blizzard
+-- panels on HIGH and above (bags, and anything on DIALOG such as the Interface
+-- Options window), which is the layering custom UI is expected to take.
 --
 -- Strata order, low -> high:
 --   WORLD < BACKGROUND < LOW < MEDIUM < HIGH < DIALOG < FULLSCREEN < FULLSCREEN_DIALOG < TOOLTIP
 --
 -- This is a LAYERING choice, not a performance one, and it is only available
 -- because applyWindowChrome() does not set SetToplevel -- see the file header.
--- A LOW + SetToplevel window would restack the LOW strata on every drag, the same
--- mechanism as the HIGH freeze.
+-- A MEDIUM + SetToplevel window would restack the MEDIUM strata on every drag, the
+-- same mechanism as the HIGH freeze.
 --
--- NOTE: this is for windows that are fine being covered by Blizzard panels. It is
--- deliberately NOT used for two kinds of window in this addon:
+-- NOTE: this is for windows that are fine being covered by the Blizzard panels. It
+-- is deliberately NOT used for two kinds of window in this addon:
 --   * the debug copy box (Core/Scanner.lua) -- a copy/paste popup you open to
 --     select text from, so it must float above whatever is on screen.
 --   * the upgrade Alert (Core/Alert.lua) -- a transient notification whose whole
 --     job is to be noticed; behind open bags while looting it would be missed.
 --
 -- Pure data, so it is offline-inspectable; applyWindowChrome() is the guarded wrapper.
-UI.WINDOW_STRATA = "LOW"
+UI.WINDOW_STRATA = "MEDIUM"
 
--- Apply the drag-safe strata to a movable window. Use this instead of
+-- Frame level inside that strata. Strata alone is not enough on MEDIUM: action bar
+-- addons (Bartender among them) default to MEDIUM too, and within one strata the
+-- higher frame level wins. Blizzard's own frames and the bar addons sit in the low
+-- single digits there, so 100 clears them with room to spare while staying under the
+-- client's per-strata level ceiling.
+--
+-- This is also what gives us front-on-open for free: a fixed level above the
+-- neighbours means the window is already in front, with no Raise() and therefore no
+-- strata restack. See the file header.
+UI.WINDOW_LEVEL = 100
+
+-- Apply the drag-safe strata + level to a movable window. Use this instead of
 -- SetFrameStrata("HIGH") + SetToplevel(true) on any hand-rolled window -- that
 -- pairing is the drag-freeze.
 --
+-- levelBump (optional) offsets the frame level for a window that has to sit above
+-- another window of ours rather than merely above the game's UI: two windows on the
+-- same level order by nothing you can rely on, and a window's own children take
+-- level+1 upwards, so bump in steps of 10 and leave 0 for the default case.
+--
 -- Deliberately does NOT call SetToplevel(true): see part 2 of the header. Adding
--- it back reintroduces a ~50ms strata restack on every single drag. If a window
--- needs to come to the front when opened, call UI.raiseOnOpen() in its show path
--- instead -- that pays the restack once, on open, not on every grab.
+-- it back reintroduces a ~50ms strata restack on every single drag -- and on MEDIUM
+-- the first one would be the full ~1s pass. If a window needs to come to the front
+-- when opened, call UI.frontOnOpen() in its show path.
 --
 -- Returns the frame for chaining.
-function UI.applyWindowChrome(frame)
+function UI.applyWindowChrome(frame, levelBump)
 	if not frame or type(frame.SetFrameStrata) ~= "function" then return frame end
 	frame:SetFrameStrata(UI.WINDOW_STRATA)
+	if type(frame.SetFrameLevel) == "function" then
+		frame:SetFrameLevel(UI.WINDOW_LEVEL + (tonumber(levelBump) or 0))
+	end
 	return frame
 end
 
--- Bring a window to the front of its strata, once, from a show path. This is the
--- explicit replacement for the click-to-raise that SetToplevel used to give us:
--- same front-on-open result, but paid once per open instead of once per drag.
--- Guarded like applyWindowChrome, so it is inert where no real frames exist.
+-- Put a window in front, from a show path. This is the replacement for the
+-- click-to-raise that SetToplevel used to give us, and for the Raise()-on-open that
+-- replaced it while these windows were on the sparse LOW strata.
 --
--- NOTE: only call this on a SPARSE strata. Raise() restacks the frame's strata,
--- which is cheap where few frames live but is the expensive ~1s pass on a crowded
--- one like HIGH. UI.WINDOW_STRATA (LOW) is sparse -- most of the default UI and
--- most addons sit on MEDIUM and above -- so windows built via applyWindowChrome()
--- are safe. Raise() also cannot cross strata: it orders the window among its LOW
--- siblings only, so it still stays under the Blizzard panels by design.
-function UI.raiseOnOpen(frame)
-	if not frame or type(frame.Raise) ~= "function" then return frame end
-	frame:Raise()
-	return frame
+-- It does NOT call Raise(). Raise() reorders the frame against every sibling in its
+-- strata, which is the exact operation the drag-freeze is made of: cheap on a sparse
+-- strata, but the ~1s engine pass on a populated one -- and MEDIUM, shared with the
+-- default UI and the action bar addons, is populated. Re-asserting the fixed strata +
+-- level instead touches one frame and reorders nothing, so it is free, and the level
+-- chosen above already puts the window above its neighbours.
+--
+-- Guarded like applyWindowChrome, so it is inert where no real frames exist.
+function UI.frontOnOpen(frame, levelBump)
+	return UI.applyWindowChrome(frame, levelBump)
 end
 
 --------------------------------------------------------------------------------
