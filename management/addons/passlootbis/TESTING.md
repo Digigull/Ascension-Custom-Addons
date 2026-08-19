@@ -175,9 +175,15 @@ The veto needs one specific item to drop, so force the situation instead:
     a hardcoded `2 (Usable)` for every item ever scanned, so the round-1 Dire Maul
     trace showed the `Not Usable` rule matching three items the trace itself called
     usable. The filter was right; only its report was wrong.
-26. On an item ruled unusable the line now carries `red line: <text>` — the tooltip
-    line the client painted in its unmet-requirement red, which is the whole basis
-    for the verdict. Two things to check it against:
+26. On an item ruled unusable the line now carries `red line: L3 <text>` — the
+    tooltip line painted in the unmet-requirement red (255,32,32), which is the whole
+    basis for the verdict, prefixed with its position: `L`/`R` for the left or right
+    column, then the line number. **The position is the tell.** A requirement the
+    client itself refuses sits in the left column near the top; anything an addon
+    bolted on would land at the bottom or in the right column. The scan runs on our
+    own hidden `PasslootBiSTT` (`Libs/Libs.xml`) and nothing hooks it, so an addon
+    line should be impossible — an `R1` or a high `L` number would say otherwise.
+    Two things to check it against:
     - An **already-known recipe** or one needing a profession you lack should name
       that requirement. Those are the easy confirmations that the capture works.
     - **Anything you can plainly wear that comes back unusable** is the finding worth
@@ -215,6 +221,14 @@ What round 1 did not reach, highest-risk first:
   `red line:` capture added in step H exists to answer this; until a trace carries
   one, it is unknown whether `Core/Cache.lua`'s red-text test is over-matching on
   this client or Ascension really is refusing the item.
+  - **Ruled out: the BiS Scanner's own tooltip line.** The obvious suspect is the
+    red downgrade text the scanner adds on hover, but it cannot reach this test
+    twice over. `PassLootBiS_Scanner/Core/Tooltip.lua` hooks `GameTooltip` and
+    `ItemRefTooltip` only, and `HookScript` is per frame — the usable scan reads
+    `PasslootBiSTT`, a separate hidden tooltip. And the scanner's line is written by
+    `setTopRight` with the base colour `COLOR_NEU` (0.90, 0.90, 0.60); its red is an
+    inline `|cff` escape, which is invisible to the `GetTextColor()` the red test
+    reads. Even landing on the same frame it would not match.
 - **`ZONE_CHANGED_NEW_AREA` timing** on the way out of an instance.
 - **`Interface\Buttons\Arrow-Down-Up`** existing in this build.
 - **The 21.9. Highest-priority unknown on this branch, and it may be an argument
