@@ -49,10 +49,11 @@ end
 -- A scanner advisor with the new diagnostic surface.
 local scanner = {}
 function scanner:GetStatus() return { enabled=true, hasWeights=true, class="Hunter",
-  spec="Ranger", threshold=0.03, placeholder=false, ignoreEnchants=false } end
+  spec="Ranger", threshold=0.03, placeholder=false, ignoreEnchants=true } end
 -- Slot 3 deliberately disagrees between real and link: that is the "SetHyperlink is
 -- lying about a scaled item" case the check exists to catch, and the report has to
--- come back with the do-NOT-enable verdict rather than a clean bill of health.
+-- come back with the untick-it verdict rather than a clean bill of health -- the
+-- one case where the shipped default (on, above) is the wrong setting.
 function scanner:GetEnchantCheck() return {
   { slot=1,  name="Helm",      real=100.0, link=100.0, stripped=88.0 },
   { slot=3,  name="Shoulders", real=131.5, link=104.2, stripped=104.2 },
@@ -63,6 +64,9 @@ function scanner:GetRunLedger() return { { equipLoc="INVTYPE_SHOULDER", count=1,
 function scanner:GetLinkVerdict(link, isBiS)
   return { link=link, name="Kyrstel Mantle", equipLoc="INVTYPE_SHOULDER", scannable=true,
     hadWeights=true, filtered=false, isBiS=isBiS, score=115.2, target=131.5,
+    -- targetParts is the per-slot working. A win raised this slot, so the
+    -- "(x after wins)" half of the line is exercised too, not just the plain form.
+    targetParts={ { slot=3, score=104.2, afterWins=131.5 } },
     isUpgrade=false, delta=-0.124, down={ delta=-0.124, wonName="Won Mantle" },
     verdict={ reason="On your BiS list, but -12% vs the Won Mantle you won" } }
 end

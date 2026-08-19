@@ -6,7 +6,9 @@ equipped item it would replace (the worst-scoring item in that slot group -- the
 one you'd actually swap out, mirroring the loot-roll compare, §6.2).
 
 Both sides are read through LibScaledStats: the hovered item off the already-shown
-tooltip (as the client rendered it), the equipped item off SetInventoryItem.
+tooltip (as the client rendered it), the equipped item off SetInventoryItem. With
+db.ignoreEnchants on, an item that actually carries an enchant is instead re-read
+from its stripped link, on BOTH sides -- see ns.strippedStats in Scanner.lua.
 
 The decision logic (which arrow, what colour, the score text) is PURE and
 offline-tested; the tooltip hooks are guarded so the file loads under bare lua5.1.
@@ -95,15 +97,25 @@ end
 -- PURE: a cheap scalar signature of everything the active weights derive from.
 -- ns.getActiveWeights (currentWeights) returns a FRESH copy each call (it folds in
 -- the CoA Power stat via SpecWeights.withPower), so table identity can't tell us
--- when the weights actually changed. Instead we compare this signature of the four
--- inputs that vary -- per-character class/spec + account-wide power mode/weight --
--- and rebuild the equipped-score cache only when it changes.
+-- when the weights actually changed. Instead we compare this signature of the
+-- inputs that vary -- per-character class/spec, account-wide power mode/weight, and
+-- whether enchants are being scored -- and rebuild the equipped-score cache only
+-- when it changes.
+--
+-- ignoreEnchants belongs here even though it is not a weight: it changes what an
+-- equipped item SCORES, which is the only thing this cache holds. Leaving it out
+-- was a real bug, and a confusing one -- the equipped cache is wiped on gear change
+-- and on a weights change, neither of which ticking the box is, so the tooltip went
+-- on quoting pre-strip numbers until you changed gear or spec. It read as "the
+-- option does nothing" while the roll path (which never cached) had it right all
+-- along. Anything else that changes how a score is computed belongs here too.
 function Tooltip.weightsSignature(chardb, db)
 	return table.concat({
 		tostring(chardb and chardb.class),
 		tostring(chardb and chardb.spec),
 		tostring(db and db.powerMode),
 		tostring(db and db.powerWeight),
+		tostring(db and db.ignoreEnchants),
 	}, "\1")
 end
 
@@ -237,8 +249,25 @@ local function annotate(tt)
 	-- upgrade arrow (it never counts as an upgrade), matching the loot-roll behavior.
 	local excluded = Filter and not Filter.isScored(itemType, subType, ns.chardb and ns.chardb.filter, equipLoc)
 
-	-- Hovered item's score, read off the tooltip the client already rendered.
-	local stats = ScaledStats:ParseShownTooltip(tt, subType, equipLoc)
+	-- Hovered item's score, read off the tooltip the client already rendered --
+	-- unless enchants are being ignored AND this item has one, in which case it is
+	-- re-read from its stripped link (ns.strippedStats, shared with the roll path).
+	-- The rendered tooltip is the enchanted item by definition; there is no way to
+	-- subtract an enchant from lines that already include it.
+	--
+	-- This is what makes the number on YOUR OWN equipped item match the one the
+	-- compare uses: without it, hovering an enchanted item showed its enchanted
+	-- score while everything it was measured against had been stripped, so the two
+	-- halves of the same tooltip disagreed about what an item is worth.
+	--
+	-- Unenchanted items -- most loot, vendor stock, auction listings, quest rewards
+	-- -- take the rendered-tooltip path exactly as before, no extra scan. That
+	-- includes every auction listing, always: enchanting a BoE item binds it, so a
+	-- listing cannot carry an enchant, and the deferred AH parse below (which exists
+	-- because a listing's TRUE stats are painted over a cached body) is never
+	-- bypassed by this.
+	local stats = ns.strippedStats and ns.strippedStats(link, subType, equipLoc)
+	if not stats then stats = ScaledStats:ParseShownTooltip(tt, subType, equipLoc) end
 	local score = excluded and 0 or Score.scoreItem(stats, weights)
 
 	local itemId = Tooltip.itemId(link)

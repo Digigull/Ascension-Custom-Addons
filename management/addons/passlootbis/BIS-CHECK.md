@@ -90,7 +90,7 @@ positive costs you an item outright.
   early unless there is an upgrade or a gold flag, so the host's veto window is the
   only UI for it. Do not "fix" that into a second popup.
 
-## Enchants on the equipped side — measured, then shelved
+## Enchants — measured, then made the default
 
 The compare is asymmetric by construction and it always points one way:
 
@@ -105,39 +105,65 @@ can score below enchanted gear it would actually beat, and BiS Check vetoes a ro
 it should have allowed.** Enchant skew is a false-positive source for this feature,
 not just a cosmetic scoring wobble.
 
-`db.ignoreEnchants` scored the equipped item from its own link with the enchant
-field zeroed (`Core/ItemLink.lua`). All three equipped-scan sites — `scoreEquipped`,
-`evalHand` and the hover tooltip — go through one `ns.equippedStats`, or the tooltip
-and the roll window would quote different numbers for the same item.
+`db.ignoreEnchants` (scanner options → "Ignore enchants when scoring") reads an item
+from its own link with the enchant field zeroed (`Core/ItemLink.lua`). Every scoring
+site goes through one `ns.strippedStats`, or two windows would quote different
+numbers for the same item:
 
-It shipped OFF by default, because stripping the enchant means reading the equipped
-item through `SetHyperlink`, which LibScaledStats warns "MAY be cached-first /
-nominal for scaled instances" — on Ascension exactly the lie the library exists to
-route around. Trading a known, bounded enchant skew for a possible unbounded
-scaled-stat skew is not a trade to make blind, so `/plbisdebug` measures it instead:
-every equipped slot scored three ways — `real` (`SetInventoryItem`), `link`
-(`SetHyperlink`, unmodified) and `stripped` (`SetHyperlink`, enchant zeroed).
-**`real` vs `link` is the test**: same item, two routes, so agreement means
-`SetHyperlink` is faithful here. `stripped` vs `link` is then how much enchant is in
-the score.
+| Site | Normal read | With the option on |
+|---|---|---|
+| equipped gear (`ns.equippedStats`, incl. `evalHand`) | `SetInventoryItem` | stripped link |
+| the item dry run (`API:GetLinkVerdict`) | `SetHyperlink` | stripped link |
+| the hover tooltip (`Core/Tooltip.lua`) | the rendered tooltip | stripped link |
+| the win ledger (`recordWin`) | `SetHyperlink` | stripped link — a fresh drop has none, but the rule is the rule |
+| a live loot roll | `SetLootRollItem` | unchanged — a fresh drop has no enchant |
+
+**Only links that actually carry an enchant take the stripped path**
+(`ItemLink.hasEnchant`). Everything else keeps the cheaper, more trustworthy read it
+always had, which matters twice over: no extra tooltip scan for the loot, vendor
+stock and quest rewards nobody has enchanted, and no `SetHyperlink` exposure where
+there was nothing to gain from it.
+
+It shipped OFF, because stripping means reading through `SetHyperlink`, which
+LibScaledStats warns "MAY be cached-first / nominal for scaled instances" — on
+Ascension exactly the lie the library exists to route around. Trading a known,
+bounded enchant skew for a possible unbounded scaled-stat skew is not a trade to
+make blind, so `/plbisdebug` measures it instead: every equipped slot scored three
+ways — `real` (`SetInventoryItem`), `link` (`SetHyperlink`, unmodified) and
+`stripped` (`SetHyperlink`, enchant zeroed). **`real` vs `link` is the test**: same
+item, two routes, so agreement means `SetHyperlink` is faithful here. `stripped` vs
+`link` is then how much enchant is in the score.
 
 **Measured result (2026-08, owner's gear, 17 slots): `real` and `link` agreed on
 every slot, and 2 slots carried enchant value** (feet 58.3 → 47.3, back 38.7 →
-34.0). So the scaled-stat risk did not materialise on this client.
+34.0). The scaled-stat risk did not materialise on this client, so **the option is
+now ON by default.** A `MISMATCH` row in a later report is the standing signal to
+untick it — the check is not a one-off, it is the evidence for the default.
 
-**Shelved anyway — owner's call.** The payoff is small (two slots, on gear that is
-mid-progression) and it only ever moves the equipped side of the compare, which made
-the checkbox actively misleading: ticking it does not change what a scanned or
-hovered ITEM scores, only what that item is measured against, so the obvious way to
-"check it worked" — hover the same item again — shows no change and reads as broken.
-Not worth the support surface for two slots.
+### The bug that made it look broken
 
-So: no checkbox (`Core/Options.lua`), and `initDB` forces `db.ignoreEnchants = false`
-on every load so a `true` left from testing cannot survive. The strip code, its
-self-tests and the `[Enchant strip check]` table all stay — the measurement is the
-expensive part and it is done. Bringing it back is one `initDB` line plus a box.
+First in-game round, ticking the box appeared to do nothing: the hovered item scored
+the same as before. Two separate reasons, both now fixed, and both worth knowing
+because they will be the first suspects if it ever looks inert again:
 
-Gems were left in. Same argument applies to them, but the owner asked about enchants
+1. **A stale cache.** `Tooltip.weightsSignature` — the key the equipped-score cache
+   is rebuilt on — listed class, spec, power mode and power weight, but not
+   `ignoreEnchants`. The cache is otherwise only wiped on `PLAYER_EQUIPMENT_CHANGED`,
+   and ticking a box is neither of those, so the tooltip went on quoting pre-strip
+   equipped scores until gear or spec changed. The roll path never cached and had it
+   right the whole time. Anything else that changes how a score is *computed* has to
+   go in that signature too.
+2. **The hovered item was never stripped.** The option only ever moved the equipped
+   side, so hovering your own enchanted boots showed the enchanted score next to a
+   stripped comparison — the two halves of one tooltip disagreeing about what an item
+   is worth. Now both sides are read the same way, so the number on your boots
+   matches the `stripped` column of `[Enchant strip check]`.
+
+The same asymmetry hit the dry run: `GetLinkVerdict` scored an enchanted candidate
+against stripped equipped gear, which made an item you were **already wearing** read
+as a large upgrade over itself. Same fix.
+
+Gems are left in. Same argument applies to them, but the owner asked about enchants
 and stripping sockets too would move more scores than were asked about. It is one
 field set away — `ItemLink.FIELD_ENCHANT_AND_GEMS`.
 

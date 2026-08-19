@@ -60,9 +60,10 @@ local DEFAULTS = {
 	useSoundGold  = false,  -- cue on the high-value flag -- goldThreshold is its cutoff
 	tooltip       = true,   -- annotate item tooltips with score + upgrade arrow
 	goldThreshold = 500000, -- 50g in copper, for the Auctionator flag (Phase 4)
-	-- SHELVED, and forced back to false in initDB below -- there is no option for it
-	-- any more (ns.equippedStats has the why, and what it would take to bring back).
-	ignoreEnchants = false,
+	-- Score gear with its enchants zeroed out, so both sides of a compare are read
+	-- like the fresh drop the candidate always is. ON: measured faithful on this
+	-- client before being trusted -- ns.equippedStats has the whole story.
+	ignoreEnchants = true,
 	powerMode     = "off",  -- score a CoA flat Power stat: "off" | "pve" | "pvp"
 	powerWeight   = 1,      -- weight per point of the chosen Power (tunable in GUI)
 	-- minimap = { angle, hide } and options = { point, x, y } are seeded in
@@ -90,11 +91,20 @@ local function initDB()
 	if db.minimap.angle == nil then db.minimap.angle = 220 end   -- degrees around the ring
 	if db.minimap.hide  == nil then db.minimap.hide  = false end
 	if type(db.options) ~= "table" then db.options = {} end
-	-- The "Ignore enchants on equipped gear" scoring is shelved and its checkbox is
-	-- gone (Core/Options.lua), so a `true` left in a saved DB by anyone who tried it
-	-- would be a setting with no way back off. Forced off on every load; drop this
-	-- line if the option is ever brought back.
-	db.ignoreEnchants = false
+	-- One-time flip: "ignore enchants" went from an off-by-default experiment to the
+	-- default way gear is scored, once /plbisdebug measured the SetHyperlink read as
+	-- faithful on this client. The loop above only fills in ABSENT keys and every DB
+	-- an older build wrote has a literal `false` stored for this one, so changing
+	-- DEFAULTS alone would reach nobody who has ever run the addon.
+	--
+	-- The marker is deliberately NOT in DEFAULTS -- it has to still be nil here on
+	-- the first load after the change. It is what makes this a one-time flip rather
+	-- than a setting that re-ticks itself every login: untick the box afterwards and
+	-- it stays unticked.
+	if db.ignoreEnchantsDefaulted == nil then
+		db.ignoreEnchants = true
+		db.ignoreEnchantsDefaulted = true
+	end
 	ns.db = db   -- share with sibling modules (Tooltip, MinimapButton, Options)
 end
 
@@ -236,7 +246,12 @@ local function recordWin(link)
 	local name, _, _, _, _, _, subType, _, equipLoc = GetItemInfo(link)
 	if not equipLoc or equipLoc == "" then return end
 	if not Slots.slotsFor(equipLoc) then return end
-	local stats = ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
+	-- Through the shared reader like every other score. A freshly looted item has no
+	-- enchant to strip, so in practice this is the plain SetHyperlink read -- but a
+	-- ledger entry is compared against stripped equipped scores later, so it must not
+	-- be the one number computed by a different rule.
+	local stats = ns.strippedStats(link, subType, equipLoc)
+		or ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
 	WonLedger.record(equipLoc, Score.scoreItem(stats, weights), link, name)
 end
 
@@ -251,47 +266,61 @@ local function scoreRollItem(rollID, weights, subType, equipLoc)
 	return Score.scoreItem(stats, weights), stats
 end
 
--- THE one place equipped stats are read. Three callers had their own copy of this
--- line (here, evalHand, and Core/Tooltip.lua's hover compare); the option below has
--- to reach all three or the tooltip and the roll would quote different numbers for
--- the same item.
+-- How an item's stats are read, and the one option that changes it.
+--
+-- ns.equippedStats below is THE one place equipped stats are read. Three callers
+-- had their own copy of that line (here, evalHand, and Core/Tooltip.lua's hover
+-- compare); the option has to reach all of them or the tooltip and the roll would
+-- quote different numbers for the same item.
 --
 -- An empty slot -> no lines -> empty stats -> score 0 (always beatable).
 --
--- db.ignoreEnchants: SHELVED 2026-08 at the owner's call, after in-game testing.
--- The branch below is left in place, but initDB forces the flag false on every load
--- and Core/Options.lua no longer offers a box for it, so it is unreachable.
+-- db.ignoreEnchants (ON by default): read an item with its enchant zeroed out.
 --
--- What it did, and why it is worth keeping the code: the compare is asymmetric in
--- one direction. A loot roll is read with SetLootRollItem (a fresh drop, no
--- enchant) while your equipped gear is read with SetInventoryItem (enchanted), so
--- the equipped side carries value the candidate cannot have and real upgrades read
--- smaller than they are. This scored the equipped item from its own link with the
--- enchant field zeroed (Core/ItemLink.lua) to even that up.
+-- The compare is asymmetric by construction and always in one direction: a loot
+-- roll is a fresh drop with no enchant on it, your equipped gear has one. So the
+-- equipped side carries value the candidate cannot have, every real upgrade reads
+-- smaller than it is, and a BiS item can score below enchanted gear it would
+-- actually beat -- which BiS Check then vetoes. Zeroing the enchant field of the
+-- link (Core/ItemLink.lua) and scoring THAT evens the two sides up.
 --
--- Why it is off. It moves the equipped read to SetHyperlink, which LibScaledStats
--- warns "MAY be cached-first / nominal for scaled instances" -- on Ascension
--- precisely the lie that library exists to route around. /plbisdebug's [Enchant
--- strip check] measures whether that lie is real on your gear, and on the owner's
--- it was NOT (link and instance agreed on every slot, 2 slots carrying enchant
--- value). So the risk did not materialise -- but the payoff turned out to be small
--- and only on the equipped side of the compare, which made the box easy to
--- misread: ticking it does not change what a scanned or hovered ITEM scores, only
--- what it is measured against. Shelved rather than reverted for that reason: the
--- measurement stands, and bringing it back is this line plus a checkbox.
+-- It shipped off, because the strip means reading through SetHyperlink, which
+-- LibScaledStats warns "MAY be cached-first / nominal for scaled instances" -- on
+-- Ascension precisely the lie that library exists to route around. That is not a
+-- risk to take on reasoning, so /plbisdebug's [Enchant strip check] measures it:
+-- every equipped slot scored by instance AND by link. On the owner's gear (17
+-- slots, 2 of them enchanted) the two agreed everywhere, so the strip is faithful
+-- here and it is now the default. If a later report ever shows a MISMATCH row, that
+-- is the signal to untick the box -- the check exists to keep answering this.
 --
--- Gems were deliberately left in, and would be one field set away
--- (ItemLink.FIELD_ENCHANT_AND_GEMS) if this is ever revisited.
+-- Only enchanted links take the SetHyperlink path. An unenchanted item has nothing
+-- to strip, so it keeps the cheaper and more trustworthy read it always had (the
+-- real equipped instance, or the tooltip the client already rendered). That is why
+-- ItemLink.hasEnchant is asked first: it keeps the risky path down to the handful
+-- of items that actually gain something from it, rather than all 17 slots.
+--
+-- Gems are deliberately left in. Same argument applies to them, but enchants are
+-- what was asked about and stripping sockets would move far more scores; it is one
+-- field set away (ItemLink.FIELD_ENCHANT_AND_GEMS) if that is ever wanted.
+
+-- Enchant-free stats for an item LINK, or nil when there is nothing to do and the
+-- caller should use its own (cheaper) read. Every scoring site goes through here --
+-- equipped gear, the win ledger, the item dry run and the hover tooltip -- so "with
+-- enchants" and "without" can never mean different things in different windows.
+function ns.strippedStats(link, subType, equipLoc)
+	if not (db and db.ignoreEnchants) then return nil end
+	if not (ScaledStats and ItemLink and ItemLink.hasEnchant(link)) then return nil end
+	local stripped = ItemLink.stripEnchant(link)
+	if not stripped then return nil end
+	return ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, stripped)
+end
+
 function ns.equippedStats(slotId, subType, equipLoc)
-	if db and db.ignoreEnchants then
-		local link = GetInventoryItemLink("player", slotId)
-		local stripped = link and ItemLink and ItemLink.stripEnchant(link)
-		if stripped then
-			return ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, stripped)
-		end
-		-- No link, or a link we could not parse: fall through to the real instance
-		-- rather than scoring the slot as empty.
-	end
+	local link = GetInventoryItemLink("player", slotId)
+	local stats = link and ns.strippedStats(link, subType, equipLoc)
+	if stats then return stats end
+	-- Nothing to strip, no link, or a link we could not parse: the real instance,
+	-- which is both the cheaper read and the authoritative one.
 	return ScaledStats:GetStatsWithDps("SetInventoryItem", subType, equipLoc, "player", slotId)
 end
 
@@ -345,15 +374,31 @@ end
 -- already WON this run counts as equipped, or the second shoulder of a run still
 -- reads as an upgrade over the shoulders you are technically still wearing
 -- (Core/WonLedger.lua has the full why).
+-- Second return value is the per-slot working, purely for /plbisdebug: a list of
+-- { slot, score } for the slot-group path, or nil for the weapon-loadout path,
+-- which resolves to one number with no per-slot breakdown to show. It exists
+-- because a target that disagrees with what the same report scores the equipped
+-- item at is otherwise unfalsifiable from the outside -- you can see the two
+-- numbers differ but not which read produced the odd one.
 function ns.effectiveTarget(equipLoc, subType, weights, slotIds)
 	local target = ns.weaponEquippedValue(equipLoc, weights)
 	local wins = WonLedger and WonLedger.winsFor(equipLoc)
+	local parts
 	if target == nil then
 		local scores = {}
+		parts = {}
 		for i, slotId in ipairs(slotIds) do
 			scores[i] = scoreEquipped(slotId, weights, subType, equipLoc)
+			parts[i] = { slot = slotId, score = scores[i] }
 		end
-		if wins then scores = WonLedger.applyWins(scores, wins) end
+		if wins then
+			-- applyWins returns a NEW list, so the pre-win score stays readable
+			-- alongside it -- which is the whole point of showing the working.
+			scores = WonLedger.applyWins(scores, wins)
+			for i = 1, #scores do
+				if parts[i] then parts[i].afterWins = scores[i] end
+			end
+		end
 		target = Slots.worstEquipped(scores)
 	elseif wins then
 		-- Hand slots come back from the loadout rule as ONE already-resolved number,
@@ -365,7 +410,7 @@ function ns.effectiveTarget(equipLoc, subType, weights, slotIds)
 		local best = WonLedger.bestFor(equipLoc)
 		if best and best.score > target then target = best.score end
 	end
-	return target
+	return target, parts
 end
 
 -- Score vs. target -> the three verdict inputs. Also split out so the dry run and
@@ -558,9 +603,16 @@ function API:GetLinkVerdict(link, isBiS)
 	}
 	if not (slotIds and weights and scored) then return r end
 
-	local stats = ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
+	-- The candidate is stripped too when the option is on. A live roll never needs
+	-- this (SetLootRollItem reads a fresh drop, which has no enchant), but a dry run
+	-- is usually a link out of your own bags or off your own character, and scoring
+	-- an enchanted candidate against stripped equipped gear compares two different
+	-- things -- most visibly by making an item you are already WEARING read as a
+	-- large upgrade over itself.
+	local stats = ns.strippedStats(link, subType, equipLoc)
+		or ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
 	r.score = Score.scoreItem(stats, weights)
-	r.target = ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+	r.target, r.targetParts = ns.effectiveTarget(equipLoc, subType, weights, slotIds)
 	r.isUpgrade, r.delta, r.down = ns.judge(r.score, r.target, equipLoc, r.isBiS)
 	r.verdict = Verdict.build(r.isUpgrade, r.delta, nil, r.down)
 	return r

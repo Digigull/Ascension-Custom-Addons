@@ -186,23 +186,23 @@ local function addConfirmSection(out)
 	out[#out + 1] = "  auto-confirm bind popups: " .. yn(p.AutoConfirmBinds)
 end
 
--- Would the scanner's shelved "ignore enchants" scoring be safe on THIS gear?
+-- Is the scanner's "ignore enchants" scoring still safe on THIS gear?
 --
--- The option is gone (shelved at the owner's call after testing -- see
--- ns.equippedStats in the scanner), but the measurement it existed to settle is
--- kept, because it is the evidence that decides whether the strip is ever worth
--- bringing back and it costs one command to take.
+-- The option is ON by default, on the strength of this check, so this is not a
+-- one-off decision aid -- it is the standing evidence for a default, and it is
+-- worth re-reading it after a big gear change.
 --
--- It scores equipped items through SetHyperlink so the enchant can be zeroed out of
--- the link, and LibScaledStats warns that path may report cached or nominal stats
--- for a scaled instance. Rather than guess, this prints the measured answer: `real`
--- and `link` describe the SAME item by two routes, so if they agree the link scan
--- is faithful here. If they disagree, the strip is unusable on this client -- an
--- enchant skew is a known, bounded error, and the scaled-stat lie is the unbounded
--- one this whole addon exists to avoid.
+-- Stripping an enchant means reading the item through SetHyperlink, and
+-- LibScaledStats warns that path may report cached or nominal stats for a scaled
+-- instance. Rather than guess, this prints the measured answer: `real` and `link`
+-- describe the SAME item by two routes, so if they agree the link scan is faithful
+-- here. If any slot disagrees, untick the box -- an enchant skew is a known,
+-- bounded error, and the scaled-stat lie is the unbounded one this whole addon
+-- exists to avoid.
 --
--- `stripped` is then just how much enchant is currently in each score, which is the
--- size of the skew you are living with while the option stays shelved.
+-- `stripped` vs `link` is then how much enchant is in each item: with the option on
+-- that is what is being kept OUT of the compare, and with it off it is the skew you
+-- are living with.
 local function addEnchantSection(out)
 	out[#out + 1] = "[Enchant strip check]"
 	local scanner = scannerAPI()
@@ -234,15 +234,18 @@ local function addEnchantSection(out)
 			r.stripped and string.format("%.1f", r.stripped) or "-",
 			tostring(r.name), drift > 0.5 and "   <- MISMATCH" or "")
 	end
+	local sok, st = pcall(scanner.GetStatus, scanner)
+	local ignoring = sok and type(st) == "table" and st.ignoreEnchants
 	if mismatch > 0 then
 		out[#out + 1] = "  VERDICT: " .. mismatch ..
-			" slot(s) score differently by link than by instance -- the strip is NOT" ..
-			" usable here; SetHyperlink is not faithful on this client."
+			" slot(s) score differently by link than by instance -- UNTICK 'Ignore" ..
+			" enchants'; SetHyperlink is not faithful on this client."
 	else
 		out[#out + 1] = "  VERDICT: link and instance agree on every slot -- the strip is safe here."
-		out[#out + 1] = "  " .. enchanted .. " slot(s) currently carry enchant value in their score."
+		out[#out + 1] = "  " .. enchanted .. " slot(s) carry enchant value" ..
+			(ignoring and " -- kept out of the compare." or " -- currently counted in their score.")
 	end
-	out[#out + 1] = "  the 'Ignore enchants' option is SHELVED: no checkbox, forced off."
+	out[#out + 1] = "  option 'Ignore enchants' is currently: " .. yn(ignoring)
 end
 
 -- Push a synthetic downgrade through the REAL contract, in game, between the
@@ -308,6 +311,23 @@ local function addItemSection(out, link)
 	end
 	out[#out + 1] = string.format("  score %.1f vs target %.1f  -> %s",
 		r.score, r.target or 0, pct(r.delta))
+	-- The working behind the target, slot by slot. Round 1 produced a feet dry run
+	-- whose target was nowhere near what the same report scored the equipped feet at,
+	-- and there was no way to tell from the outside which read had gone wrong -- the
+	-- equipped scan, the win ledger, or the slot group being resolved to the wrong
+	-- slot. This line says. A weapon/off-hand roll prints nothing here: that path
+	-- resolves the whole loadout to one number with no per-slot breakdown to show.
+	if type(r.targetParts) == "table" and #r.targetParts > 0 then
+		local bits = {}
+		for _, part in ipairs(r.targetParts) do
+			local bit = string.format("slot %d = %.1f", part.slot, part.score or 0)
+			if part.afterWins and math.abs(part.afterWins - (part.score or 0)) > 0.05 then
+				bit = bit .. string.format(" (%.1f after wins)", part.afterWins)
+			end
+			bits[#bits + 1] = bit
+		end
+		out[#out + 1] = "  target from equipped: " .. table.concat(bits, ", ")
+	end
 	out[#out + 1] = "  would be an upgrade: " .. yn(r.isUpgrade)
 	if r.down then
 		out[#out + 1] = "  BiS Check WOULD VETO this roll: " .. PasslootBiS:FormatBiSDelta(r.down.delta) ..

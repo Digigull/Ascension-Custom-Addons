@@ -67,6 +67,25 @@ function ItemLink.stripEnchant(link)
 	return ItemLink.zeroFields(link, ItemLink.FIELD_ENCHANT)
 end
 
+-- Is there an enchant on this link at all? (field 2, non-zero)
+--
+-- Worth asking BEFORE stripping, because stripping is not free: it means re-reading
+-- the item through SetHyperlink instead of whatever cheaper path the caller already
+-- had (the rendered tooltip, or the real equipped instance). Most items anyone
+-- hovers -- loot, vendor stock, auction listings, quest rewards -- carry no enchant
+-- at all, and for those the strip would be an extra tooltip scan to arrive at
+-- exactly the same numbers.
+--
+-- Returns false for a link this file cannot parse, so an unparsable link takes the
+-- caller's normal path rather than a strip that would have abstained anyway.
+function ItemLink.hasEnchant(link)
+	if type(link) ~= "string" then return false end
+	local payload = link:match("|Hitem:([%-%d:]+)|h") or link:match("^item:([%-%d:]+)$")
+	if not payload then return false end
+	local enchant = payload:match("^%-?%d+:(%-?%d+)")
+	return enchant ~= nil and enchant ~= "0"
+end
+
 --=============================================================================
 -- Offline self-test (skipped in-game)
 --=============================================================================
@@ -129,6 +148,20 @@ if rawget(_G, "ITEMLINK_SELFTEST") then
 	ok(ItemLink.stripEnchant(nil) == nil, "nil -> nil")
 	ok(ItemLink.stripEnchant(12345) == nil, "non-string -> nil")
 	ok(ItemLink.zeroFields(full, nil) == nil, "nil field set -> nil")
+
+	-- hasEnchant decides whether a strip is worth a tooltip scan, so a wrong answer
+	-- either wastes one or silently scores the enchant back in.
+	ok(ItemLink.hasEnchant(full) == true, "enchanted link -> true")
+	ok(ItemLink.hasEnchant(bare) == false, "enchant field 0 -> false")
+	ok(ItemLink.hasEnchant(suffix) == false, "unenchanted suffix item -> false")
+	ok(ItemLink.hasEnchant(suffixEnch) == true, "enchanted suffix item -> true")
+	ok(ItemLink.hasEnchant("item:12345:999:0:0:0:0:0:0:80") == true, "bare item: string -> true")
+	ok(ItemLink.hasEnchant("|Hitem:12345:0:0:0|h[Short]|h") == false, "short link, no enchant")
+	ok(ItemLink.hasEnchant("item:12345") == false, "id only, no enchant field -> false")
+	-- Not an item link: abstain rather than guess, and take the caller's normal path.
+	ok(ItemLink.hasEnchant("|cffffd000|Hquest:123:60|h[A Quest]|h|r") == false, "quest link -> false")
+	ok(ItemLink.hasEnchant("just some text") == false, "plain text -> false")
+	ok(ItemLink.hasEnchant(nil) == false, "nil -> false")
 
 	-- Zeroing field 1 would destroy the item id. Not something we ever ask for, but
 	-- the function must do exactly what it is told, so it is worth pinning.

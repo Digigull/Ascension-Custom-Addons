@@ -12,7 +12,7 @@ of it is shaped the way it is.
 | A. Loads | **PASS** — no errors, report renders, `[Contract self-test]` all `PASS`, "BiS Check" row present |
 | B. Roll-bind popup | **not run** — needs a BoP boss drop |
 | C. Pickup-bind popup | **not run** — but the three confirm boxes it exposed were merged into one (below) |
-| D. Enchant strip | measured **safe** (link and instance agreed on all 17 slots, 2 carrying enchant value) — and then **shelved** anyway; see `BIS-CHECK.md` |
+| D. Enchant strip | measured **safe** (link and instance agreed on all 17 slots, 2 carrying enchant value) — now **on by default**, after fixing the two bugs that made it look inert; see `BIS-CHECK.md` |
 | E. Win ledger | **not run** |
 | F. BiS Check dry run | **PASS** — a BiS glove at -4% vs equipped gave `WOULD VETO`; a non-list item did not fire |
 | G. Preview | **not run** |
@@ -21,8 +21,11 @@ Two changes came out of that round, so steps below are written against them:
 
 - **The three bind-confirm boxes are now one**, `Auto-Confirm Bind Popups`, default
   ON, covering the roll prompt, the pickup prompt and the popup-queue bit.
-- **"Ignore enchants on equipped gear" is gone** — shelved, forced off, no checkbox.
-  Step D is now a measurement to record, not a switch to decide.
+- **"Ignore enchants when scoring" is ON by default**, and now strips *both* sides
+  of a compare rather than only the equipped one. Ticking it used to look like it
+  did nothing, for two reasons that are both fixed: the tooltip's equipped-score
+  cache was not rebuilt when the box changed, and the hovered item itself was never
+  stripped. Step D is now a check on a shipped default, not a switch to decide.
 
 ## 0. Before you start
 
@@ -99,48 +102,54 @@ The whole point: a greed roll on boss loot should no longer stop for a click.
     the hide did not — say so, it is a one-line fix (the dialog's `data` is not the
     slot on this client).
 
-### D. Enchant strip — shelved; the table is now just a record
-The option is gone (no checkbox, forced off — `BIS-CHECK.md` has the why). What is
-left is the measurement, worth re-taking after a big gear change:
+### D. Enchant strip — now the default; confirm it is actually taking effect
+`/plbisscan options` → **Ignore enchants when scoring**, which should already be
+ticked (an existing saved DB is flipped on once, then left alone).
 
 11. `/plbisdebug`, read `[Enchant strip check]`. Every equipped slot scored three
-    ways: `real` (true instance), `link`, `stripped`.
-12. `real` vs `link` is the test — same item, two routes. Round 1 said *"link and
-    instance agree on every slot"*. If a later report says *"N slot(s) score
-    differently"*, that is worth sending: it means `SetHyperlink` reports
-    cached/nominal stats for scaled items here, which would matter to anything that
-    ever reads gear by link, not just to the shelved strip.
-13. `stripped` vs `link` is the size of the enchant skew you are living with. Two
-    slots in round 1. If that ever gets large across most of your gear, the strip is
-    worth reconsidering — it is one `initDB` line plus a checkbox.
+    ways: `real` (true instance), `link`, `stripped`. `real` vs `link` is the test —
+    same item, two routes. Round 1 said *"link and instance agree on every slot"*.
+    If a later report says *"N slot(s) score differently"*, **untick the box** and
+    send the table: `SetHyperlink` would be reporting cached/nominal stats for
+    scaled items, which is a worse error than the skew it fixes.
+12. **The visible check, which round 1 could not do:** hover an item you are wearing
+    that has an enchant on it. Its tooltip score should now equal the `stripped`
+    column for that slot, not the `real` one. (Feet in round 1: **47.3**, not 58.3.)
+    Toggle the box off and re-hover — it should go straight back to `real`, with no
+    `/reload`. If it needs a reload, the cache signature fix did not take.
+13. `/plbisdebug item ` + shift-click an item **you are currently wearing**. It
+    should read roughly `0%`, not a large upgrade over itself. That was the clearest
+    symptom of the candidate side not being stripped.
+14. `stripped` vs `link` is how much enchant is being kept out of the compare — two
+    slots in round 1. Re-read it after a big gear change.
 
 ### E. Win ledger (testable without any BiS drop)
-14. `/plbisdebug clear`, then loot 2–3 pieces of equippable gear in one dungeon.
-15. `/plbisdebug` → `[This run]` should list them under `won <SLOT>` with scores.
+15. `/plbisdebug clear`, then loot 2–3 pieces of equippable gear in one dungeon.
+16. `/plbisdebug` → `[This run]` should list them under `won <SLOT>` with scores.
     Empty after looting real gear = the `CHAT_MSG_LOOT` patterns do not match on
     this client. Copy the report; that is a self-contained fix.
-16. Leave the zone, `/plbisdebug` again — the ledger should be **empty**.
+17. Leave the zone, `/plbisdebug` again — the ledger should be **empty**.
 
 ### F. BiS Check (needs a stale BiS entry — use the dry run instead)
 The veto needs one specific item to drop, so force the situation instead:
 
-17. `/plbisdebug item ` then shift-click **an item on your BiS list that is worse
+18. `/plbisdebug item ` then shift-click **an item on your BiS list that is worse
     than what you are wearing** (an old entry you have upgraded past is ideal).
-18. Expect `on a rolling BiS list: yes`, and
+19. Expect `on a rolling BiS list: yes`, and
     `BiS Check WOULD VETO this roll: -N%`. If it says it would not fire, the report
     says which of the three preconditions failed (scannable / weights / filtered).
-19. Sanity control: dry-run something **not** on your BiS list — it must say
+20. Sanity control: dry-run something **not** on your BiS list — it must say
     `BiS Check would not fire (not on a rolling BiS list)`.
-20. If a real veto does fire in a dungeon, the popup should be **red**, headed
+21. If a real veto does fire in a dungeon, the popup should be **red**, headed
     "BiS, but lower", with a **down arrow**, and it must **not** auto-roll. If the
     arrow is a blank box, the texture path is wrong — cosmetic, one line.
-21. Let one expire without clicking: it should cast **Greed**, not Need.
-22. Then leave the zone: the **"BiS list looks out of date"** window should appear
+22. Let one expire without clicking: it should cast **Greed**, not Need.
+23. Then leave the zone: the **"BiS list looks out of date"** window should appear
     listing what was vetoed. "Keep them" changes nothing; "Stop rolling these"
     unticks those items (they stay on the list — check in `/plbismgr`).
 
 ### G. Preview (no dungeon needed)
-23. Rules page → **Show Loot Advisor**. Press it three times: green "Gear Upgrade",
+24. Rules page → **Show Loot Advisor**. Press it three times: green "Gear Upgrade",
     gold "High Value", red "BiS, but lower". That is the cheapest way to check the
     down arrow renders.
 
@@ -166,13 +175,32 @@ What round 1 did not reach, highest-risk first:
   messages.
 - **`ZONE_CHANGED_NEW_AREA` timing** on the way out of an instance.
 - **`Interface\Buttons\Arrow-Down-Up`** existing in this build.
-- **One number worth a second look.** In the round-1 dry run of a *feet* item, the
-  report read `score 58.3 vs target 21.9`, while `[Enchant strip check]` scored the
-  equipped feet at 58.3 in the same report — those should be the same number, since
-  the target for a single-slot group is the equipped item. The gloves dry run agreed
-  exactly (43.7 vs target 45.8 = the equipped gloves), so it is not the code path
-  being wrong for everything; a cold or half-filled tooltip scan on that one slot is
-  the likeliest explanation. Re-run `/plbisdebug item` on a feet item and compare the
-  target against the equipped feet row. If it is still low, that is a real bug in
-  `ns.effectiveTarget` and it makes BiS Check **under**-fire (everything looks like
-  an upgrade), so it is worth catching.
+- **The 21.9. Highest-priority unknown on this branch, and it may be an argument
+  against the enchant strip.** In the round-1 feet dry run the report read
+  `score 58.3 vs target 21.9`, taken with **Ignore enchants ON**. The same report's
+  `[Enchant strip check]` scored those same boots at `real 58.3 / link 58.3 /
+  stripped 47.3`. So the target should have been **47.3**, and two `SetHyperlink`
+  reads of the same stripped link disagreed inside one report.
+
+  Nothing else explains 21.9 comfortably. The win ledger was empty, `INVTYPE_FEET`
+  is a single-slot group with nothing to pick the wrong member of, and the gloves
+  dry run in the second report agreed exactly (43.7 vs target 45.8 = the equipped
+  gloves) — but gloves carry no enchant, so that run never went near the strip path.
+  Every candidate explanation left is about the stripped read: `SetHyperlink`
+  returning nominal, unscaled stats for a scaled item when the cache is cold (which
+  is precisely what LibScaledStats warns about and what `real` vs `link` is supposed
+  to catch — a snapshot can only prove it was faithful *that time*), or the strip
+  landing on the wrong link field on Ascension's layout.
+
+  It matters twice: a target read too low makes BiS Check **under**-fire (everything
+  looks like an upgrade), and if the strip is the cause then "measured safe" is not
+  safe enough and the box should come back off.
+
+  **How to settle it:** `/plbisdebug item ` + shift-click a **feet** item. The report
+  now prints `target from equipped: slot 8 = N` under the score, so compare `N`
+  against the `stripped` column for slot 8 in the same report.
+  - Equal → round 1 was a one-off cold read; note it and move on.
+  - Different → the stripped read is unstable. **Untick Ignore enchants** and send
+    both reports; the strip goes back off until that is understood.
+  - Also worth one run with the box **off**: if the target then matches `real`
+    exactly, that isolates it to the strip path rather than to `effectiveTarget`.
