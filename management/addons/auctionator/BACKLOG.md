@@ -878,10 +878,8 @@ this case (epic vs rare); the item's real link is available too, via the bag slo
 
 **Where the work divides.** These are separable and worth keeping separate:
 
-1. **Split the scan buckets on something that works** — quality, or required/item level, or the
-   listing's item id — instead of texture, and record the row's link in `AddScanItem` so a
-   bucket knows what it holds. Contained inside `AuctionatorScan.lua`; fixes the *displayed*
-   list on the Sell and Buy tabs. **One decision left — see "What part 1 ran into" below.**
+1. ~~**Split the scan buckets on something that works**~~ — **DONE 2026-08-19, option B.** See
+   "Part 1 as built" below.
 2. ~~**Give the Sell tab the item it was actually handed**~~ — **DONE 2026-08-19, and the
    mechanism was not the one written here.** See "Part 2 as built" below.
 3. **Teach the price database about variants.** The real one. See the recommended shape below
@@ -944,10 +942,10 @@ new buckets do about the database:
 | **B. Give `AtrScan` a `baseName` separate from `itemName`** — buckets split, both write `gAtr_ScanDB[baseName]`, last one wins | Keeps the DB key clean and stops new trailing-space rows forever. "Last wins" is arbitrary, but no worse than today's single merged number, and it is the shape part 3 wants to build on. |
 | **C. Merge the low prices across same-`baseName` buckets at finalise** | Preserves today's DB behaviour *exactly* while fixing the display. Most code, and it is throwaway once part 3 lands. |
 
-**Recommendation: B.** It is the only one that leaves the database in the shape part 3 is
-designed to extend, and its arbitrariness is bounded — one of two real prices for a name, where
-today you also get one number for a name. A is a silent price increase, which this addon should
-never do. C is work that part 3 deletes.
+**Recommendation: B**, and **the owner chose B (2026-08-19)**. It is the only one that leaves the
+database in the shape part 3 is designed to extend, and its arbitrariness is bounded — one of two
+real prices for a name, where today you also get one number for a name. A is a silent price
+increase, which this addon should never do. C is work that part 3 deletes.
 
 **The three existing trailing-space rows** need no migration under any option: none has an
 unsuffixed twin, so they answer no lookup and shadow nothing. Stripping the space and adopting
@@ -957,6 +955,77 @@ same pass, not worth a `__dbversion` bump.
 **Deferred to part 3, deliberately:** recording each row's link in `AddScanItem`. It costs a
 `GetAuctionItemLink` per listing across a full scan, and nothing reads it until the database can
 store a variant. Doing it now would buy nothing and slow every scan.
+
+### Part 1 as built (2026-08-19) — option B
+
+Owner chose **B** from the three options above: keep the item's real name on the scan, carry the
+variant in the *lookup key*, so a split can never invent a database row.
+
+**The split is on QUALITY.** It comes free from `GetAuctionItemInfo` in the batch loop and it
+separates the reported rare/epic pair. Deliberately **not** on level: Ascension scales gear per
+instance, so listings of one item carry many required levels and a level split would shatter
+every gear row into dozens of buckets.
+
+**What it replaces:** a texture comparison that never fired where it mattered, because variants
+share an icon. Measured on the real database — 3 splits in 5267 entries, all recipes or a
+container, **none on gear**, which is the case that was reported.
+
+**The implementation is smaller than option B sounded**, because the separation already had a
+natural home. `Atr_FindScan` was doing two jobs with one argument: keying `gAllScans` *and*
+naming the scan. Splitting that argument in two —
+
+```lua
+Atr_FindScan (scanKey, init, itemName)   -- itemName defaults to scanKey
+```
+
+— means a variant bucket is `gAllScans["Name#q4"]` while its `scn.itemName` stays `"Name"`. So:
+
+- **No UI change was needed.** Roughly fifteen call sites read `activeScan.itemName` for the
+  recommendation text, the sell header, the search summary, posting and the undercut popup. They
+  all still get a real name. Had the variant gone in `itemName` (the first way I wrote it) every
+  one of them would have printed `Bloodforged Imperial Jewel#q4`.
+- **No finaliser change was needed** either: `gAtr_ScanDB[scn.itemName]` is already the real name.
+  Two buckets of one name both write it and the last wins — no worse than the single merged
+  number it wrote before, and it is what part 3 extends.
+- **The two rows distinguish themselves for free.** Each bucket calls `UpdateItemLink` with its
+  own listing's link, so each gets its own `itemTextColor` — the rare row renders green and the
+  epic row purple under one name, which is the honest picture.
+
+**One trap found while writing it:** the primary bucket's quality has to be *adopted from the
+first listing of this search*, not stored at creation, because `AtrSearch:Init` seeds that bucket
+before the loop runs and `Atr_FindScan` hands back a scan object reused from an earlier search.
+`AtrScan:Init` now clears `variantQuality`, and the loop adopts it on first sight; without both
+halves a stale quality from a previous search would split the very first listing.
+
+`scn.texture` is left in `Init` as a vestige and marked as one — nothing else ever read it.
+
+### The old rows are retired at load
+
+`Atr_RetireVariantSpaceKeys` (`Auctionator.lua`, called from `Atr_InitScanDB`) strips the
+trailing-space keys the old hack wrote. Where the real name has no row the value is **adopted**
+— it is a real observed price and the alternative is that item having none; where both exist the
+real name wins untouched. Run every load rather than behind a migration flag: once the rows are
+gone it is one pass that finds nothing, and no `__dbversion` bump is needed.
+
+**Verified against the owner's real 5471-entry database** (not reasoned — the shipped function
+was extracted and run over the actual saved variables):
+
+```
+price DB: 5471 -> 5471 entries        mean DB: 5471 -> 5471 entries
+removed 3   ["Plans: Splintering Staff ", "Plans: Effigy of Overgrowth ",
+             "Duskrune Chopper Cache (Backsheath) "]
+adopted 3   (the same three, unsuffixed)
+no other row mutated;  trailing-space keys left: 0
+```
+
+**Still not verified in game**, and this is the part to watch: the split itself has only been
+reasoned. The check is to search a name with two qualities on the auction house and confirm two
+rows appear, coloured by their own quality, and that the price database afterwards still holds
+one row for that name.
+
+**Deferred to part 3, deliberately:** recording each row's link in `AddScanItem`. It costs a
+`GetAuctionItemLink` per listing across a full scan and nothing reads it until the database can
+store a variant.
 
 ### Recommended shape for part 3 (2026-08-19)
 
