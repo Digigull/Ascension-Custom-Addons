@@ -103,8 +103,9 @@ local gFdr_Redir		 = { skip = nil, told = false };
 local gFdr_AutoMinLvl	 = nil;		-- min-level value we auto-filled (nil = user-owned)
 local gFdr_AutoUsable	 = false;	-- we checked Usable automatically
 local gFdr_UsableUserOff = false;	-- user unchecked it after our auto-check; respect that
-local gFdr_AutoReq		 = false;	-- we checked My Lvl automatically
-local gFdr_ReqUserOff	 = false;	-- user unchecked it after our auto-check
+-- (My Lvl had a gFdr_AutoReq/gFdr_ReqUserOff pair to match; it no longer
+--  auto-ticks, so there is nothing to remember overriding.  See
+--  Fdr_AutoFillMinLevel.)
 local gFdr_LvlMin		 = nil;		-- client-side level range (read live at rebuild)
 local gFdr_LvlMax		 = nil;
 local gFdr_ReqCap		 = nil;		-- "My Lvl": hide items requiring more than this
@@ -3584,28 +3585,12 @@ local function Fdr_AutoFillMinLevel ()
 		end
 	end
 
-	-- My Lvl checkbox: same auto/override etiquette as Usable
-	if (Atr_Finder_ReqCheck) then
-		if (hasGear) then
-			if (not Atr_Finder_ReqCheck:GetChecked()) then
-				if (gFdr_AutoReq) then
-					gFdr_AutoReq	= false;
-					gFdr_ReqUserOff	= true;
-				elseif (not gFdr_ReqUserOff) then
-					Atr_Finder_ReqCheck:SetChecked (true);
-					if (AUCTIONATOR_FINDER_SETTINGS) then AUCTIONATOR_FINDER_SETTINGS.reqOnly = true; end
-					gFdr_AutoReq = true;
-				end
-			end
-		else
-			if (gFdr_AutoReq and Atr_Finder_ReqCheck:GetChecked()) then
-				Atr_Finder_ReqCheck:SetChecked (nil);
-				if (AUCTIONATOR_FINDER_SETTINGS) then AUCTIONATOR_FINDER_SETTINGS.reqOnly = false; end
-			end
-			gFdr_AutoReq	= false;
-			gFdr_ReqUserOff	= false;
-		end
-	end
+	-- My Lvl is deliberately NOT auto-ticked here (owner's request, 2026-08),
+	-- though it used to be, on the same etiquette as Usable.  It is now purely
+	-- the user's: ticked from the checkbox's own OnClick, remembered in
+	-- AUCTIONATOR_FINDER_SETTINGS.reqOnly and restored at creation.  Nothing
+	-- here may write reqOnly -- doing so would overwrite that saved choice with
+	-- one the user did not make.
 
 	if (hasGear) then
 		if (cur == "" or (gFdr_AutoMinLvl and tonumber (cur) == gFdr_AutoMinLvl)) then

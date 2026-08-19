@@ -14,7 +14,7 @@ are the durable part.
 
 ---
 
-## 1. SELL tab — drop the header icon, keep the title, move the hover
+## 1. SELL tab — drop the header icon, keep the title, move the hover — DONE
 
 **Asked:** on the Sell tab remove the top icon, keep the title, and make hover-over possible
 on the sell item.
@@ -50,6 +50,58 @@ Two things to be careful of:
 
 **Open:** the drop zone (`Atr_Sell_DropZoneEnsure`, `Auctionator.lua:2443`) is a *separate*
 37px target in the left column and is not what this item is about. Leave it.
+
+**Revised on sight of it (owner, 2026-08-19).** The first cut hid the icon and moved the
+hover onto the name where the icon had been. Seeing it in game, the owner asked for the header
+band cleared outright instead: the item name goes into the left column, in the slot the
+"Drop an item here to sell" caption held; that caption drops to under the box; the hover moves
+to **the drop box**, so the tooltip is on the item you are actually selling; and the recommended
+price rows go with the icon. That is what is built.
+
+**Built.** All in `Auctionator.lua`; the XML is untouched.
+
+- **`Atr_Sell_HeaderApply`** (next to `Atr_Sell_SetHeaderName`) hides everything in
+  `ATR_SELL_HEADER_HIDDEN`: the icon, the "based on" note, and both recommended-price rows with
+  their captions. Hiding is **re-applied, not done once** — every one of those is a member of
+  `recommendElements`, which `Atr_ShowElems` shows wholesale after a post, and the icon is
+  additionally re-shown by `Atr_SetTextureButton`. So it is called from every path that rewrites
+  the header, and always *after* those calls.
+- **They stay in `recommendElements`.** `Atr_HideElems` is what hides them in the first place —
+  including the unconditional one on every tab switch — and nothing in the XML marks them hidden
+  at load. Dropping them from the table would leave them shown for one frame after login.
+- **The header is shared with the BUY tab**, where the icon still draws the searched item, so
+  `Atr_Sell_HeaderApply` is a no-op unless `Atr_IsTabSelected(SELL_TAB)`.
+- **The name moves into the column**, `TOP` of `Atr_SellControls` at `ATR_SELL_TITLE_Y`. It is a
+  region of `Atr_Main_Panel` anchored to a child frame, which is legal and needs no reparenting:
+  `Atr_SellControls` paints nothing, so there is no layer for it to disappear behind. It is in
+  `ATR_SELL_GEOM`, so leaving the tab puts it back in the header for BUY.
+- **`ATR_SELL_NAME_W` drops 215 → 160.** The budget is now the 170px column, not the header
+  strip, so it matches `ATR_SELL_HINT_W` for the same reason. Names chop harder than they did;
+  the full one is on the tooltip.
+- **The caption moves under the box**, anchored to the box's `BOTTOM` rather than to a column
+  offset, so it follows if the box moves.
+- **The price block below had to drop 8px** to clear it. `ATR_SELL_PRICE_Y` (-90, was -82 in the
+  XML) is now the origin every row under it is measured from — the `-94 / -128 / -140` and
+  `-162 / -124` literals were exactly these offsets from -82, so parameterising them changed
+  nothing and then moved the whole block at once. `Atr_StackPriceText` and `Atr_ItemPriceText`
+  are positioned from Lua for the first time, which is why they had to join `ATR_SELL_GEOM`.
+- **The tooltip is wired onto `Atr_SellControls_Tex`** from the layout, not the XML — the button
+  is shared with the panel's other tabs, the same reason the rest of this layout is built in
+  Lua. Nothing is clobbered: the XML gives that button `OnClick` and the two drag handlers, no
+  hover. An empty box shows nothing, since `Atr_ShowRecTooltip` has no link to open.
+- **`Atr_ShowRecTooltip` resolves its owner per call**, not once: `Atr_Idle` re-runs it every
+  frame while the tooltip is up, and `SetOwner` on a hidden frame anchors nothing. It picks the
+  drop box when that is *visible* — `IsVisible`, not `IsShown`, because a shown child of a
+  hidden parent still reports `IsShown` — and the header icon otherwise.
+
+**Left alone deliberately:** the emptied header band is *not* closed up. Raising the inventory
+into it would move the results block and the Current/Ledger tabs with it, which is a separate
+decision; `ATR_SELL_HB_Y` / `ATR_SELL_SF_Y` are where that would be tuned.
+
+**Verified** by `luac5.1 -p` and by reading every path that shows the icon, the price rows or the
+header name. **Not verified in-game** — the vertical arithmetic in the left column is the part
+to look at first: the caption now sits between the box and the "Buyout Price" label with 8px of
+clearance, computed from assumed `GameFontNormalSmall` metrics rather than measured.
 
 ---
 
@@ -303,7 +355,7 @@ grown set with no refresh plumbing.
 
 ---
 
-## 5. Finder — "My iLvL" should not default on
+## 5. Finder — "My iLvL" should not default on — DONE
 
 **Asked:** remove "My iLvL" as a default check.
 
@@ -330,6 +382,25 @@ Its `gFdr_AutoReq` / `gFdr_ReqUserOff` pair exists only to serve the auto-tick, 
 `AUCTIONATOR_FINDER_SETTINGS.reqOnly` is written from inside that block. Removing the auto-tick
 means the persisted setting has to be honoured from wherever the user's own click lands, or the
 checkbox will forget itself between sessions.
+
+**Built.** The `My Lvl` block is out of `Fdr_AutoFillMinLevel`, and `gFdr_AutoReq` /
+`gFdr_ReqUserOff` are gone with it — they existed only to remember an override of an auto-tick
+that no longer happens. `Usable` and the auto-filled minimum level box are untouched.
+
+**The persisted setting needed no new plumbing**, which is worth recording because the item
+above flagged it as the risk. `reqOnly` was already written by the checkbox's own `OnClick`
+(`AuctionatorFinder.lua:3954`) and already read back at creation
+(`reqchk:SetChecked (AUCTIONATOR_FINDER_SETTINGS.reqOnly …)`, `:3951`) — the auto-tick's writes
+were a *third* writer layered on top. Removing them leaves one writer and one reader, so the
+checkbox now remembers exactly the user's own last click. `Atr_Finder_ClearFilters` still
+clears it, which is correct: Clear Filters is a user action.
+
+The comment left in place says the auto-tick was removed on request and that nothing in that
+function may write `reqOnly` — the failure mode if it is ever re-added is silent, and it
+overwrites a saved choice the user did make.
+
+**Verified** by `luac5.1 -p` and by grepping that no reference to either removed global
+survives. **Not verified in-game.**
 
 ---
 
@@ -589,6 +660,159 @@ new `made link:` line in `/atrprofsort transmute` answers it in one command.
 
 ---
 
+## 12. NEW — same-name item variants share one price, and the Sell tab picks the wrong one
+
+**Seen, 2026-08-19.** The owner holds the **epic** `Bloodforged Imperial Jewel` (ilvl 61,
+requires 60, +9 Stamina). Ascension also has a **rare** one of the same name (ilvl 57, requires
+55, +7 Stamina). Only the rare is listed on the auction house at the moment. Dropping the epic
+into the Sell tab priced it off the rare's listings, and the two items' tooltips showed
+identical `Auction` (9g75s) and `Auction median` (12g33s75c) lines. `Vendor` matched too;
+`Disenchant` was the one line that differed (11s17c vs 18s94c).
+
+That last detail is the diagnosis, not a footnote. `Atr_CalcDisenchantPrice` is computed live
+from the item's own type, rarity and level (`AuctionatorHints.lua:2158`), so it splits the two.
+Everything that differed *not at all* is read from a table keyed by **name**.
+
+**This is not one bug, it is the addon's key.** Name is the primary key throughout:
+
+- `gAtr_ScanDB[name]` — the scanned auction price. Written at `AuctionatorScan.lua:668` and
+  `:1357`, read by the Sell recommendation, the Bazaar (`AuctionatorBazaar.lua:2938`), the
+  Finder's price DB (`AuctionatorFinderPriceDB.lua:159`, `:320`, `:401`) and the bag tooltip
+  (`AuctionatorHints.lua:287`).
+- `AUCTIONATOR_PRICING_HISTORY[itemname]` — your own posting history (`Auctionator.lua:3394`
+  onwards).
+- `gItemLinkCache[string.lower(itemName)]` — **one link per name**. `Atr_GetItemLink`
+  (`Auctionator.lua:443`) returns whichever variant was cached first, or whatever
+  `GetItemInfo(name)` happens to resolve to. `AtrScan:Init` seeds `self.itemLink` from it
+  (`AuctionatorScan.lua:152`), which is where "picks the first one seen" actually happens.
+- `AtrScan.items[name]` — the scan's own bucket per item.
+
+**There is already a variant split, and it is the wrong test.** `AuctionatorScan.lua:342`
+compares each listing's **texture** to the bucket's, and on a mismatch appends a space to the
+name to open a second bucket. Both Bloodforged Imperial Jewels use the same icon, so they land
+in one bucket. `GetAuctionItemInfo` hands that same loop `quality` and `level`, and
+`GetAuctionItemLink` hands it the item id — the loop uses neither for the split.
+
+**That split already writes to the price database, and it is ugly.** The space-suffixed name
+becomes the bucket's `itemName` (`AtrScan:Init`, `AuctionatorScan.lua:135`), and the finaliser
+writes `gAtr_ScanDB[scn.itemName]` (`:668`) — so **the live database already contains
+`"Some Item "` keys** wherever the texture test has fired. Two consequences:
+
+- **A dump measures the problem for free.** Grep the saved variables for keys with a trailing
+  space: that is the count of variant pairs the *texture* test caught. It is a floor, not the
+  answer — the Bloodforged case is precisely one the texture test misses — but it costs nothing
+  and it is real data about how common variants are on this server.
+- **Part 1 has a decision to make before any code**: whether the new split *replaces* the
+  trailing-space hack or sits alongside it, and what happens to the space-keyed rows already in
+  people's databases. Replacing it is the honest answer, but it orphans those rows and they
+  will keep answering lookups for a name nobody queries. That decision is not made yet, and it
+  is the only thing standing between part 1 and someone writing it.
+
+**And the raw data cannot be re-partitioned afterwards.** `AtrScan:AddScanItem`
+(`AuctionatorScan.lua:381`) stores only stack size, buyout, owner and page. The row's link is
+consulted once, under `if (scn.itemLink == nil …)` at `:356`, so a bucket that already has a
+link from the name cache never learns what the listings actually are.
+
+**The Sell side has a signal it throws away.** `GetAuctionSellItemInfo()` returns
+`name, texture, count, quality, canUse, price`. `Atr_SellItemButton_OnEvent`
+(`Auctionator.lua:1491`) reads all six and uses only `texture`. Quality alone would have split
+this case (epic vs rare); the item's real link is available too, via the bag slot that
+`Atr_LoadContainerItemToSellPane` already knows.
+
+**Where the work divides.** These are separable and worth keeping separate:
+
+1. **Split the scan buckets on something that works** — quality, or required/item level, or the
+   listing's item id — instead of texture, and record the row's link in `AddScanItem` so a
+   bucket knows what it holds. Contained inside `AuctionatorScan.lua`; fixes the *displayed*
+   list on the Sell and Buy tabs. **Not startable as written** — see the trailing-space note
+   above for the one decision to make first.
+2. **Give the Sell tab the item it was actually handed**, from `GetAuctionSellItemInfo`'s
+   quality or from the bag link, rather than resolving the name through `gItemLinkCache`.
+   Contained; fixes the recommendation for the item in the drop box.
+3. **Teach the price database about variants.** The real one. See the recommended shape below
+   — the summary is that it should *not* be a re-key.
+
+### Recommended shape for part 3 (2026-08-19)
+
+The owner's instinct — put the item's identifying data in the price database — is right. The
+obvious way to do it is wrong, or at least much more expensive than it looks.
+
+**Do not re-key the database from name to item id.** Keep the name as the key and let the
+*value* carry variants:
+
+```
+gAtr_ScanDB[name] = 123456                          -- legacy: one price, no variants known
+gAtr_ScanDB[name] = { ["1234:0"] = 97500,           -- itemId:suffixId
+                      ["5678:0"] = 1233375,
+                      dflt      = 97500 }           -- what a name-only lookup answers
+```
+
+Three reasons, in order of how much they matter:
+
+- **A dozen callers have a name and nothing else, and always will.** `Atr_GetDEitemName(itemID)`
+  turns an id into a name and then looks the name up (`AuctionatorHints.lua:617`); the
+  profession code prices reagents and scrolls by name (`AuctionatorFinderProfession.lua:64`,
+  `:220`, `:640`, `:1136`); the Bazaar prices `rec.name` (`AuctionatorBazaar.lua:2938`);
+  `Atr_GetAuctionBuyout` is a public API taking either (`AuctionatorAPI.lua:47`). Under
+  id-keying every one of those becomes unanswerable, and the fix is to build a name→ids index
+  and a policy for picking among them — which is the variant-in-value design, arrived at by the
+  expensive route and bolted on the side. Build it deliberately instead.
+- **Migration becomes free.** A legacy `number` value simply *is* "one variant, unknown id".
+  A `type(v) == "number"` branch handles every pre-existing row forever, so there is no
+  `__dbversion` 3 rewrite and no risk of eating someone's database. The codebase already does
+  exactly this shape for `gAtr_MeanDB` (`if (type (m) ~= "table") then m = {} end`,
+  `AuctionatorScan.lua:1360`).
+- **It stages.** Only callers that actually know the variant need to change, one at a time —
+  the Sell tab, the AH/bag tooltip (which already computes `itemID`, `AuctionatorHints.lua:2160`),
+  the sell-browser rows (`Auctionator.lua:1792`, `:2184`). Everything else keeps working
+  unchanged on the default.
+
+**The seam is already there.** `Atr_GetAuctionPrice` and `Atr_GetMeanPrice`
+(`AuctionatorHints.lua:273`, `:318`) are the only two accessors, and **both already take
+"itemName or itemID"** — and then convert the id to a name and throw it away. Giving them an
+optional variant key, and making the id path keep the id instead of discarding it, is where
+this change lives. `gAtr_MeanDB` needs the same treatment or the two tooltip lines will
+disagree between variants.
+
+**Use `itemId:suffixId` as the variant key, not the bare item id.** The format is already in
+this addon: `AUCTIONATOR_PRICING_HISTORY[name]["is"]` stores `itemId:suffixId:uniqueId`
+(`Auctionator.lua:4548`). Drop `uniqueId` — it is per-instance and would shatter the table.
+Keeping `suffixId` matters because random-suffix gear is the *other* variant axis and the two
+should not be conflated.
+
+  Note while reusing that format: the existing parser has a copy-paste bug at
+  `Auctionator.lua:4558` — `uniqueId = tonumber(suffixId)` reads the wrong variable. Harmless
+  today because the value is only used to rebuild an item string where `uniqueId` rarely
+  matters, but do not propagate it.
+
+**What will actually break downstream, and it is not the readers.** Changing the value type
+breaks the code that *walks* the table:
+
+- `Atr_GetAHVariantEstimate` (`AuctionatorHints.lua:250`) iterates `pairs(gAtr_ScanDB)` and
+  filters on `type(price) == "number"`. Variant rows become tables and would be **silently
+  dropped from the estimate** — random-suffix gear quietly gets worse. This is the one to fix
+  in the same commit, not after.
+- `/atrprices list` does the same filter (`AuctionatorFinderPriceDB.lua:384`), and
+  `Fdr_PriceDB_ResolveName` (`:265`) tests `gAtr_ScanDB[name] ~= nil` to decide a name is known.
+- `Atr_GetDBsize` (`AuctionatorScan.lua:1066`) is a bare count and is fine.
+
+**Note the two variant systems are unrelated and must stay that way.**
+`Atr_GetAHVariantEstimate` handles random-suffix gear, where the variants have *different
+names* ("Dreamdust Slippers of the Owl"). This item is the opposite case: *same* name,
+different item. Neither mechanism can serve the other, and a fix that tries to unify them will
+get both wrong.
+
+**Do part 1 first regardless.** The database has nothing to store until the scan can tell the
+variants apart: `AtrScan.items[name]` is one bucket per name and `AddScanItem` never records
+the row's link. Part 3 without part 1 is a schema with no data.
+
+**Not yet known:** how common this is on Ascension. Two same-name variants of one gem is one
+sighting; whether the server does this broadly (custom itemsets, difficulty tiers) decides
+whether 3 is worth its cost or whether 1 and 2 are the whole fix. A `SavedVariables` dump would
+answer it — duplicate names carrying wildly split prices are visible in the DB.
+
+---
+
 ## Suggested order
 
 Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without any code
@@ -608,6 +832,11 @@ Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without
 5. **Item 8 (Advisor)** — scope after the Ledger, and only once the price-series question
    under "Still open" is answered.
 6. **Item 9** — investigate with ledger data in hand.
+
+**Item 12** does not have a place in that line yet. Its parts 1 and 2 are small and could go
+any time; part 3 changes the price database's value shape and should not be started before
+someone has looked at a `SavedVariables` dump to see how many names actually collide. Part 3's
+design is settled either way — see the recommended shape in the item.
 
 ## What a SavedVariables dump answers
 
@@ -661,3 +890,6 @@ from the same account, which the supplied file did not include.
   series. The advisor cannot exist without a series, and that answer decides whether item 8 is
   a feature or a data-plumbing project.
 - **Item 9:** parked by the owner until item 7 lands.
+- **Item 12:** how many item names on this server carry more than one variant. One sighting so
+  far (`Bloodforged Imperial Jewel`, rare and epic). The answer decides how much part 3 is
+  worth, not what shape it takes — that is settled (variant-in-value, not a re-key).
