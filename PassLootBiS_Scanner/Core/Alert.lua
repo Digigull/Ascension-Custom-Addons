@@ -23,8 +23,22 @@ local PREFIX = "|cff33ff99PLBiS|r "   -- matches BiSRollLog's chat color
 
 -- The two cues, one per reason-to-need (§7). Distinct on purpose: with both
 -- toggles on you can tell an upgrade from a gold flag without looking away.
-local UPGRADE_SOUND = "LEVELUP"
-local VALUE_SOUND   = "LOOTWINDOWCOINSOUND"
+--
+-- A cue is either a SoundEntries.dbc kit name (`kit`, played with PlaySound) or a
+-- file shipped in this addon (`file`, played with PlaySoundFile). Note that BOTH
+-- fail SILENTLY on this client -- a misspelt kit name and a missing file are
+-- equally soundless, with no error -- which is what the options window's Test
+-- button exists to catch.
+local UPGRADE_SOUND = { kit = "LEVELUP" }
+
+-- Shipped coin jingle (Sounds/coin.ogg), supplied by the addon owner. Converted
+-- for this client: trimmed of 74ms leading silence, lifted ~13.5dB (the source
+-- peaked at -19.7dBFS, some 20dB under WoW's own effects, so it vanished under
+-- combat), and resampled 48kHz stereo -> 44.1kHz mono, which is what the 3.3.5
+-- sound engine is built around. Sounds/coin.mp3 is the same audio in the other
+-- format the client accepts: if the .ogg turns out silent on an Ascension build,
+-- swap the extension on the line below -- that is the whole fallback.
+local VALUE_SOUND   = { file = "Interface\\AddOns\\PassLootBiS_Scanner\\Sounds\\coin.ogg" }
 
 -- Format a delta fraction as a signed percent, or "new" for an empty slot.
 local function fmtDelta(delta)
@@ -138,7 +152,11 @@ end
 function Alert.PlayCues(info, db)
 	local cues = Alert.cues(info, db)
 	for _, cue in ipairs(cues) do
-		PlaySound(cue)
+		if cue.file then
+			PlaySoundFile(cue.file)
+		else
+			PlaySound(cue.kit)
+		end
 	end
 	return #cues
 end

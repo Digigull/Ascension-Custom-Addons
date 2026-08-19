@@ -88,6 +88,13 @@ The two sound cues have no thresholds of their own — `sound` fires on any upgr
 flag (the gold threshold decides that one). The options window has a **Test**
 button next to them that plays exactly what is ticked.
 
+The upgrade cue is the client's own `LEVELUP`; the high-value cue is the coin
+jingle shipped in `Sounds/coin.ogg` (`coin.mp3` is the same audio, kept as a
+one-line fallback if a given client won't play the Ogg). To use your own, drop a
+44.1 kHz Ogg or MP3 in `Sounds/` and point the constant at the top of
+`Core/Alert.lua` at it — both a missing file and a bad sound name fail silently
+on this client, so use the Test button to confirm.
+
 ## Saved variables
 
 - `PassLootBiS_ScannerDB` — account-wide settings (threshold, output surfaces,
