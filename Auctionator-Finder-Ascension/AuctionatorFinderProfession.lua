@@ -96,13 +96,36 @@ end
 -- merchant window and stores unlimited-stock, gold-priced Trade Goods).  So
 -- visiting any enchanting supplier prices it -- and prices it at what THIS
 -- character actually pays, reputation discount included, which is the part a
--- hardcoded number could never get right.  The constant below is only the
--- cold-start value for an install that has never opened such a vendor.
+-- hardcoded number could never get right.
+--
+-- THIS SERVER SPLITS THE VELLUM BY TARGET.  Retail 3.3.5 consolidated everything
+-- into one "Enchanting Vellum" (item 38682) in patch 3.2, and assuming that here
+-- was wrong: the owner's price database carries "Enchanting Vellum - Armor",
+-- which means the pre-3.2 armor/weapon split is what Ascension actually ships.
+-- Enchants are named "Enchant <Target> - <Effect>" -- observed targets are
+-- Chest, Boots, Bracer, Gloves, Shield, Cloak, Weapon and 2H Weapon -- so the
+-- target word chooses the vellum, and only the two Weapon ones take the weapon
+-- vellum.
+--
+-- Vellums are therefore resolved by NAME, not by a hardcoded ID, with several
+-- candidates tried in order so this survives a rename or a server that did
+-- consolidate after all.  The ID needed for the NPC price lookup is recovered
+-- from the item cache; when it cannot be, the auction price still answers.
 
-ATR_ENCHANT_VELLUM_ID   = 38682;        -- Enchanting Vellum
-ATR_ENCHANT_VELLUM_COLD = 24000;        -- 2g40s: owner's observed price, 2026-08.
-                                        -- Superseded the moment a vendor is seen.
-ATR_SCROLL_PREFIX       = "Scroll of ";
+ATR_ENCHANT_VELLUM_COLD = 24000;        -- 2g40s: owner's observed vendor price,
+                                        -- 2026-08.  Last resort only -- superseded
+                                        -- the moment any vellum can be priced.
+
+-- Candidate item names per vellum kind, best first.  "Enchanting Vellum - Armor"
+-- is confirmed present on Ascension; the rest are the retail names, kept so a
+-- consolidated or renamed server still resolves.
+ATR_ENCHANT_VELLUM_NAMES = {
+    armor  = { "Enchanting Vellum - Armor",  "Armor Vellum III",  "Enchanting Vellum" },
+    weapon = { "Enchanting Vellum - Weapon", "Weapon Vellum III", "Enchanting Vellum" },
+};
+
+ATR_SCROLL_PREFIX = "Scroll of ";       -- confirmed against the owner's price DB:
+                                        -- 25 scrolls, every one "Scroll of <enchant>".
 
 -- The item name an enchant is sold under.  Idempotent, so it is safe to call on
 -- a name that is already a scroll.
@@ -139,11 +162,37 @@ function Atr_ProfSort_RowIsEnchant(i)
     return (tonumber(Atr_GetAuctionPrice(scroll)) or 0) > 0;
 end
 
--- What one vellum costs, in copper.  Priced through the shared cascade, so a
--- learned NPC price beats whatever someone is relisting vellums for.
-function Atr_Craft_VellumCost()
-    local p = Atr_Craft_ReagentPrice(ATR_ENCHANT_VELLUM_ID, nil);
-    if (p and p > 0) then return p; end
+-- Which vellum an enchant needs, from the target word in its name.  Anything
+-- that is not a weapon takes the armor vellum, which is the safe default: armor
+-- targets outnumber weapon ones heavily, and an unparsed name is far more likely
+-- to be a new armor slot than a new weapon type.
+function Atr_Craft_VellumKind(enchantName)
+    if (type(enchantName) ~= "string") then return "armor"; end
+    local target = enchantName:match("^Enchant%s+(.-)%s+%-");
+    if (target and target:find("Weapon", 1, true)) then return "weapon"; end
+    return "armor";
+end
+
+-- The item ID behind an item NAME, via the client's cache, or nil when it has
+-- never been seen.  Only needed because NPC prices are ID-keyed while vellums
+-- are identified here by name.
+local function Atr_Craft_IDForName(name)
+    if (type(name) ~= "string" or type(GetItemInfo) ~= "function") then return nil; end
+    local _, link = GetItemInfo(name);
+    if (link == nil or zc == nil or zc.ItemIDfromLink == nil) then return nil; end
+    return tonumber((zc.ItemIDfromLink(link)));   -- extra parens: returns 3 values
+end
+
+-- What one vellum of the given kind costs, in copper.  Each candidate name goes
+-- through the shared cascade, so a learned NPC price beats whatever someone is
+-- relisting vellums for; the cold constant is only reached when none of the
+-- names can be priced at all.
+function Atr_Craft_VellumCost(kind)
+    local names = ATR_ENCHANT_VELLUM_NAMES[kind or "armor"] or ATR_ENCHANT_VELLUM_NAMES.armor;
+    for _, name in ipairs(names) do
+        local p = Atr_Craft_ReagentPrice(Atr_Craft_IDForName(name), name);
+        if (p and p > 0) then return p; end
+    end
     return ATR_ENCHANT_VELLUM_COLD;
 end
 
@@ -172,11 +221,12 @@ function Atr_Craft_Harvest()
                 -- produces no item at all: those are keyed by the NAME of the
                 -- scroll they are sold as, which the by-name lookup in
                 -- Atr_Craft_GetCraftCost then finds unchanged.  isEnchant is
-                -- carried into the record so the cost path knows to add a vellum.
+                -- carried into the record as the vellum KIND, so the cost path
+                -- adds the right one without re-parsing the name.
                 local madeID, isEnchant;
                 if (Atr_Craft_IsEnchantLink(madeLink)) then
                     madeID    = Atr_Craft_ScrollName(rowName);
-                    isEnchant = true;
+                    isEnchant = Atr_Craft_VellumKind(rowName);   -- armor / weapon
                 else
                     madeID = ItemID and tonumber((ItemID(madeLink))) or nil;   -- extra parens: ItemID returns 3 values
                 end
@@ -259,9 +309,10 @@ function Atr_Craft_GetCraftCost(link, name)
     end
 
     -- An enchant is only sellable once it has been applied to a vellum, so the
-    -- vellum is as much a reagent as the dust is.  Flagged at harvest time.
+    -- vellum is as much a reagent as the dust is.  Which vellum is decided at
+    -- harvest time from the enchant's target and stored on the record.
     if (rec.vellum) then
-        total = total + Atr_Craft_VellumCost();
+        total = total + Atr_Craft_VellumCost(rec.vellum);
     end
 
     local made = rec.made or 1;
@@ -484,9 +535,10 @@ function Atr_ProfSort_RowCost(i)
         total = total + price * (tonumber(rcount) or 1);
     end
 
-    -- The vellum an enchant has to be applied to before it can be sold.
+    -- The vellum an enchant has to be applied to before it can be sold; armor
+    -- and weapon vellums are different items at different prices.
     if (Atr_ProfSort_RowIsEnchant(i)) then
-        total = total + Atr_Craft_VellumCost();
+        total = total + Atr_Craft_VellumCost(Atr_Craft_VellumKind((GetTradeSkillInfo(i))));
     end
 
     return math.floor(total / made);
@@ -923,12 +975,19 @@ if (SlashCmdList) then
         add("  open profession rows:   " .. open .. "  (recipes ranked: " .. #order .. ", priced: " .. priced .. ")");
         add("  last error:             " .. (Atr_ProfSort_LastError or "(none)"));
 
-        -- Vellum: what an enchant's mandatory extra reagent is costing us, and
-        -- whether that is a real learned vendor price or the cold-start guess.
-        local npcVellum = Atr_GetNPCPrice and tonumber(Atr_GetNPCPrice(ATR_ENCHANT_VELLUM_ID)) or nil;
-        add("  vellum (item " .. ATR_ENCHANT_VELLUM_ID .. "):    " .. Atr_ProfSort_Money(Atr_Craft_VellumCost())
-            .. ((npcVellum and npcVellum > 0) and "  (learned from a vendor)"
-                                              or  "  (COLD-START GUESS - open an enchanting supplier)"));
+        -- Vellums: what an enchant's mandatory extra reagent costs, per kind, and
+        -- which candidate name actually answered.  A kind with no name priced is
+        -- running on the cold-start constant and says so.
+        for _, kind in ipairs({ "armor", "weapon" }) do
+            local via;
+            for _, nm in ipairs(ATR_ENCHANT_VELLUM_NAMES[kind]) do
+                if (Atr_Craft_ReagentPrice(nil, nm)) then via = nm; break; end
+            end
+            add("  vellum (" .. kind .. "):" .. string.rep(" ", 10 - string.len(kind))
+                .. Atr_ProfSort_Money(Atr_Craft_VellumCost(kind))
+                .. (via and ("  via " .. via)
+                        or  "  (NOTHING PRICED - using the cold-start constant)"));
+        end
 
         -- Per-row detail for a name filter.
         local filter = tostring(msg or ""):gsub("^%s+", ""):gsub("%s+$", "");
