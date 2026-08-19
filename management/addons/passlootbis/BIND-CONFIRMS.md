@@ -135,13 +135,37 @@ loot slot N` in the trace, the root cause above is a diagnosis and not a result.
 Second in-game round (2026-08, owner, full dungeon run): still no auto-confirm line.
 The trace holds three greed rolls the addon cast and three `CONFIRM_LOOT_ROLL n: not
 our roll, leaving the popup` lines (ids 4, 9, 8), and the owner had to click Okay by
-hand a few times. **That correlation is unexplained and the widening does not
-explain it away** — either those three prompts really were hand-cast rolls, or our
-own casts were failing the `CastRolls` identity check, and the run cannot tell the
-two apart because the old trace line did not say. Widening the scope makes the
-symptom go away either way, which is why it shipped; the origin word on the new
-auto-confirm line is what will finally answer it. **If the next run shows
-`addon-cast, link changed` or `addon-cast, roll no longer live`, there is a real bug
-underneath and this section is the reason to keep looking.**
+hand a few times.
+
+**Owner's testimony, asked directly: they did not click Need or Greed on any of
+them.** That is the load-bearing fact, because nothing else raises this popup —
+`CONFIRM_LOOT_ROLL` fires only in response to a `RollOnLoot` call, so those rolls
+were ours and the `CastRolls` identity check refused our own casts. **This is
+therefore a live bug and not merely a scoping decision** — the widening removes the
+symptom, but something is wrong underneath and the ledger is the place to look.
+
+Two things about reading that report, both of which caught me out once:
+
+- **The 41 captured lines were the whole window, not a tail.** The ring holds 400
+  (`MAX_LINES`) and `DebugVar` starts **off** at every login (`Core/Constants.lua`),
+  so a report showing well under 400 lines is everything since `/plbisdebug on`.
+  Inside that window: three addon greed rolls, three refused prompts, zero
+  auto-confirms. The owner's impression that *some* items confirmed themselves
+  earlier in the run is not contradicted by the trace — it is simply not covered by
+  it, because tracing was not on yet.
+- **A module's `Debug` never reaches the ring.** `PasslootBiS.Prototypes:Debug`
+  (`Core/ModulesGUI.lua`) `Pour`s to chat instead of calling `DebugCapture`. So the
+  absence of `ConfirmBoP CONFIRM_LOOT_ROLL` lines in `[Trace]` says nothing about
+  whether that module ran.
+
+The leading hypothesis for the refusal is that `GetLootRollItemLink(RollID)` does not
+answer during `CONFIRM_LOOT_ROLL` on this client — the ledger stores a link at cast
+time and compares it at confirm time, and a nil there fails the compare for every
+BoP roll we make. The client's own `GroupLootFrame` handler uses
+`GetLootRollItemInfo` at that moment, not the link, so FrameXML is no evidence
+either way. The new origin word settles it: **`addon-cast, roll no longer live`
+confirms this hypothesis, `addon-cast, link changed` points at rollID recycling
+instead, and a plain `hand-cast` would mean the ledger entry was never written and
+the fault is on the cast side.**
 
 The single-setting merge and the widening are both reasoned and syntax-checked only.
