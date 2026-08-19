@@ -114,13 +114,20 @@ arithmetic: `GetTradeSkillNumMade` is returning 1 (or nothing) for that recipe o
 That is the thing to verify first, and it is cheap — add the yield to the `/atrprofsort`
 diagnostic output and read it off a live Alchemy window.
 
-Three outcomes, and only one needs the manual box:
+**Decided (owner, 2026-08-19): add the diagnostic first, and do not build the manual box until
+it has been read in-game.** Three outcomes, and only one needs the box:
 
 1. `GetTradeSkillNumMade` returns 3 → our maths is right and the error is elsewhere
    (most likely the reagent price, or the produced item's own auction price). Re-open.
 2. It returns `1, 3` (min 1, max 3) → take `max`, or the midpoint. One-line fix, no UI.
 3. It returns `1, 1` or nils → the client genuinely does not expose it. **Then** build the
    manual override.
+
+The diagnostic itself: `/atrprofsort` already exists
+(`AuctionatorFinderProfession.lua:735`) and already walks the open profession, so this is a
+few added `add(...)` lines, not a new command. Print both returns of `GetTradeSkillNumMade`
+per row, separately — the whole question is whether the second differs from the first, and
+today's code reads only the first — alongside the cost and sell price it derived.
 
 **If the manual override is built:** a small numeric box on the trade skill window, applying
 to the selected recipe, default 1, persisted per recipe (by produced item ID, falling back to
@@ -165,7 +172,8 @@ deliberately — so pre-selecting before a scan needs nothing extra to persist.
 
 **Asked:** remove "My iLvL" as a default check.
 
-**Ambiguity, needs the owner's answer.** There is no checkbox labelled "My iLvL". The Finder
+**Resolved (owner, 2026-08-19): this is the `My Lvl` checkbox.** There is no checkbox labelled
+"My iLvL" — the wording in the request is the label read loosely. The Finder
 has two that auto-tick themselves whenever the selected categories include gear, in
 `Fdr_AutoFillMinLevel` (`AuctionatorFinder.lua:3558`):
 
@@ -179,8 +187,14 @@ There is also a **Lvl** *column* and an **iLvl** *column* (`:4210`), and the sam
 auto-fills the minimum level box with `UnitLevel("player") - 5` (`:3612`) — which is the only
 other thing in the Finder that defaults itself from the character.
 
-"My Lvl" is the best match for what was written. Confirm which before touching it, then just
-drop that checkbox out of the auto-tick block, leaving it available manually.
+**The work:** drop `Atr_Finder_ReqCheck` out of the auto-tick block in `Fdr_AutoFillMinLevel`,
+leaving the checkbox available to tick manually. `Usable` and the auto-filled minimum level box
+keep their current behaviour — the owner asked for neither.
+
+Its `gFdr_AutoReq` / `gFdr_ReqUserOff` pair exists only to serve the auto-tick, and
+`AUCTIONATOR_FINDER_SETTINGS.reqOnly` is written from inside that block. Removing the auto-tick
+means the persisted setting has to be honoured from wherever the user's own click lands, or the
+checkbox will forget itself between sessions.
 
 ---
 
@@ -215,11 +229,18 @@ Ships as a checkbox next to `Usable`/`My Lvl`, active only when the results cont
 
 **Asked:** a new ledger recording all purchases and sales.
 
-**Naming collision, flag it now.** "Ledger" is already taken: it is tab 2 of `Atr_ListTabs`
+**Naming, resolved (owner, 2026-08-19).** "Ledger" was already taken: tab 2 of `Atr_ListTabs`
 (`Auctionator.xml:1004`), the *price-history* view of the currently-scanned item, rendered by
 `Atr_ShowHistory` (`Auctionator.lua:4867`). It has nothing to do with the player's own
-transactions. Two things called Ledger in one addon will be confusing; either rename the new
-one (Journal? Books? Transactions?) or rename the old tab (it is really "History").
+transactions.
+
+**The existing tab is renamed to "History"** — which is what it actually shows; note
+`Atr_ShowHistory` already sets its column heading to `ZT("History")` (`Auctionator.lua:4878`),
+so the tab label was the odd one out. **"Ledger" is then free for the new transaction record.**
+
+The rename touches the tab's `text` attribute in `Auctionator.xml:1004` and any localisation of
+it; `Atr_ShowWhichRB(2)` and the `PanelTemplates_SetTab` calls key off the numeric id, not the
+label, so nothing functional moves.
 
 **What has to be captured.**
 
@@ -295,11 +316,22 @@ columns for a real case. Recorded here only so the observation is not lost.
 6. **Item 8 (Advisor)** — scope after the Ledger.
 7. **Item 9** — investigate with ledger data in hand.
 
-## Open questions for the owner
+## Answered by the owner, 2026-08-19
 
-- **Item 5:** is "My iLvL" the **My Lvl** checkbox, the **Usable** checkbox, or the
-  auto-filled minimum level box? All three default themselves from your character.
-- **Item 7:** the name. Two things called "Ledger" is a problem — rename the new feature, or
-  rename the existing history tab?
-- **Item 3:** confirm the yield reading in-game before any UI is built (the arithmetic is
-  already yield-aware, so a manual box may be unnecessary).
+- **Item 5:** "My iLvL" means the **My Lvl** checkbox (`Atr_Finder_ReqCheck`). Stop it
+  auto-ticking; leave `Usable` and the min-level auto-fill as they are.
+- **Item 7:** rename the **existing** tab to **History**; "Ledger" becomes the new
+  transaction record.
+- **Item 3:** **diagnostic first.** Read `GetTradeSkillNumMade`'s real returns off a live
+  Alchemy window before any manual-yield UI is written.
+
+## Still open
+
+- **Item 2:** whether Ascension names enchanting scrolls the stock way
+  (`"Scroll of " .. enchantName`). One in-game check against a known enchant settles it.
+- **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
+  ("Already known") string.
+- **Item 8:** what `AUCTIONATOR_PRICE_DATABASE` actually retains — a current price, or a dated
+  series. The advisor cannot exist without a series, and that answer decides whether item 8 is
+  a feature or a data-plumbing project.
+- **Item 9:** parked by the owner until item 7 lands.
