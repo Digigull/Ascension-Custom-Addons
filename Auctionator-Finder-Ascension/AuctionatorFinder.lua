@@ -113,9 +113,12 @@ local gFdr_ReqCap		 = nil;		-- "My Lvl": hide items requiring more than this
 local gFdr_SelectedStats = {};		-- ordered list of selected stat keys (filter, AND)
 local gFdr_SelectedSet	 = {};		-- same keys as a set for quick lookup
 local gFdr_StatKeys		 = {};		-- stats discovered in current results
+local gFdr_StatSeenKeys	 = {};		-- every stat key in the current results, pre-filter
 local FDR_MAX_STAT_COLS	 = 3;		-- columns shown for the first N selected stats
 local FDR_DPS_KEY		 = "ITEM_MOD_DAMAGE_PER_SECOND_SHORT";
 local gFdr_HasDPS		 = false;	-- weapons present -> automatic DPS column
+local FDR_STAT_LEARN_CAP = 400;		-- sanity cap on the learned stat set (see Fdr_LearnStatKeys)
+local gFdr_LearnCapTold	 = false;	-- cap complaint shown this session
 
 local gFdr_SearchText	= "";
 local gFdr_MinLevel		= nil;
@@ -185,6 +188,114 @@ local function Fdr_StatDisplayName (key)
 	-- fall back to a cleaned-up token: ITEM_MOD_ATTACK_POWER_SHORT -> Attack Power
 	s = key:gsub ("^ITEM_MOD_", ""):gsub ("_SHORT$", ""):lower():gsub ("_", " "):gsub ("^%l", string.upper);
 	return s;
+end
+
+-------------------------------------------------------------------------------
+-- learned stat keys
+--
+-- The stats dropdown used to list only the stats found in the CURRENT results,
+-- so on a fresh session it read "(clear all)" and nothing else until a search
+-- had run.  That is backwards: the stats are a FILTER (Fdr_PassesStatFilter --
+-- a selected stat a row lacks removes the row), so you want to set them BEFORE
+-- searching, not after.  The addon therefore remembers every stat key it has
+-- ever seen on equippable results and offers the accumulated set from then on.
+--
+-- Learn, don't seed (owner's decision, 2026-08-19).  There is deliberately no
+-- static ITEM_MOD_* list: stock constants may not apply on this server, and
+-- Ascension's custom stats are covered by no constant at all, so a seed would
+-- have needed discovery as a fallback anyway.  The list is empty on a fresh
+-- install and fills in as you search.
+--
+-- The set lives in AUCTIONATOR_FINDER_SETTINGS (already account-wide in the
+-- .toc, so no .toc change).  Account-wide is right: stats are a property of the
+-- server's items, not of a character.
+-------------------------------------------------------------------------------
+
+local function Fdr_LearnedStats ()
+
+	AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
+
+	if (type (AUCTIONATOR_FINDER_SETTINGS.statKeys) ~= "table") then
+		AUCTIONATOR_FINDER_SETTINGS.statKeys = {};
+	end
+
+	return AUCTIONATOR_FINDER_SETTINGS.statKeys;
+end
+
+-- Learn from the RAW discoveries (Fdr_AnalyzeResults's statSeen), NOT from
+-- gFdr_StatKeys.  This is the part that is easy to get wrong.  gFdr_StatKeys is
+-- what survives the ubiquitousConstant filter, and that filter is a judgement
+-- about ONE result set: a search narrow enough that every hit carries the same
+-- +10 Stamina drops Stamina, and Stamina is obviously worth remembering.
+-- Persisting the filtered list would make what gets learned depend on the shape
+-- of your past searches -- a stat could become harder to learn precisely
+-- because you once searched for it too precisely.  So ubiquitousConstant stays
+-- a DISPLAY rule for the current results only, and never touches this set.
+--
+-- FDR_DPS_KEY is excluded here for the same reason it is excluded there: DPS
+-- has its own dedicated column and is not offered as a stat filter.
+local function Fdr_LearnStatKeys (seen)
+
+	local learned = Fdr_LearnedStats ();
+
+	local n = 0;
+	for _ in pairs (learned) do n = n + 1; end
+
+	local key;
+	for key in pairs (seen) do
+		if (type (key) == "string" and key ~= FDR_DPS_KEY and not learned[key]) then
+
+			-- The set is bounded by the number of distinct stat keys that exist
+			-- on the server, so this cap should never be reached in normal use.
+			-- It is insurance against a malformed key being written in a loop --
+			-- and it complains rather than truncating silently, because a
+			-- silently capped list would just look like a stat that refuses to
+			-- be learned.
+			if (n >= FDR_STAT_LEARN_CAP) then
+				if (not gFdr_LearnCapTold) then
+					gFdr_LearnCapTold = true;
+					local s = string.format (FT("Auctionator Finder: the remembered stat list has reached its limit of %d keys, so new stats are no longer being learned.  This should not happen in normal use; run |cffffd200/run Atr_Finder_ForgetStats()|r to clear it."), FDR_STAT_LEARN_CAP);
+					if (zc and zc.msg_atr) then zc.msg_atr (s);
+					elseif (DEFAULT_CHAT_FRAME) then DEFAULT_CHAT_FRAME:AddMessage (s); end
+				end
+				break;
+			end
+
+			learned[key] = true;
+			n = n + 1;
+		end
+	end
+end
+
+-- global so it is macro-able: the only way to clear a set that has learned junk
+function Atr_Finder_ForgetStats ()
+
+	AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
+	AUCTIONATOR_FINDER_SETTINGS.statKeys = {};
+	gFdr_LearnCapTold = false;
+
+	local s = FT("Auctionator Finder: remembered stats cleared; they will be learned again as you search.");
+	if (zc and zc.msg_atr) then zc.msg_atr (s);
+	elseif (DEFAULT_CHAT_FRAME) then DEFAULT_CHAT_FRAME:AddMessage (s); end
+end
+
+-- learned keys the given result set does NOT contain, sorted for display
+local function Fdr_LearnedOnlyKeys (present)
+
+	local out = {};
+
+	local key;
+	for key in pairs (Fdr_LearnedStats ()) do
+		if (not present[key]) then
+			tinsert (out, key);
+		end
+	end
+
+	table.sort (out, function (a, b)
+		return Fdr_StatDisplayName (a) < Fdr_StatDisplayName (b);
+	end);
+
+	return out;
 end
 
 local function Fdr_GetStats (rec)
@@ -2691,6 +2802,19 @@ local function Fdr_AnalyzeResults ()
 		end
 	end
 
+	-- remember everything discovered, BEFORE the ubiquitousConstant filter
+	-- below throws any of it away -- see Fdr_LearnStatKeys for why the raw set
+	-- is the one worth persisting.
+	Fdr_LearnStatKeys (statSeen);
+
+	-- the raw key set is also what the dropdown dims against: a stat dropped by
+	-- ubiquitousConstant below is still IN these results, so selecting it will
+	-- not empty the list and it must not be dimmed as though it would.
+	gFdr_StatSeenKeys = {};
+	for key in pairs (statSeen) do
+		if (key ~= FDR_DPS_KEY) then gFdr_StatSeenKeys[key] = true; end
+	end
+
 	gFdr_StatKeys = {};
 	for key, s in pairs (statSeen) do
 		local ubiquitousConstant = (eqTotal >= 5 and s.count == eqTotal and s.min == s.max);
@@ -3800,12 +3924,41 @@ local function Fdr_StatDD_Initialize ()
 	info.notCheckable	= true;
 	UIDropDownMenu_AddButton (info);
 
+	-- Two groups, in this order: the stats present in the CURRENT results, then
+	-- the rest of the remembered set (Fdr_LearnedStats).  Before a search there
+	-- is only the second group, which is the whole point -- the dropdown used
+	-- to be empty until a scan had run.
+	local present = {};
+
 	local i;
 	for i = 1, #gFdr_StatKeys do
 		local key = gFdr_StatKeys[i];
+		present[key] = true;
 
 		info = UIDropDownMenu_CreateInfo and UIDropDownMenu_CreateInfo() or {};
 		info.text				= Fdr_StatDisplayName (key);
+		info.func				= function() Atr_Finder_ToggleStat (key); end;
+		info.checked			= (gFdr_SelectedSet[key] == true);
+		info.keepShownOnClick	= 1;
+		UIDropDownMenu_AddButton (info);
+	end
+
+	-- Dim the remembered-but-not-in-these-results entries.  Selecting one is
+	-- perfectly meaningful before a search, but once results are on screen it
+	-- will empty the list: Fdr_PassesStatFilter removes any row missing a
+	-- selected stat.  Dimming makes that predictable instead of surprising.
+	-- With no results to compare against there is nothing to warn about, so the
+	-- dimming only applies once a scan has produced stats.
+	local haveResults	= (next (gFdr_StatSeenKeys) ~= nil);
+	local learned		= Fdr_LearnedOnlyKeys (present);
+
+	for i = 1, #learned do
+		local key = learned[i];
+		local dim = (haveResults and not gFdr_StatSeenKeys[key]);
+
+		info = UIDropDownMenu_CreateInfo and UIDropDownMenu_CreateInfo() or {};
+		info.text				= dim and ("|cff808080"..Fdr_StatDisplayName (key).."|r")
+											or Fdr_StatDisplayName (key);
 		info.func				= function() Atr_Finder_ToggleStat (key); end;
 		info.checked			= (gFdr_SelectedSet[key] == true);
 		info.keepShownOnClick	= 1;
