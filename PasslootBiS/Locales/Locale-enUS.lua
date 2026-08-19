@@ -12,6 +12,14 @@ L["Allow Multiple Confirm Popups"] = true
 -- prompt, not the rolling one -- the per-rule "Confirm BoP" filter covers that,
 -- and the two are easy to mistake for each other.
 L["Auto-Confirm Bind on Pickup"] = true
+L["Auto-Confirm Bind on Roll"] = true
+L["AutoConfirmBindOnRoll_Desc"] = [=[Automatically answer Accept on the "this item will bind to you" warning that appears when the addon rolls Need or Greed on a bind-on-pickup item.
+
+Without this, an auto-roll on BoP loot stops at that popup and waits for a click -- which is most of what a boss drops, so it looks like the rule did not fire at all.
+
+Only applies to rolls the addon cast for you. A Need or Greed you click yourself still asks, as it always did.
+
+Disenchant rolls are NOT covered either: those still use the per-rule Confirm DE filter, which asks you first.]=]
 L["AutoConfirmBindOnPickup_Desc"] = [=[Automatically answer Accept on the "this item will bind to you" warning that appears when you take a bind-on-pickup item out of a loot window.
 
 Handy when a boss drops several BoP items at once: those unanswered popups pile up and can crowd out the roll confirmation popup, which is one way an auto-roll appears to be skipped.

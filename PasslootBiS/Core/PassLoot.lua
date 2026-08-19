@@ -5,9 +5,34 @@ local L = LibStub("AceLocale-3.0"):GetLocale("PasslootBiS")
 local LDB = LibStub:GetLibrary("LibDataBroker-1.1")
 
 local rollQueue = {}
+
+-- Rolls THIS ADDON cast, as RollID -> the item link that was up when we cast.
+-- Read by the CONFIRM_LOOT_ROLL handler so the bind warning is auto-answered only
+-- for rolls the addon made on your behalf. A Need you clicked yourself keeps its
+-- "this will bind to you" prompt -- that is the stock client's safety net on a
+-- deliberate action, and silently removing it is not what auto-rolling was asked
+-- to do.
+--
+-- The value is the LINK, not `true`, because rollIDs are recycled within a session.
+-- A mark left behind by a cast that never drew a confirm (any non-BoP roll) would
+-- otherwise make the next roll to reuse that id look like ours. Comparing the link
+-- at confirm time settles it without a timer to get wrong.
+PasslootBiS.CastRolls = {}
+
 function PasslootBiS:delay_rollOnLoot()
 	local nextRoll = table.remove(rollQueue, 1)
-	RollOnLoot(nextRoll.RollID, nextRoll.RollMethod)
+	-- Skip a roll that is no longer live. Entries sit here for up to 0.5s per queued
+	-- roll ahead of them, and in that window the user can roll by hand, the roll can
+	-- be cancelled, or the window can expire -- GetLootRollItemLink goes nil for all
+	-- three. RollOnLoot on a dead id throws, which would surface as a red error and
+	-- abandon this drain pass. (The same guard the first-see retry already uses.)
+	if nextRoll then
+		local link = (nextRoll.RollID > -1) and GetLootRollItemLink(nextRoll.RollID) or nil
+		if nextRoll.RollID <= -1 or link then
+			PasslootBiS.CastRolls[nextRoll.RollID] = link
+			RollOnLoot(nextRoll.RollID, nextRoll.RollMethod)
+		end
+	end
 	if rawequal(next(rollQueue), nil) then
 		PasslootBiS:CancelTimer(PasslootBiS.delay_rollOnLoot_active)
 		PasslootBiS.delay_rollOnLoot_active = nil
@@ -35,6 +60,13 @@ local defaults = {
 		-- a BoP item out of a loot window (Core/PassLoot.lua, LOOT_BIND_CONFIRM).
 		-- OFF by default: confirming binds the item for good, so it is the user's call.
 		["AutoConfirmBindOnPickup"] = false,
+		-- Auto-answer the "this item will bind to you" warning raised by a ROLL the
+		-- addon itself cast (CONFIRM_LOOT_ROLL). ON by default, unlike the pickup one
+		-- above: your rules already decided to roll, and the client is only asking you
+		-- to reconfirm that decision. With it off, auto-rolling silently does not work
+		-- on BoP loot -- which is most of what a boss drops.
+		-- Need/Greed only; disenchant keeps its own opt-in filter (Modules/ConfirmDE).
+		["AutoConfirmBindOnRoll"] = true,
 		["Rules"] = {},
 		-- Flipped by SeedDefaultRules() the first time a profile is loaded, so the
 		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
@@ -319,11 +351,19 @@ PasslootBiS.OptionsTable = {
 					["width"] = "full",
 					["disabled"] = function(info, value) return not StaticPopupDialogs.CONFIRM_LOOT_ROLL end, -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
 				},
+				["AutoConfirmBindOnRoll"] = {
+					["name"] = L["Auto-Confirm Bind on Roll"],
+					["desc"] = L["AutoConfirmBindOnRoll_Desc"],
+					["type"] = "toggle",
+					["order"] = 21,
+					["arg"] = { "AutoConfirmBindOnRoll" },
+					["width"] = "full",
+				},
 				["AutoConfirmBindOnPickup"] = {
 					["name"] = L["Auto-Confirm Bind on Pickup"],
 					["desc"] = L["AutoConfirmBindOnPickup_Desc"],
 					["type"] = "toggle",
-					["order"] = 21,
+					["order"] = 22,
 					["arg"] = { "AutoConfirmBindOnPickup" },
 					["width"] = "full",
 				},
@@ -1674,6 +1714,8 @@ function PasslootBiS:OnEnable()
 	-- Always registered; the handler no-ops unless the profile toggle is on, so
 	-- flipping the option takes effect immediately with no re-registration dance.
 	self:RegisterEvent("LOOT_BIND_CONFIRM")
+	-- Same shape: always registered, gated inside the handler on its own toggle.
+	self:RegisterEvent("CONFIRM_LOOT_ROLL")
 	self:RegisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
 	self:RegisterEvent("PLAYER_ENTERING_WORLD", "OnEnteringWorld")
 	-- End-of-run watch for BiS Check's cleanup suggestion (Core/BiSCleanup.lua).
@@ -1707,6 +1749,7 @@ function PasslootBiS:OnDisable()
 	-- events that only fire occassionally
 	self:UnregisterEvent("START_LOOT_ROLL")
 	self:UnregisterEvent("LOOT_BIND_CONFIRM")
+	self:UnregisterEvent("CONFIRM_LOOT_ROLL")
 	self:UnregisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
 	self:UnregisterEvent("PLAYER_ENTERING_WORLD")
 	self:UnregisterEvent("ZONE_CHANGED_NEW_AREA")
@@ -1851,6 +1894,82 @@ function PasslootBiS:AddLastRoll(RollMethod, itemObj, RuleID)
 		table.remove(self.LastRolls, 1)
 	end
 	table.insert(self.LastRolls, TextLine)
+end
+
+-- Confirm one loot roll's bind warning exactly once, whoever asks.
+--
+-- TWO independent things answer CONFIRM_LOOT_ROLL now: the profile-wide
+-- AutoConfirmBindOnRoll below, and the older per-rule "Confirm BoP" filter
+-- (Modules/ConfirmBoP.lua) for anyone who set one up. Both fire for the same roll
+-- when a ticked rule matches, so the confirm is funnelled through here and the
+-- second caller becomes a no-op. Returns true if THIS call is the one that
+-- confirmed.
+--
+-- The popup is hidden twice, immediately and on the next tick, for the same reason
+-- the pickup path does it: the client's own GroupLootFrame listens for this event
+-- too and the dispatch order between its handler and ours is undefined, so a popup
+-- raised after our first hide needs a second one to catch it.
+local confirmedRolls = {}
+function PasslootBiS:ConfirmRollOnce(RollID, RollMethod)
+	if (not RollID or confirmedRolls[RollID]) then
+		return false
+	end
+	confirmedRolls[RollID] = true
+	self:Debug("ConfirmLootRoll(" .. tostring(RollID) .. ", " .. tostring(RollMethod) .. ")")
+	ConfirmLootRoll(RollID, RollMethod)
+	StaticPopup_Hide("CONFIRM_LOOT_ROLL", RollID)
+	self:ScheduleTimer(function()
+		StaticPopup_Hide("CONFIRM_LOOT_ROLL", RollID)
+		-- The guard is per-roll and rollIDs are reused across a session, so it has to
+		-- be released or the second roll to reuse an id would never be confirmed.
+		-- Released here rather than on a fixed sweep: by now the confirm has either
+		-- landed or it never will.
+		confirmedRolls[RollID] = nil
+	end, 0.05)
+	return true
+end
+
+-- Bind-on-ROLL auto-confirm: CONFIRM_LOOT_ROLL -> ConfirmLootRoll(id, rollType).
+--
+-- This is the popup you get for rolling Need or Greed on a bind-on-pickup item --
+-- the one that stops a boss drop mid-auto-roll and waits for a click. Distinct
+-- from the pickup warning handled below, which is about taking an item out of a
+-- loot window rather than rolling for one.
+--
+-- Why this is profile-wide and not another per-rule filter. The addon HAS a
+-- per-rule filter for it (Modules/ConfirmBoP.lua's "Confirm BoP") and it works --
+-- but it only fires when the rule that matched has it ticked, and none of the
+-- rules a normal setup actually rolls with do. The two seeded starter rules
+-- ("Not Usable > Greed", "Catch All > Greed", Core/Constants.lua DefaultRules)
+-- carry no filters beyond their match condition, and neither do BiS-imported
+-- rules. So on live boss loot -- which is BoP, which is why this looks like an
+-- "epic items" problem -- the rule matched, the roll was cast, and then the
+-- confirm sat there unanswered because the matched rule had no Confirm BoP tick.
+-- A setting nobody's rules opt into is a setting that does not work.
+--
+-- Disenchant (rollType 3) is deliberately NOT auto-confirmed here. Rolling DE on
+-- someone else's upgrade is the one roll in this addon that can genuinely annoy a
+-- group, which is why Modules/ConfirmDE.lua makes you confirm the FILTER before it
+-- will auto-confirm the roll. That opt-in stands; this must not quietly undo it.
+function PasslootBiS:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
+	if (not self.db.profile.AutoConfirmBindOnRoll) then
+		return
+	end
+	if (type(RollID) ~= "number" or RollMethod == self.RollMethod.de) then
+		return
+	end
+	-- Only rolls the addon itself cast (see CastRolls). The event fires for a roll
+	-- you clicked by hand too, and answering that one for you would remove a prompt
+	-- the client puts on a deliberate action -- a different feature from the one
+	-- being asked for here, and not one anybody opted into.
+	local cast = self.CastRolls[RollID]
+	if (not cast or cast ~= GetLootRollItemLink(RollID)) then
+		self:Debug("CONFIRM_LOOT_ROLL " .. RollID .. ": not our roll, leaving the popup")
+		return
+	end
+	self.CastRolls[RollID] = nil
+	self:Debug("CONFIRM_LOOT_ROLL: auto-confirming roll " .. RollID)
+	self:ConfirmRollOnce(RollID, RollMethod)
 end
 
 -- Bind-on-pickup auto-confirm: LOOT_BIND_CONFIRM -> ConfirmLootSlot(slot).
@@ -2320,7 +2439,25 @@ function PasslootBiS:BiSManagerCommand(input)
 	end
 end
 
+-- /plbisdebug -- flip the Debug() trace on for a run. There was no way to turn
+-- DebugVar on short of editing Core/Constants.lua, which makes "tell me what the
+-- addon thought it was doing" an unanswerable question during in-game testing --
+-- and the roll/confirm path is the one place where the only evidence is timing.
+function PasslootBiS:DebugCommand(input)
+	input = tostring(input or ""):lower():gsub("%s", "")
+	if input == "on" then
+		self.DebugVar = true
+	elseif input == "off" then
+		self.DebugVar = false
+	else
+		self.DebugVar = not self.DebugVar
+	end
+	self:Print("debug trace " .. (self.DebugVar and "|cff33ff99on|r" or "|cffff0000off|r") ..
+		". Rolls, rule matches and bind confirms are logged to chat while it is on.")
+end
+
 if PasslootBiS.RegisterChatCommand then
+	PasslootBiS:RegisterChatCommand("plbisdebug", "DebugCommand")
 	PasslootBiS:RegisterChatCommand("plbismgr", "BiSManagerCommand")
 end
 
