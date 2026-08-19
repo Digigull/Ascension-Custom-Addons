@@ -929,6 +929,7 @@ function PasslootBiS:ApplyBiSManager()
 	-- keeps the priority the user gave the list and their Before Advisor tick --
 	-- deleting the rules here first (as this used to) threw both away on every apply.
 	BiS.ApplyToRules({ ids = ids, names = names, roll = roll, desc = base }, "replace", rules)
+	self:PartitionRules(rules) -- keep the two rule-list sections truthful
 
 	-- Selection committed; clear staging for this list.
 	self.BiSManagerStaging = self.BiSManagerStaging or {}
@@ -1572,6 +1573,7 @@ function PasslootBiS:DoBiSImport()
 	local ok = BiS.ApplyToRules(
 		{ ids = rollSet.ids, names = rollSet.names, roll = parsed.roll, desc = base },
 		"replace", rules)
+	self:PartitionRules(rules) -- keep the two rule-list sections truthful
 	if ok then
 		-- Stash this list's per-item manager metadata (ALL items — source + match
 		-- key) for the BiS Manager page. nil when the string carried no `mgr` block
@@ -1657,6 +1659,7 @@ function PasslootBiS:OnProfileChanged()
 	-- Now we check our rules to see if all variables are set.
 	-- We could check profile variables, but some modules need more than just setting defaults, they need to act on them.
 	self:CheckRuleTables()
+	self:PartitionRules() -- Before Advisor rules to the front; see the function's note
 	self:Rules_RuleList_OnScroll()
 	self:DisplayCurrentRule()
 	self:ResetCache()
@@ -2044,6 +2047,51 @@ function PasslootBiS:SeedDefaultRules()
 	for _, Rule in ipairs(self.DefaultRules or {}) do
 		table.insert(Profile.Rules, self:CopyTable(Rule))
 	end
+end
+
+-- Keep a rules array PARTITIONED: every rule ticked "Before Advisor" first, then
+-- everything else. That partition is not cosmetic -- it is what makes the rule
+-- list's two sections (Core/MainGUI.lua) the real roll order rather than a picture
+-- of one. Rules are evaluated top-down and the first match wins, so a rule that
+-- claims to be checked "before the advisor" has to actually sit above the rules
+-- that aren't.
+--
+-- The sort is STABLE, which is what gives ticking and unticking their obvious
+-- behaviour for free: a rule ticked at the bottom rises to the END of the Before
+-- Advisor block (below the ones already there, which it was below), and unticking
+-- one drops it to the HEAD of the block underneath (above the ones it was above).
+--
+-- `rules` defaults to the current profile's. Pass `TrackIndex` to follow one rule
+-- across the move: its new index comes back, so a caller can keep the selection on
+-- the rule the user was looking at instead of on whatever now holds that number.
+function PasslootBiS:PartitionRules(rules, TrackIndex)
+	rules = rules or self.db.profile.Rules
+	if (type(rules) ~= "table") then
+		return nil
+	end
+	local Tracked = TrackIndex and rules[TrackIndex]
+	local Before, After = {}, {}
+	for _, Rule in ipairs(rules) do
+		if (Rule.BeforeAdvisor) then
+			Before[#Before + 1] = Rule
+		else
+			After[#After + 1] = Rule
+		end
+	end
+	for Index = 1, #Before do
+		rules[Index] = Before[Index]
+	end
+	for Index = 1, #After do
+		rules[#Before + Index] = After[Index]
+	end
+	if (Tracked) then
+		for Index = 1, #rules do
+			if (rules[Index] == Tracked) then
+				return Index
+			end
+		end
+	end
+	return nil
 end
 
 -- We make sure each rule has a default value

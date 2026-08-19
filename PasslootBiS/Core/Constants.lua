@@ -60,7 +60,10 @@ PasslootBiS.FontRed = "|cffff0000"
 -- green = ready, yellow = present but not fully usable, FontRed = missing/off.
 PasslootBiS.FontGreen = "|cff33ff99"
 PasslootBiS.FontYellow = "|cffffd100"
-PasslootBiS.NumRuleListLines = 6
+-- Visible lines in EACH of the rule list's two sections (Before Advisor / After
+-- Advisor, Core/MainGUI.lua). Three apiece keeps the six rule lines the single
+-- list used to show, so the box only grew by the two headings and the divider.
+PasslootBiS.NumRuleSectionLines = 3
 PasslootBiS.NumItemListLines = 5
 PasslootBiS.RuleListLineHeight = 16
 PasslootBiS.ItemListLineHeight = 16

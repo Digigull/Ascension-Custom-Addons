@@ -17,6 +17,17 @@ L["BeforeAdvisor_Desc"] = [=[This rule beats the roll advisor.
 
 When it matches, its roll is cast straight away -- no confirm popup, and no advisor
 verdict overriding it.  Rules imported with a BiS list start with this ticked.]=]
+-- Rule list section headings and their tooltips (Core/MainGUI.lua).
+L["RuleSection_Before"] = "Before Advisor"
+L["RuleSection_Before_Desc"] = [=[Tried first, and rolled without asking the roll advisor.
+
+Tick a rule's "Before Advisor" box to move it up here; untick it to send it back
+down.  Numbered 01), 02), 03) so a number always says which section it is in.]=]
+L["RuleSection_After"] = "After Advisor"
+L["RuleSection_After_Desc"] = [=[Tried after every rule above, and the roll advisor gets its say on what they match.
+
+Up and Down reorder each section on its own -- a rule only crosses the line by its
+"Before Advisor" box.]=]
 L["Change the exception status of this filter."] = true
 L["Checking this will disable the exclusive bit to allow multiple confirmation of loot roll popups"] = true
 L["Checking this will prevent extra details from being displayed."] = true
