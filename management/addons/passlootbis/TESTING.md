@@ -16,6 +16,7 @@ of it is shaped the way it is.
 | E. Win ledger | **not run** |
 | F. BiS Check dry run | **PASS** — a BiS glove at -4% vs equipped gave `WOULD VETO`; a non-list item did not fire |
 | G. Preview | **not run** |
+| H. Usable dry run (round 3) | **PASS** — wearable downgrade → `usable: yes`; unwearable Mail → `usable: no`, `red line: R4 Mail` |
 
 Two changes came out of that round, so steps below are written against them:
 
@@ -190,15 +191,18 @@ The remaining steps need real loot only because they check the *trace*:
     a hardcoded `2 (Usable)` for every item ever scanned, so the round-1 Dire Maul
     trace showed the `Not Usable` rule matching three items the trace itself called
     usable. The filter was right; only its report was wrong.
-26. On an item ruled unusable the line now carries `red line: L3 <text>` — the
+26. On an item ruled unusable the line now carries `red line: R4 Mail` — the
     tooltip line painted in the unmet-requirement red (255,32,32), which is the whole
     basis for the verdict, prefixed with its position: `L`/`R` for the left or right
-    column, then the line number. **The position is the tell.** A requirement the
-    client itself refuses sits in the left column near the top; anything an addon
-    bolted on would land at the bottom or in the right column. The scan runs on our
-    own hidden `PasslootBiSTT` (`Libs/Libs.xml`) and nothing hooks it, so an addon
-    line should be impossible — an `R1` or a high `L` number would say otherwise.
-    Two things to check it against:
+    column, then the line number. Known vocabulary so far:
+    - `R4 Mail` — **an armour class you cannot wear.** The armour type sits in the
+      right column of the armour line and the client reddens just that word. Round 2
+      measured this on `Leggings of Destruction`; it is the commonest refusal.
+
+    *Superseded:* the position was originally documented as telling a client refusal
+    (left column, near the top) from an addon-added line (right column or bottom).
+    The first real measurement was `R4`, so the column says nothing about the source.
+    Two things to check the line against:
     - An **already-known recipe** or one needing a profession you lack should name
       that requirement. Those are the easy confirmations that the capture works.
     - **Anything you can plainly wear that comes back unusable** is the finding worth
@@ -240,10 +244,13 @@ What round 1 did not reach, highest-risk first:
   and equipped it. Worth remembering when reading two reports side by side: an
   equipped item can legitimately change into a higher forge of itself between runs.
 - **Why a wearable item reads as unusable.** Round 1 greeded a pair of level-54
-  leather boots on a level-60 leather wearer under the `Not Usable` rule. The
-  `red line:` capture added in step H exists to answer this; until a trace carries
-  one, it is unknown whether `Core/Cache.lua`'s red-text test is over-matching on
-  this client or Ascension really is refusing the item.
+  leather boots on a level-60 leather wearer under the `Not Usable` rule. Still open,
+  but narrowed: round 3 ran both controls through the dry run and the filter was
+  right on each — a wearable **downgrade** (`Shadefiend Boots`, -50%) came back
+  `usable: yes`, and an unwearable **Mail** item came back `usable: no` with
+  `red line: R4 Mail`. So the red-text test is neither fooled by a bad score nor
+  over-matching in general. Whatever reddened those boots was specific to them, and
+  the next one that turns up can be answered on the spot with `/plbisdebug item `.
   - **Ruled out: the BiS Scanner's own tooltip line.** The obvious suspect is the
     red downgrade text the scanner adds on hover, but it cannot reach this test
     twice over. `PassLootBiS_Scanner/Core/Tooltip.lua` hooks `GameTooltip` and
@@ -254,12 +261,22 @@ What round 1 did not reach, highest-risk first:
     reads. Even landing on the same frame it would not match.
 - **`ZONE_CHANGED_NEW_AREA` timing** on the way out of an instance.
 - **`Interface\Buttons\Arrow-Down-Up`** existing in this build.
-- **The 21.9. Highest-priority unknown on this branch, and it may be an argument
-  against the enchant strip.** In the round-1 feet dry run the report read
-  `score 58.3 vs target 21.9`, taken with **Ignore enchants ON**. The same report's
-  `[Enchant strip check]` scored those same boots at `real 58.3 / link 58.3 /
-  stripped 47.3`. So the target should have been **47.3**, and two `SetHyperlink`
-  reads of the same stripped link disagreed inside one report.
+- **The 21.9 — target half RESOLVED, score half still untested.** In the round-1
+  feet dry run the report read `score 58.3 vs target 21.9` with **Ignore enchants
+  ON**, where the `[Enchant strip check]` put those same equipped boots at `real 58.3
+  / link 58.3 / stripped 47.3` — so the target should have been 47.3. Round 3, same
+  equipped boots, same setting, dry-running `Shadefiend Boots`:
+
+  ```
+  score 23.5 vs target 47.3  -> -50%
+  target from equipped: slot 8 = 47.3
+  ```
+
+  The target is now exactly the stripped number. **What that does NOT yet prove is
+  the other side of the compare**: `Shadefiend Boots` carries no enchant, so its
+  `score` is the same either way. To close it, dry-run your own **equipped** Pads of
+  the Dread Wolf — with the strip working it must read `score 47.3`, not `58.3`. That
+  is a five-second check and it is the one still outstanding.
 
   Nothing else explains 21.9 comfortably. The win ledger was empty, `INVTYPE_FEET`
   is a single-slot group with nothing to pick the wrong member of, and the gloves

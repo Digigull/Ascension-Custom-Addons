@@ -34,13 +34,19 @@ local function getLine(Line, where)
 			-- on a leather-wearing character and left nothing to say which requirement the
 			-- client had painted red. Modules/Usable.lua appends this to its trace line.
 			--
-			-- The position is what tells the two candidate culprits apart, and it is the
-			-- reason this is not just the text. A requirement the CLIENT refuses sits in
-			-- the left column near the top ("L3", "L4"); anything an addon bolts on lands
-			-- at the bottom or in the right column. This tooltip is our own hidden
-			-- PasslootBiSTT (Libs/Libs.xml) and nothing else hooks it, so an addon line
-			-- SHOULD be impossible -- which is exactly the assumption worth printing
-			-- rather than trusting.
+			-- The position is worth having because the text alone does not say what KIND
+			-- of refusal this is. Measured examples (owner, 2026-08):
+			--   R4 Mail   -- an armour class you cannot wear. The armour type sits in the
+			--                RIGHT column of the armour line, and the client reddens just
+			--                that word. This is the commonest refusal by far.
+			--
+			-- SUPERSEDED, and worth stating because the wrong version was written down
+			-- first: the guess was that a client refusal lives in the left column near the
+			-- top and that a right-column red implied some addon had bolted a line on. The
+			-- very first measurement was R4, so the column says nothing about the source.
+			-- Nothing else hooks this tooltip anyway -- it is our own hidden PasslootBiSTT
+			-- (Libs/Libs.xml), and the BiS Scanner annotates GameTooltip/ItemRefTooltip
+			-- only, in a base colour the red test cannot see.
 			--
 			-- First red line rather than last, because later reds are usually knock-on: a
 			-- missing profession reddens the "Requires" line and the recipe's spell line.
