@@ -2876,6 +2876,14 @@ local function Fdr_AnalyzeResults ()
 		if (key ~= FDR_DPS_KEY) then gFdr_StatSeenKeys[key] = true; end
 	end
 
+	-- ANALYSIS (BACKLOG item 8): every Finder row already carries owner, count,
+	-- buyout and timeLeft, which is exactly what turnover needs -- so a watched
+	-- item accumulates from ordinary searching and the tab needs no scanner of
+	-- its own.  Guarded and pcall'd: an analysis error must never break a search.
+	if (type (Atr_An_ObserveResults) == "function") then
+		pcall (Atr_An_ObserveResults, gFdr_Results);
+	end
+
 	gFdr_StatKeys = {};
 	for key, s in pairs (statSeen) do
 		local ubiquitousConstant = (eqTotal >= 5 and s.count == eqTotal and s.min == s.max);

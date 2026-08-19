@@ -864,7 +864,53 @@ into a defensible sales estimate, and it costs nothing because the field is alre
 - **`owner` can come back nil** — `AtrSearch:ProcessBatch` already counts `numNilOwners` — so
   seller-count arithmetic needs a rule for unknown owners rather than treating them as one seller.
 
-### Suggested v1
+### v1 shipped 2026-08-19
+
+`AuctionatorAnalysis.lua`, `AUCTIONATOR_ANALYSIS` account-wide, and an **Analysis** main tab
+(15 sites tagged `-- ANALYSIS_TAB`). Built: **A1, A2, A3, A4, B1, E1, E2** — seller depth,
+listing turnover, the sold/expired split, seller concentration, the farm score, an item watchlist
+with groups, and scan freshness.
+
+**It needs no scanner of its own.** Every Finder result row already carries `owner`, `count`,
+`buyoutPrice` and `timeLeft`, so one guarded hook in `Fdr_AnalyzeResults` feeds it and a watched
+item accumulates from ordinary searching.
+
+**Watchlist by individual item, with named groups** (owner's choice — categories would blur the
+per-item turnover the farm score is built on). Items are added by typing a name or shift-clicking
+a link into the box; groups are free-text and the dropdown filters by them. `/atranalysis add`
+does the same from chat.
+
+#### The cadence effect, which the build surfaced rather than hid
+
+The sold/expired rule is: a listing gone from bucket B could not have expired if less than B's
+minimum remaining life has elapsed. That makes precision **a function of how often you scan**,
+not of the market — a Very Long listing is only a certain sale if you look again within 12 hours,
+a Long one within 2.
+
+A test case caught what that means in practice: with a **24-hour** gap, two listings that
+disappeared from Very Long came back as *ambiguous*, not sold — correctly, since they could have
+expired. Scan twice a day and almost everything is ambiguous; scan every couple of hours, which is
+exactly the cadence the owner described, and the ambiguity collapses.
+
+So the farm score is a **range**: the low end counts only provable sales, the high end also counts
+the ambiguous ones. Showing the low end alone would read as "nothing sells here" for anyone who
+scans slowly — a statement about them, not about the item. Ranking uses the upper bound, because
+for a slow scanner the lower bound is zero for everything and a ranking where everything ties is
+no ranking.
+
+**Verified** by `luac5.1 -p` and an offline test of the classification: a listing vanishing with
+12h+ left counts as sold; one vanishing from Short never does; the same Long listing counts as
+sold after 1 hour and ambiguous after 3; three identical listings from one seller are counted
+rather than set-merged (the Ledger's mail lesson, applied); rates are per elapsed day; a 10-day
+gap accumulates no observed time at all; and unwatching forgets the history. **Not verified in
+game.**
+
+#### Still to come
+
+B2/B3 (recipe ranking, reagent pressure), C (price trend — needs the dated series), D (the Ledger
+views, nearly free now), A5/A6 (listing lifetime, undercut churn).
+
+### Original v1 suggestion, for the record
 
 **A1 + A2 + A3 over a watchlist, with B1 as the headline number.** That is the owner's own idea,
 made rigorous by the `timeLeft` distinction, answering the question they actually asked ("what is
