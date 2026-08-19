@@ -104,9 +104,14 @@ function module:CONFIRM_DISENCHANT_ROLL(Event, RollID, RollMethod)
 	local ItemLink = GetLootRollItemLink(RollID)
 	self:Debug("ItemLink: " .. (ItemLink or "nil"))
 	if (self.ItemsAwaitingConfirmation[RollID] and self.ItemsAwaitingConfirmation[RollID][1] == ItemLink) then
-		self:Debug("ConfirmLootRoll(" .. RollID .. "," .. RollMethod .. ")")
-		ConfirmLootRoll(RollID, RollMethod)
-		StaticPopup_Hide("CONFIRM_LOOT_ROLL", RollID)
+		-- Through the shared once-guard, like ConfirmBoP. A disenchant roll can raise
+		-- CONFIRM_LOOT_ROLL as well as CONFIRM_DISENCHANT_ROLL, so the same roll can
+		-- reach a confirm twice; the guard makes the second a no-op.
+		--
+		-- Note the profile-wide AutoConfirmBinds deliberately SKIPS rollType 3,
+		-- so disenchant still only ever auto-confirms through this per-rule filter and
+		-- its "are you sure?" opt-in. Do not fold DE into that setting.
+		PasslootBiS:ConfirmRollOnce(RollID, RollMethod)
 		self.ItemsAwaitingConfirmation[RollID] = nil
 	end
 	--[=[

@@ -6,7 +6,21 @@ L["Active Filters_Desc"] = [=[Select a filter to modify, or shift-right-click to
 L["Add"] = true
 L["Add a new rule."] = true
 L["Add this filter."] = true
-L["Allow Multiple Confirm Popups"] = true
+-- General options: the one bind-confirm switch (Core/PassLoot.lua,
+-- CONFIRM_LOOT_ROLL + LOOT_BIND_CONFIRM). It replaced three boxes -- roll, pickup,
+-- and the popup-queue bit -- so the tooltip has to say all three things it now
+-- does, and the two it still deliberately does NOT do (hand-cast rolls,
+-- disenchant), because those are what a user reads this tooltip to find out.
+L["Auto-Confirm Bind Popups"] = true
+L["AutoConfirmBinds_Desc"] = [=[Automatically answer Accept on the "this item will bind to you" warning -- both the one the addon's own Need/Greed roll raises, and the one you get taking a bind-on-pickup item out of a loot window.
+
+Without this, an auto-roll on BoP loot stops at that popup and waits for a click -- which is most of what a boss drops, so it looks like the rule did not fire at all.
+
+It also lets the client show several of these prompts at once instead of queueing them one at a time, so anything not answered for you appears straight away.
+
+Two things it does not touch. A Need or Greed you click yourself still asks, as it always did. Disenchant rolls still use the per-rule Confirm DE filter, which asks you first.
+
+Careful: accepting binds the item to you permanently.]=]
 L["Available Filters"] = true
 L["Available Filters_Desc"] = [=[Select a filter to use.
 (Each filter must have at least one match)]=]
@@ -29,7 +43,6 @@ L["RuleSection_After_Desc"] = [=[Tried after every rule above, and the roll advi
 Up and Down reorder each section on its own -- a rule only crosses the line by its
 "Before Advisor" box.]=]
 L["Change the exception status of this filter."] = true
-L["Checking this will disable the exclusive bit to allow multiple confirmation of loot roll popups"] = true
 L["Checking this will prevent extra details from being displayed."] = true
 L["Clean Rules"] = true
 L["CLEAN RULES DESC"] = [=[Are you sure?
@@ -443,3 +456,40 @@ L["AdvisorStatus_ValueNoData_Tip"] = "Auctionator is loaded but has no prices ye
 L["AdvisorStatus_ValueReady_Tip"] = "Auction prices are available, so items worth gold are flagged even when they are not an upgrade."
 L["AdvisorStatus_PricesLine"] = "Prices known: %s items"
 L["AdvisorStatus_GoldLine"] = "Flags items worth %dg or more"
+
+-- BiS Check (2026-08): the roll advisor's third reason -- an item that is on your
+-- BiS list but scores BELOW what you would replace, so the rule is about to Need
+-- something worse than you already have. Core/RollAdvisor.lua vetoes the roll and
+-- shows the held-confirm window with this headline; Core/BiSCleanup.lua offers the
+-- end-of-run tidy-up. Keep the headline SHORT -- it shares one line with a down
+-- arrow in a window only 220px wide by default.
+L["RollAdvisor_BiSDowngrade"] = "BiS, but lower"
+L["AdvisorStatus_BiSLabel"] = "BiS Check"
+L["AdvisorStatus_BiSNoList"] = "No BiS list"
+L["AdvisorStatus_BiSNoList_Tip"] = "Nothing to check against: no BiS list is imported, so no roll can be a stale BiS pick. Import one on the Import BiS page."
+L["AdvisorStatus_BiSNoSpec_Tip"] = "No stat weights are selected, so nothing can be scored -- and a downgrade cannot be spotted without a score. Pick a spec with /plbisscan spec."
+L["AdvisorStatus_BiSReady_Tip"] = "A roll on a BiS-list item that scores below what you would replace is held for you instead of auto-rolled -- including on rules ticked Before Advisor."
+L["AdvisorStatus_BiSListsLine"] = "BiS lists watched: %d"
+
+-- The end-of-run cleanup suggestion (Core/BiSCleanup.lua). It only ever unticks
+-- "auto-roll" -- the item stays on the list -- and the wording has to make that
+-- plain, or accepting it reads as deleting your BiS list.
+L["BiSCleanup_Title"] = "BiS list looks out of date"
+L["BiSCleanup_Blurb"] = "These items are on your BiS list but scored below your gear this run. Untick them so they stop auto-rolling? They stay on the list either way."
+L["BiSCleanup_Apply"] = "Stop rolling these"
+L["BiSCleanup_Keep"] = "Keep them"
+L["BiSCleanup_More"] = "...and %d more."
+L["BiSCleanup_Done"] = "BiS Check: stopped auto-rolling on %d item(s). They are still on the list -- re-tick them in the BiS Manager."
+
+-- /plbisdebug (Core/DebugReport.lua). Chat on this client cannot be selected or
+-- copied, so the report goes into an EditBox and the title has to say what to do
+-- with it -- a copy box nobody knows to Ctrl+A is just a wall of text.
+L["DebugBox_Title"] = "PassLoot (BiS) diagnostic -- click the text, Ctrl+A, Ctrl+C"
+L["DebugCmd_On"] = "trace |cff33ff99on|r (buffered quietly). Do a run, then /plbisdebug show to copy it out."
+L["DebugCmd_Off"] = "trace |cffff0000off|r. What was already captured is kept until /plbisdebug clear or a reload."
+L["DebugCmd_ItemUsage"] = "usage: /plbisdebug item <shift-click an item here>"
+L["DebugCmd_Usage"] = [=[/plbisdebug           open the report + copy box
+/plbisdebug on|off    start / stop collecting the trace
+/plbisdebug chat      also echo trace lines to chat as they happen
+/plbisdebug clear     empty the trace
+/plbisdebug item <link>  dry-run one item through BiS Check (shift-click it in)]=]

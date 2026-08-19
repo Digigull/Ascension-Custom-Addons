@@ -5,9 +5,34 @@ local L = LibStub("AceLocale-3.0"):GetLocale("PasslootBiS")
 local LDB = LibStub:GetLibrary("LibDataBroker-1.1")
 
 local rollQueue = {}
+
+-- Rolls THIS ADDON cast, as RollID -> the item link that was up when we cast.
+-- Read by the CONFIRM_LOOT_ROLL handler so the bind warning is auto-answered only
+-- for rolls the addon made on your behalf. A Need you clicked yourself keeps its
+-- "this will bind to you" prompt -- that is the stock client's safety net on a
+-- deliberate action, and silently removing it is not what auto-rolling was asked
+-- to do.
+--
+-- The value is the LINK, not `true`, because rollIDs are recycled within a session.
+-- A mark left behind by a cast that never drew a confirm (any non-BoP roll) would
+-- otherwise make the next roll to reuse that id look like ours. Comparing the link
+-- at confirm time settles it without a timer to get wrong.
+PasslootBiS.CastRolls = {}
+
 function PasslootBiS:delay_rollOnLoot()
 	local nextRoll = table.remove(rollQueue, 1)
-	RollOnLoot(nextRoll.RollID, nextRoll.RollMethod)
+	-- Skip a roll that is no longer live. Entries sit here for up to 0.5s per queued
+	-- roll ahead of them, and in that window the user can roll by hand, the roll can
+	-- be cancelled, or the window can expire -- GetLootRollItemLink goes nil for all
+	-- three. RollOnLoot on a dead id throws, which would surface as a red error and
+	-- abandon this drain pass. (The same guard the first-see retry already uses.)
+	if nextRoll then
+		local link = (nextRoll.RollID > -1) and GetLootRollItemLink(nextRoll.RollID) or nil
+		if nextRoll.RollID <= -1 or link then
+			PasslootBiS.CastRolls[nextRoll.RollID] = link
+			RollOnLoot(nextRoll.RollID, nextRoll.RollMethod)
+		end
+	end
 	if rawequal(next(rollQueue), nil) then
 		PasslootBiS:CancelTimer(PasslootBiS.delay_rollOnLoot_active)
 		PasslootBiS.delay_rollOnLoot_active = nil
@@ -30,7 +55,17 @@ end
 local defaults = {
 	["profile"] = {
 		["Quiet"] = false,
-		["AllowMultipleConfirmPopups"] = false,
+		-- ONE switch for every "this item will bind to you" prompt this addon is
+		-- willing to answer (Core/PassLoot.lua, CONFIRM_LOOT_ROLL + LOOT_BIND_CONFIRM,
+		-- and the popup-queue bit in SetExclusiveConfirmPopupBit). It replaces the
+		-- three separate boxes this shipped with -- AutoConfirmBindOnRoll,
+		-- AutoConfirmBindOnPickup and AllowMultipleConfirmPopups -- which asked the
+		-- user to reason about three halves of one behaviour; see
+		-- management/addons/passlootbis/BIND-CONFIRMS.md.
+		-- ON by default: with it off, auto-rolling silently does not work on BoP loot,
+		-- which is most of what a boss drops.
+		-- Need/Greed only; disenchant keeps its own opt-in filter (Modules/ConfirmDE).
+		["AutoConfirmBinds"] = true,
 		["Rules"] = {},
 		-- Flipped by SeedDefaultRules() the first time a profile is loaded, so the
 		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
@@ -301,19 +336,20 @@ PasslootBiS.OptionsTable = {
 						},
 					},
 				},
-				["AllowMultipleConfirmPopups"] = {
-					["name"] = L["Allow Multiple Confirm Popups"],
-					["desc"] = L
-						["Checking this will disable the exclusive bit to allow multiple confirmation of loot roll popups"],
+				-- One box, not three. The popup-queue bit is not a separate decision
+				-- from the confirms: it only matters for prompts this setting is
+				-- already answering, so it follows the same switch.
+				["AutoConfirmBinds"] = {
+					["name"] = L["Auto-Confirm Bind Popups"],
+					["desc"] = L["AutoConfirmBinds_Desc"],
 					["type"] = "toggle",
 					["order"] = 20,
-					["arg"] = { "AllowMultipleConfirmPopups" },
+					["arg"] = { "AutoConfirmBinds" },
 					["set"] = function(info, value)
 						PasslootBiS:OptionsSet(info, value)
 						PasslootBiS:SetExclusiveConfirmPopupBit()
 					end,
 					["width"] = "full",
-					["disabled"] = function(info, value) return not StaticPopupDialogs.CONFIRM_LOOT_ROLL end, -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
 				},
 				["ShowMinimapButton"] = {
 					["name"] = L["Show Minimap Button"],
@@ -398,9 +434,47 @@ function PasslootBiS:OptionsGet(Info)
 	return Table[Info.arg[#Info.arg]]
 end
 
+-- Fold the three bind-confirm boxes this addon used to have into the one
+-- AutoConfirmBinds switch, once per saved profile.
+--
+-- The OLD roll key's presence is the trigger, not the new key's absence. AceDB
+-- rawsets scalar defaults straight into the profile table (copyDefaults), so
+-- AutoConfirmBinds is physically there and equal to `true` on a profile that has
+-- never heard of it -- "is the new key missing" can never answer yes, by rawget or
+-- otherwise. What DOES distinguish an old profile is a stored AutoConfirmBindOnRoll,
+-- and only a user who turned that box off has one: AceDB strips values equal to the
+-- default on the way out (removeDefaults), so a profile that left it alone stores
+-- nothing and lands on the new default of on -- which is the same answer.
+--
+-- The roll box is what decides, deliberately. It was the one that was on by default
+-- and the one that makes auto-rolling work at all, so turning it off was a real
+-- statement; the pickup box being ticked is not enough on its own to opt someone
+-- back in. All three old keys are then cleared, so a downgrade to an older build
+-- starts from that build's defaults rather than from half-migrated state.
+function PasslootBiS:MigrateBindConfirmOptions()
+	local Profile = self.db and self.db.profile
+	if (not Profile) then return end
+	local OnRoll = rawget(Profile, "AutoConfirmBindOnRoll")
+	if (OnRoll ~= nil) then
+		Profile.AutoConfirmBinds = OnRoll and true or false
+	end
+	Profile.AutoConfirmBindOnRoll = nil
+	Profile.AutoConfirmBindOnPickup = nil
+	Profile.AllowMultipleConfirmPopups = nil
+end
+
+-- The client ships CONFIRM_LOOT_ROLL with the `exclusive` bit, so only one bind
+-- prompt is on screen at a time and the rest queue behind it. That bit used to be
+-- its own option ("Allow Multiple Confirm Popups"); it is now the third thing
+-- AutoConfirmBinds governs, because it is not an independent decision -- it only
+-- ever changes what happens to prompts this addon is already answering. With
+-- auto-confirm on, letting the queue show at once means anything we deliberately do
+-- NOT answer (a roll you cast by hand, a disenchant) appears immediately instead of
+-- waiting behind a popup that is about to be hidden. With it off, the client's own
+-- behaviour is what the user asked for, so we put the bit back.
 function PasslootBiS:SetExclusiveConfirmPopupBit()
 	if (StaticPopupDialogs and StaticPopupDialogs.CONFIRM_LOOT_ROLL) then -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
-		if (self.db.profile.AllowMultipleConfirmPopups) then
+		if (self.db.profile.AutoConfirmBinds) then
 			StaticPopupDialogs.CONFIRM_LOOT_ROLL.exclusive = nil
 			StaticPopupDialogs.CONFIRM_LOOT_ROLL.multiple = 1
 		else
@@ -716,6 +790,53 @@ function PasslootBiS:BiSListRuleKeySet(base)
 		for _, tuple in ipairs(rules[nameIdx].Items) do set["name\0" .. tostring(tuple[1])] = true end
 	end
 	return set
+end
+
+-- Is this item on a BiS list that is CURRENTLY ROLLING, and if so which list?
+-- The host half of BiS Check: an advisor cannot see the BiS list (it lives in these
+-- rules), so this answer is put on the roll ctx for it (see ProcessLootRoll).
+--
+-- "Currently rolling" is the rule entries, not BiSManage. BiSManage is the full
+-- imported list including items the user has unticked, and an unticked item never
+-- produces a roll to warn about — warning on it would be noise about a decision the
+-- user already made.
+--
+-- Exception entries (the tuple's 3rd field) are skipped: an exception means "match
+-- everything EXCEPT this", so the item is explicitly NOT wanted and is the opposite
+-- of a BiS pick.
+--
+-- Deliberately uncached. It runs a handful of times per boss, costs one pass over
+-- the rules with an early exit, and allocates nothing — where a cache would need
+-- invalidating from import, Apply, delete, every rule edit and every profile
+-- switch, and would answer stale exactly when the user had just fixed their list.
+function PasslootBiS:IsBiSItem(id, name)
+	local rules = self.db and self.db.profile and self.db.profile.Rules
+	if type(rules) ~= "table" then return false, nil end
+	local idKey = id and tostring(id) or nil
+	if not idKey and not name then return false, nil end
+
+	for i = 1, #rules do
+		local rule = rules[i]
+		local base = rule and baseFromDesc(rule.Desc)
+		if base then
+			if idKey and type(rule.ItemIDs) == "table" then
+				for _, tuple in ipairs(rule.ItemIDs) do
+					if not tuple[3] and tostring(tuple[1]) == idKey then return true, base end
+				end
+			end
+			if name and type(rule.Items) == "table" then
+				for _, tuple in ipairs(rule.Items) do
+					-- Exact-match entries only. A BiS list only ever emits "Exact" names
+					-- (BiSImport invariant), and a substring rule the user hand-added to
+					-- the same list is not a BiS pick for a specific item.
+					if not tuple[3] and tuple[2] == "Exact" and tuple[1] == name then
+						return true, base
+					end
+				end
+			end
+		end
+	end
+	return false, nil
 end
 
 -- Gather ALL of a BiS list's items for the manager view. When the list has stored
@@ -1612,8 +1733,20 @@ function PasslootBiS:OnEnable()
 	BUCKET_PLAYER_LEVEL_UP = self:RegisterBucketEvent("PLAYER_LEVEL_UP", 1, "ClearItemCache")
 	-- events that only fire occassionally
 	self:RegisterEvent("START_LOOT_ROLL")
+	-- Always registered; the handler no-ops unless the profile toggle is on, so
+	-- flipping the option takes effect immediately with no re-registration dance.
+	self:RegisterEvent("LOOT_BIND_CONFIRM")
+	-- Same shape: always registered, gated inside the handler on its own toggle.
+	self:RegisterEvent("CONFIRM_LOOT_ROLL")
 	self:RegisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
-	self:RegisterEvent("PLAYER_ENTERING_WORLD", "ClearItemCache")
+	self:RegisterEvent("PLAYER_ENTERING_WORLD", "OnEnteringWorld")
+	-- End-of-run watch for BiS Check's cleanup suggestion (Core/BiSCleanup.lua).
+	-- Two events for one question ("did the zone change?"), because neither fires on
+	-- every route out of an instance; the handler de-duplicates on the zone name.
+	-- PLAYER_ENTERING_WORLD is the OTHER half and is handled via OnEnteringWorld --
+	-- AceEvent keeps ONE handler per event per object, so registering it a second
+	-- time here would silently REPLACE the item-cache reset rather than add to it.
+	self:RegisterEvent("ZONE_CHANGED_NEW_AREA", "BiSCleanup_ZoneCheck")
 	-- events that require the event details and also fire with BAG_UPDATE
 	C_Hook:Register(self, "BAG_ITEM_REMOVED, BAG_ITEM_COUNT_CHANGED")
 
@@ -1637,8 +1770,11 @@ function PasslootBiS:OnDisable()
 	self:UnregisterBucket(BUCKET_PLAYER_LEVEL_UP)
 	-- events that only fire occassionally
 	self:UnregisterEvent("START_LOOT_ROLL")
+	self:UnregisterEvent("LOOT_BIND_CONFIRM")
+	self:UnregisterEvent("CONFIRM_LOOT_ROLL")
 	self:UnregisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
 	self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+	self:UnregisterEvent("ZONE_CHANGED_NEW_AREA")
 	-- events that require the event details and also fire a BAG_UPDATE
 	C_Hook:Unregister(self, "BAG_ITEM_REMOVED, BAG_ITEM_COUNT_CHANGED")
 	self:UnregisterEvent("START_LOOT_ROLL")
@@ -1646,6 +1782,9 @@ end
 
 function PasslootBiS:OnProfileChanged()
 	-- this is called every time your profile changes (after the change)
+	-- Before the bit is set from it: the profile we just switched to may still be
+	-- carrying the three old bind-confirm keys.
+	self:MigrateBindConfirmOptions()
 	self:SetExclusiveConfirmPopupBit()
 	self.CurrentRule = 0
 	self.CurrentRuleUnknownVars = {}
@@ -1744,6 +1883,15 @@ function PasslootBiS:ClearItemCache(...)
 	QueueOperations["reset"] = true
 end
 
+-- The single PLAYER_ENTERING_WORLD handler. Two unrelated things want that event
+-- and AceEvent stores exactly ONE handler per event per object, so a second
+-- RegisterEvent for it replaces the first instead of adding to it. Anything else
+-- that comes to need this event belongs in here, not in another RegisterEvent.
+function PasslootBiS:OnEnteringWorld(...)
+	self:ClearItemCache(...)
+	self:BiSCleanup_ZoneCheck()
+end
+
 function PasslootBiS:ASCENSION_STORE_COLLECTION_ITEM_LEARNED(Event, ID, ...)
 	QueueOperations["IDs"][ID] = true
 end
@@ -1771,6 +1919,135 @@ function PasslootBiS:AddLastRoll(RollMethod, itemObj, RuleID)
 		table.remove(self.LastRolls, 1)
 	end
 	table.insert(self.LastRolls, TextLine)
+end
+
+-- Confirm one loot roll's bind warning exactly once, whoever asks.
+--
+-- TWO independent things answer CONFIRM_LOOT_ROLL now: the profile-wide
+-- AutoConfirmBinds below, and the older per-rule "Confirm BoP" filter
+-- (Modules/ConfirmBoP.lua) for anyone who set one up. Both fire for the same roll
+-- when a ticked rule matches, so the confirm is funnelled through here and the
+-- second caller becomes a no-op. Returns true if THIS call is the one that
+-- confirmed.
+--
+-- The popup is hidden twice, immediately and on the next tick, for the same reason
+-- the pickup path does it: the client's own GroupLootFrame listens for this event
+-- too and the dispatch order between its handler and ours is undefined, so a popup
+-- raised after our first hide needs a second one to catch it.
+local confirmedRolls = {}
+function PasslootBiS:ConfirmRollOnce(RollID, RollMethod)
+	if (not RollID or confirmedRolls[RollID]) then
+		return false
+	end
+	confirmedRolls[RollID] = true
+	self:Debug("ConfirmLootRoll(" .. tostring(RollID) .. ", " .. tostring(RollMethod) .. ")")
+	ConfirmLootRoll(RollID, RollMethod)
+	StaticPopup_Hide("CONFIRM_LOOT_ROLL", RollID)
+	self:ScheduleTimer(function()
+		StaticPopup_Hide("CONFIRM_LOOT_ROLL", RollID)
+		-- The guard is per-roll and rollIDs are reused across a session, so it has to
+		-- be released or the second roll to reuse an id would never be confirmed.
+		-- Released here rather than on a fixed sweep: by now the confirm has either
+		-- landed or it never will.
+		confirmedRolls[RollID] = nil
+	end, 0.05)
+	return true
+end
+
+-- Bind-on-ROLL auto-confirm: CONFIRM_LOOT_ROLL -> ConfirmLootRoll(id, rollType).
+--
+-- This is the popup you get for rolling Need or Greed on a bind-on-pickup item --
+-- the one that stops a boss drop mid-auto-roll and waits for a click. Distinct
+-- from the pickup warning handled below, which is about taking an item out of a
+-- loot window rather than rolling for one.
+--
+-- Governed by the single profile-wide Auto-Confirm Bind Popups switch, which also
+-- covers the pickup prompt below and the popup-queue bit. It used to be its own
+-- box (AutoConfirmBindOnRoll); the three were merged because they are three halves
+-- of one behaviour and splitting them only asked the user to get all three right.
+--
+-- Why this is profile-wide and not another per-rule filter. The addon HAS a
+-- per-rule filter for it (Modules/ConfirmBoP.lua's "Confirm BoP") and it works --
+-- but it only fires when the rule that matched has it ticked, and none of the
+-- rules a normal setup actually rolls with do. The two seeded starter rules
+-- ("Not Usable > Greed", "Catch All > Greed", Core/Constants.lua DefaultRules)
+-- carry no filters beyond their match condition, and neither do BiS-imported
+-- rules. So on live boss loot -- which is BoP, which is why this looks like an
+-- "epic items" problem -- the rule matched, the roll was cast, and then the
+-- confirm sat there unanswered because the matched rule had no Confirm BoP tick.
+-- A setting nobody's rules opt into is a setting that does not work.
+--
+-- Disenchant (rollType 3) is deliberately NOT auto-confirmed here. Rolling DE on
+-- someone else's upgrade is the one roll in this addon that can genuinely annoy a
+-- group, which is why Modules/ConfirmDE.lua makes you confirm the FILTER before it
+-- will auto-confirm the roll. That opt-in stands; this must not quietly undo it.
+function PasslootBiS:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
+	if (not self.db.profile.AutoConfirmBinds) then
+		return
+	end
+	if (type(RollID) ~= "number" or RollMethod == self.RollMethod.de) then
+		return
+	end
+	-- Only rolls the addon itself cast (see CastRolls). The event fires for a roll
+	-- you clicked by hand too, and answering that one for you would remove a prompt
+	-- the client puts on a deliberate action -- a different feature from the one
+	-- being asked for here, and not one anybody opted into.
+	local cast = self.CastRolls[RollID]
+	if (not cast or cast ~= GetLootRollItemLink(RollID)) then
+		self:Debug("CONFIRM_LOOT_ROLL " .. RollID .. ": not our roll, leaving the popup")
+		return
+	end
+	self.CastRolls[RollID] = nil
+	self:Debug("CONFIRM_LOOT_ROLL: auto-confirming roll " .. RollID)
+	self:ConfirmRollOnce(RollID, RollMethod)
+end
+
+-- Bind-on-pickup auto-confirm: LOOT_BIND_CONFIRM -> ConfirmLootSlot(slot).
+--
+-- This is the OTHER BoP prompt, and it is not the one the ConfirmBoP/ConfirmDE
+-- modules answer. Those two answer the *roll* confirmation (CONFIRM_LOOT_ROLL /
+-- CONFIRM_DISENCHANT_ROLL) and are per-rule filters, because a roll has a RollID
+-- and a matched rule behind it. This one fires when you take a BoP item straight
+-- out of a loot window -- a master-loot award, personal loot, or whatever is left
+-- in the corpse once the rolls are done. It carries only a loot slot: no RollID,
+-- no rule, nothing to hang a per-rule filter off.
+--
+-- It had its own toggle at first, off by default, on the argument that confirming
+-- binds an item for good on an action the addon did not initiate. Superseded: the
+-- prompt only ever appears because you chose to take that item, so "yes" is the
+-- answer in every case that has come up, and a second box did nothing but split one
+-- behaviour across two switches you had to get right together. It now follows the same
+-- Auto-Confirm Bind Popups setting as the roll prompt above -- so turning that on
+-- does mean BoP pickups stop asking.
+--
+-- Why this is more than a convenience. The client has a small fixed pool of
+-- StaticPopup frames, and CONFIRM_LOOT_ROLL ships with the `exclusive` bit set
+-- (SetExclusiveConfirmPopupBit above clears it while this setting is on), so only
+-- one of them shows at a time by default. A boss that drops several BoP items at
+-- once leaves a stack of unanswered LOOT_BIND popups sitting in that pool --
+-- exactly the thing that can crowd out the roll-confirm popup our own BoP rolls
+-- have to go through. Answering these as they arrive keeps the
+-- queue empty and the roll path clear.
+--
+-- Dispatch order: the client's own LootFrame listens for this same event and
+-- raises the popup itself, and whether its handler runs before or after ours is
+-- undefined. So we hide the dialog twice -- once now (it went first) and once on
+-- the next tick (it went second, and the popup appeared after our first hide).
+-- Both hides are keyed to this slot, which is what the client stores as the
+-- dialog's `data`, so a popup for some other slot is never touched.
+function PasslootBiS:LOOT_BIND_CONFIRM(Event, Slot)
+	if (not self.db.profile.AutoConfirmBinds) then
+		return
+	end
+	if (type(Slot) ~= "number") then
+		return
+	end
+	self:Debug("LOOT_BIND_CONFIRM: auto-confirming loot slot " .. Slot)
+	ConfirmLootSlot(Slot)
+	StaticPopup_Hide("LOOT_BIND", Slot)
+	self:ScheduleTimer(function()
+		StaticPopup_Hide("LOOT_BIND", Slot)
+	end, 0.05)
 end
 
 -- Texture, Name, Count, Quality, BindOnPickup, CanNeed, CanGreed, CanDisenchant = GetLootRollItemInfo(rollID)
@@ -1854,13 +2131,21 @@ function PasslootBiS:ProcessLootRoll(RollID, rollTime, ItemLink, attempt)
 		-- or auto-cast, casting exactly ONE RollOnLoot via QueueRoll. The whole gate is
 		-- pcall-wrapped so a buggy advisor can never break the roll: on abstain / error
 		-- / advisory mode we queue the rule-computed RollMethod exactly as before.
+		-- isBiS/bisList are the host's half of BiS Check: the BiS list lives HERE, in
+		-- the rules, and an advisor has no way to see it. The scanner reads these off
+		-- ctx to decide whether a low score is worth warning about at all (a lesser
+		-- item that was never on your list is just loot, not a mistake).
+		local IsBiS, BiSList = self:IsBiSItem(itemObj and itemObj.id, itemObj and itemObj.name)
 		local ctx = {
 			itemLink = ItemLink,
+			itemName = itemObj and itemObj.name or nil,
 			rollID   = RollID,
 			slot     = itemObj and itemObj.equipSlot or nil,
 			canNeed  = CanRoll.need and true or false,
 			canGreed = CanRoll.greed and true or false,
 			canDe    = CanRoll.de and true or false,
+			isBiS    = IsBiS,
+			bisList  = BiSList,
 			passlootDecision = RollMethod and RollMethodKey[RollMethod] or nil,
 		}
 		-- "Before Advisor" (the rightmost checkbox on the rule list): a rule ticked
@@ -1871,9 +2156,24 @@ function PasslootBiS:ProcessLootRoll(RollID, rollTime, ItemLink, attempt)
 		-- to defend, so the advisor still gets its turn.
 		local Rule = RuleID and self.db.profile.Rules[RuleID]
 		local BeforeAdvisor = (Rule and Rule.BeforeAdvisor and RollMethod ~= nil) and true or false
+		-- The one line that answers most "why didn't it do what I expected?" questions:
+		-- what matched, what it decided, and whether BiS Check is even in play.
+		self:Debug("roll ", tostring(ItemLink),
+			" rule=", tostring(Rule and Rule.Desc or "none"),
+			" method=", tostring(RollMethodKey[RollMethod] or "none"),
+			" beforeAdvisor=", tostring(BeforeAdvisor),
+			" isBiS=", tostring(IsBiS), BiSList and (" list=" .. BiSList) or "")
 		local handled = false
-		if self.API and not BeforeAdvisor then
-			local ok, res = pcall(self.HandleRoll, self, RollID, rollTime, itemObj, RollMethod, ctx)
+		-- The gate is now consulted even for a Before Advisor rule, and told about the
+		-- tick rather than being skipped for it. BiS Check (Core/RollAdvisor.lua) has
+		-- to outrank Before Advisor, and it cannot outrank a gate it never reaches --
+		-- the stale-BiS rolls it exists to stop come from BiS-imported rules, which
+		-- ship with Before Advisor already ticked. HandleRoll honours the tick itself,
+		-- immediately below its veto, so every other rule keeps beating the advisor
+		-- exactly as before.
+		if self.API then
+			local ok, res = pcall(self.HandleRoll, self, RollID, rollTime, itemObj, RollMethod, ctx,
+				BeforeAdvisor)
 			handled = ok and res
 		end
 		if not handled and RollMethod and RollMethod ~= nil then
@@ -2129,13 +2429,25 @@ function PasslootBiS:CheckRuleTables()
 	end
 end
 
+-- Trace line. Captured into the in-memory ring (Core/DebugReport.lua) whenever the
+-- trace is on, and echoed to chat only if DebugEcho is also set.
+--
+-- Buffered-but-silent is the DEFAULT on purpose: this is meant to be left running
+-- through a boss pull, and a line per rule per roll would bury the fight in chat.
+-- The ring is a plain table on the addon, never db.profile -- nothing diagnostic is
+-- ever written to SavedVariables.
 function PasslootBiS:Debug(...)
-	local DebugLine, Counter
-	if (self.DebugVar == true) then
-		DebugLine = ""
-		for Counter = 1, select("#", ...) do
-			DebugLine = DebugLine .. select(Counter, ...)
-		end
+	if (self.DebugVar ~= true) then
+		return
+	end
+	local DebugLine = ""
+	for Counter = 1, select("#", ...) do
+		DebugLine = DebugLine .. tostring(select(Counter, ...))
+	end
+	if (self.DebugCapture) then
+		self:DebugCapture(DebugLine)
+	end
+	if (self.DebugEcho) then
 		self:Print(DebugLine)
 	end
 end
@@ -2183,6 +2495,8 @@ function PasslootBiS:BiSManagerCommand(input)
 end
 
 if PasslootBiS.RegisterChatCommand then
+	-- /plbisdebug is registered by Core/DebugReport.lua, which owns the trace ring,
+	-- the report and the copy box.
 	PasslootBiS:RegisterChatCommand("plbismgr", "BiSManagerCommand")
 end
 

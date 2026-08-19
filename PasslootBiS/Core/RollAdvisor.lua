@@ -37,23 +37,43 @@ function RollAdvisor.IsValidTrust(mode)
   return RollAdvisor.TRUST[mode] == true
 end
 
--- A verdict is "actionable" (worth prompting/casting) when it reports either a
--- stat upgrade or a high-value flag. Anything else is an abstain.
+-- A verdict is "actionable" (worth prompting/casting) when it reports any of the
+-- three reasons. Anything else is an abstain.
+--
+-- `downgrade` is the odd one out and deliberately so: the first two are reasons to
+-- WANT the item, this one is a reason NOT to auto-roll it (BiS Check -- the item is
+-- on your BiS list but scores below what you would replace). It is actionable
+-- because the advisor still has to speak; HandleRoll is where the difference in
+-- what we DO with it lives.
 function RollAdvisor.IsActionable(v)
   if type(v) ~= "table" then return false end
-  return v.upgrade == true or v.highValue == true
+  return v.upgrade == true or v.highValue == true or v.downgrade == true
 end
 
 -- Sanitise a raw table an advisor returned into the frozen verdict shape
--- { upgrade(bool), highValue(bool), delta(number), reason(string|nil) }.
+-- { upgrade(bool), highValue(bool), downgrade(bool), delta(number),
+--   downDelta(number), reason(string|nil) }.
 -- Returns nil only when the input isn't a table (a hard abstain).
+--
+-- Mirrors PassLootBiS_Scanner/Core/Verdict.lua's build() -- that file and this one
+-- are the two halves of the cross-addon contract, so a field added there has to be
+-- added here or it is silently dropped on arrival. An older scanner that knows
+-- nothing of `downgrade` simply never sets it, and normalises to false.
+--
+-- upgrade and downgrade are mutually exclusive on arrival: an item cannot both beat
+-- and lose to the thing it would replace, and letting both through would leave
+-- HandleRoll vetoing a roll it was simultaneously told to make. Upgrade wins, for
+-- the reason build() gives -- a wrong veto costs you the item outright.
 function RollAdvisor.NormalizeVerdict(v)
   if type(v) ~= "table" then return nil end
   local reason = (type(v.reason) == "string" and v.reason ~= "") and v.reason or nil
+  local upgrade = v.upgrade == true
   return {
-    upgrade   = v.upgrade == true,
+    upgrade   = upgrade,
     highValue = v.highValue == true,
+    downgrade = (not upgrade) and (v.downgrade == true) or false,
     delta     = tonumber(v.delta) or 0,
+    downDelta = tonumber(v.downDelta) or 0,
     reason    = reason,
   }
 end
@@ -70,16 +90,25 @@ end
 -- format that belongs to another addon. Better a headline with no detail than a
 -- detail line describing advice the user turned off. Untouched when nothing is
 -- masked, which is the default and the common case.
-function RollAdvisor.ApplySources(v, useGear, useValue)
+function RollAdvisor.ApplySources(v, useGear, useValue, useBiS)
   if type(v) ~= "table" then return v end
   -- nil means "not configured" and defaults ON, so only an explicit false hides.
   local upgrade   = (useGear  ~= false) and (v.upgrade == true)
   local highValue = (useValue ~= false) and (v.highValue == true)
-  local masked = (v.upgrade == true and not upgrade) or (v.highValue == true and not highValue)
+  -- BiS Check is the third source (the "bis" checkbox on the advisor status panel).
+  -- Switching it off does NOT stop the scanner scoring; it just stops the downgrade
+  -- warning claiming the roll, so the rules roll exactly as they did before the
+  -- feature existed.
+  local downgrade = (useBiS ~= false) and (v.downgrade == true)
+  local masked = (v.upgrade == true and not upgrade)
+    or (v.highValue == true and not highValue)
+    or (v.downgrade == true and not downgrade)
   return {
     upgrade   = upgrade,
     highValue = highValue,
+    downgrade = downgrade,
     delta     = upgrade and (tonumber(v.delta) or 0) or 0,
+    downDelta = downgrade and (tonumber(v.downDelta) or 0) or 0,
     reason    = (not masked) and v.reason or nil,
   }
 end
@@ -173,6 +202,30 @@ if rawget(_G, "ROLLADVISOR_SELFTEST") then
   local s6 = RollAdvisor.ApplySources(onlyValue, false, true)
   ok(s6.highValue and s6.reason == "~120g", "turning off an unset flag keeps the reason")
   ok(RollAdvisor.ApplySources(nil, true, true) == nil, "non-table passes through")
+
+  -- BiS Check (the third source / third reason).
+  ok(RollAdvisor.IsActionable({ downgrade = true }), "downgrade actionable")
+  local d1 = RollAdvisor.NormalizeVerdict({ downgrade = true, downDelta = -0.12 })
+  ok(d1.downgrade == true and d1.upgrade == false, "normalize downgrade flag")
+  near(d1.downDelta, -0.12, "normalize downDelta preserved")
+  -- An advisor claiming both is coerced to upgrade-only, both here and in the mask.
+  local d2 = RollAdvisor.NormalizeVerdict({ upgrade = true, downgrade = true })
+  ok(d2.upgrade == true and d2.downgrade == false, "upgrade beats downgrade on arrival")
+  local down = { downgrade = true, downDelta = -0.12, reason = "On your BiS list, but -12%" }
+  local b1 = RollAdvisor.ApplySources(down, true, true, true)
+  ok(b1.downgrade and b1.reason == down.reason, "bis on -> downgrade kept")
+  near(b1.downDelta, -0.12, "bis on -> downDelta kept")
+  local b2 = RollAdvisor.ApplySources(down, true, true, false)
+  ok(not b2.downgrade, "bis off -> downgrade suppressed")
+  ok(b2.reason == nil, "bis off -> masked reason dropped")
+  near(b2.downDelta, 0, "bis off -> downDelta zeroed")
+  ok(not RollAdvisor.IsActionable(b2), "bis off -> a downgrade-only verdict abstains")
+  -- Unconfigured (nil) defaults ON, like the other two.
+  ok(RollAdvisor.ApplySources(down, nil, nil, nil).downgrade, "nil bis source defaults on")
+  -- Switching off gear/value must not disturb a downgrade, and vice versa.
+  local mixed = { upgrade = true, downgrade = false, highValue = true, reason = "x" }
+  ok(RollAdvisor.ApplySources(mixed, true, true, false).upgrade, "bis off leaves upgrade alone")
+  ok(RollAdvisor.ApplySources(down, false, false, true).downgrade, "gear/value off leave downgrade alone")
 
   -- ResolveHoldSeconds
   near(RollAdvisor.ResolveHoldSeconds(60000, 4, 1), 30, "60s window -> 30s hold")
@@ -290,6 +343,17 @@ function API:GetAdvisor(name)
   return entry and entry.obj or nil
 end
 
+-- Is this item on a BiS list that currently rolls? The published form of
+-- PasslootBiS:IsBiSItem, for a companion that has an item but no roll ctx — the
+-- scanner's own alert path is scored off a link, not off the advisor call, and had
+-- no way to mark a BiS pick before this (its Alert.isBiS was hardcoded false).
+-- Guarded like the rest of the facade: id and name may each be nil.
+function API:IsBiSItem(id, name)
+  local ok, isBiS, list = pcall(PasslootBiS.IsBiSItem, PasslootBiS, id, name)
+  if not ok then return false, nil end
+  return isBiS, list
+end
+
 -- Per-advisor trust mode, persisted in the profile (keyed by advisor name so you
 -- can trust your own scanner while keeping a stranger's addon on a tighter mode).
 local function trustStore()
@@ -320,7 +384,10 @@ end
 -- checkboxes on the rules page's status panel. Both default ON: an absent key
 -- means "never configured", not "off", so an existing profile keeps behaving
 -- exactly as it did before these toggles existed.
-API.SOURCES = { gear = true, value = true }
+-- `bis` is BiS Check (2026-08): the downgrade warning. It ships ON like the other
+-- two, and for the same reason -- an absent key means "never configured", so an
+-- existing profile picks the feature up rather than silently opting out of it.
+API.SOURCES = { gear = true, value = true, bis = true }
 
 local function sourceStore()
   local p = PasslootBiS.db and PasslootBiS.db.profile
@@ -364,7 +431,12 @@ function API:ConsultAdvisors(ctx)
     if entry.fn then
       ok, raw = pcall(entry.fn, ctx)
     else
-      ok, raw = pcall(entry.obj.GetRollVerdict, entry.obj, ctx.rollID)
+      -- ctx is passed as an ADDITIVE second argument. It used to be rollID alone,
+      -- and an older advisor that only declared (self, rollID) still works — Lua
+      -- drops the extra. A newer one reads ctx.isBiS from it, which is the only way
+      -- the scanner can know an item is on a BiS list (that list lives here, in the
+      -- host's rules, not in the scanner).
+      ok, raw = pcall(entry.obj.GetRollVerdict, entry.obj, ctx.rollID, ctx)
     end
     if ok then
       -- Mask by the user's source toggles BEFORE the actionable test, so a verdict
@@ -372,7 +444,8 @@ function API:ConsultAdvisors(ctx)
       -- gets its turn (rather than this one claiming the roll and then prompting
       -- with nothing to say).
       local v = RollAdvisor.ApplySources(RollAdvisor.NormalizeVerdict(raw),
-        self:IsSourceEnabled("gear"), self:IsSourceEnabled("value"))
+        self:IsSourceEnabled("gear"), self:IsSourceEnabled("value"),
+        self:IsSourceEnabled("bis"))
       if RollAdvisor.IsActionable(v) then
         return v, name
       end
@@ -410,6 +483,16 @@ local BTN_BOTTOM = 16       -- clears the resize grip in the bottom-right corner
 -- and says which KIND of advice this is. Green for a stat upgrade, gold for gold.
 local HEADLINE_UPGRADE = { text = L["RollAdvisor_GearUpgrade"], r = 0.1, g = 1.0, b = 0.4 }
 local HEADLINE_VALUE   = { text = L["RollAdvisor_HighValue"],   r = 1.0, g = 0.82, b = 0.0 }
+-- BiS Check. Red, and the only one of the three that carries an icon: this window
+-- normally means "roll for this", so the one time it means the opposite has to be
+-- distinguishable at a glance, mid-fight, from the two that look just like it. The
+-- arrow is an inline texture escape rather than a Texture region so it flows with
+-- the wrapped headline text; a missing file draws nothing rather than erroring, so
+-- swapping the path is safe if this one is not in the Ascension build.
+local DOWN_ARROW = "|TInterface\\Buttons\\Arrow-Down-Up:14:14|t "
+local HEADLINE_DOWNGRADE = {
+  text = DOWN_ARROW .. L["RollAdvisor_BiSDowngrade"], r = 1.0, g = 0.35, b = 0.35,
+}
 
 local function acquireSlot()
   local i = 1
@@ -594,10 +677,22 @@ local function makeFrame()
   return f
 end
 
--- Point the headline at the right verdict. Upgrade wins when both apply: it is
--- the stronger claim, and the value half still shows in the reason line.
+-- Point the headline at the right verdict. Priority is downgrade > upgrade > value.
+--
+-- Downgrade first because it is the only one that changes what the window MEANS:
+-- the other two say "we held this for you to grab", it says "we stopped the rules
+-- taking this". Getting that wrong would show a green "Gear Upgrade" over a roll we
+-- are actively vetoing. (NormalizeVerdict already rules out upgrade+downgrade, so
+-- in practice this only picks between downgrade and a co-occurring high value.)
+-- Between the remaining two, upgrade wins as the stronger claim, and the value half
+-- still shows in the reason line.
 local function applyHeadline(f, verdict)
-  local h = verdict.upgrade and HEADLINE_UPGRADE or HEADLINE_VALUE
+  local h = HEADLINE_VALUE
+  if verdict.downgrade then
+    h = HEADLINE_DOWNGRADE
+  elseif verdict.upgrade then
+    h = HEADLINE_UPGRADE
+  end
   f.headline:SetText(h.text)
   f.headline:SetTextColor(h.r, h.g, h.b)
 end
@@ -744,7 +839,20 @@ function PasslootBiS:ShowRollConfirm(RollID, ctx, verdict, holdSecs, fallbackMet
   f:Show()
 
   -- The bounded hold: half the roll window (floored), then fall through.
-  f.timer = PasslootBiS:ScheduleTimer(function() resolve(fallbackMethod) end, holdSecs)
+  --
+  -- `fallbackMethod` may be a FUNCTION, evaluated at expiry rather than now. BiS
+  -- Check needs that: its fallback is Greed, but whether Greed is even allowed can
+  -- change after the roll starts (Ascension populates the Need/Greed flags a beat
+  -- late — the same lag the eligibility re-poll above exists for), so deciding at
+  -- roll-start would sometimes cast a Greed the server rejects.
+  f.timer = PasslootBiS:ScheduleTimer(function()
+    if type(fallbackMethod) == "function" then
+      local ok, method = pcall(fallbackMethod, RollID)
+      resolve(ok and method or nil)
+    else
+      resolve(fallbackMethod)
+    end
+  end, holdSecs)
 end
 
 --------------------------------------------------------------------------------
@@ -755,7 +863,7 @@ end
 -- a fake roll so it can be dragged, stretched and dismissed at leisure.
 
 local PREVIEW_ROLLID = -424242   -- can never collide with a live rollID
-local previewFlip = false        -- alternate the two headline styles per showing
+local previewCycle = 0           -- rotate the three headline styles per showing
 
 -- A real item, so the preview exercises the real icon and tooltip path rather
 -- than a placeholder: Thunderfury, Blessed Blade of the Windseeker.
@@ -791,12 +899,20 @@ end
 
 function PasslootBiS:ShowRollConfirmPreview()
   if self:IsRollConfirmPreviewShown() then return end
-  -- Alternate green "Gear Upgrade" and gold "High Value" on successive showings,
-  -- so both looks can be checked without contriving a real roll of each kind.
-  previewFlip = not previewFlip
-  local verdict = previewFlip
-    and { upgrade = true,  highValue = false, delta = 0.08, reason = "Upgrade +8%" }
-    or  { upgrade = false, highValue = true,  delta = 0,    reason = "~250g -- worth Need" }
+  -- Rotate green "Gear Upgrade", gold "High Value" and red "BiS, but lower" on
+  -- successive showings, so all three looks can be checked without contriving a
+  -- real roll of each kind. The red one is the hardest to produce on demand (it
+  -- needs a stale BiS entry to actually drop), which is most of why it is here.
+  previewCycle = (previewCycle % 3) + 1
+  local PREVIEWS = {
+    { upgrade = true,  highValue = false, downgrade = false, delta = 0.08,
+      reason = "Upgrade +8%" },
+    { upgrade = false, highValue = true,  downgrade = false, delta = 0,
+      reason = "~250g -- worth Need" },
+    { upgrade = false, highValue = false, downgrade = true,  delta = 0, downDelta = -0.12,
+      reason = "On your BiS list, but -12% vs equipped" },
+  }
+  local verdict = PREVIEWS[previewCycle]
   local ctx = {
     itemLink = previewItemLink(),
     canNeed = true,
@@ -840,15 +956,87 @@ local function methodLabel(method)
   return METHOD_LABEL[method] or "Ignore"
 end
 
+-- BiS Check's timeout fallback (owner decision 2026-08): GREED, not the rule's
+-- Need and not silence.
+--
+-- The reasoning is that both alternatives are wrong in the AFK case this exists for.
+-- Falling through to the rule casts the Need we just decided was a mistake, which
+-- makes the whole feature a no-op the moment you look away. Casting nothing gives
+-- the item to the group for free even when nobody else wants it. Greed still
+-- contests it without claiming it as a BiS need.
+--
+-- Re-polled at expiry rather than read from ctx: Ascension can populate the roll
+-- flags a beat after START_LOOT_ROLL. If Greed turns out not to be allowed we cast
+-- NOTHING rather than falling back to Need — needing it is the exact thing being
+-- vetoed, so the one option we must never pick on a timeout is the one the rule
+-- wanted.
+local function greedFallback(RollID)
+  local gi = rawget(_G, "GetLootRollItemInfo")
+  if gi then
+    local ok, _, _, _, _, _, _, canGreed = pcall(gi, RollID)
+    if ok and not canGreed then return nil end
+  end
+  return PasslootBiS.RollMethod.greed
+end
+
 -- Returns true if the advisor took responsibility for this roll (held it behind a
 -- popup, or auto-cast it) — in which case START_LOOT_ROLL must NOT also queue.
 -- Returns false to let the normal queue proceed (no verdict, or advisory mode).
-function PasslootBiS:HandleRoll(RollID, rollTime, itemObj, RollMethod, ctx)
+--
+-- `beforeAdvisor` is the matched rule's "Before Advisor" tick. It used to be checked
+-- by the CALLER, which simply skipped this function — but BiS Check has to outrank
+-- it (owner decision 2026-08), and a gate the caller never reaches cannot outrank
+-- anything. So the flag comes in here instead and is honoured *after* the veto.
+function PasslootBiS:HandleRoll(RollID, rollTime, itemObj, RollMethod, ctx, beforeAdvisor)
   local api = self.API
   if not api or not api.enabled then return false end
 
   local verdict, advisorName = api:ConsultAdvisors(ctx)
-  if not verdict then return false end
+  if not verdict then
+    self:Debug("advisor: no actionable verdict; rules roll normally")
+    return false
+  end
+  self:Debug("advisor ", tostring(advisorName), " verdict: upgrade=", tostring(verdict.upgrade),
+    " highValue=", tostring(verdict.highValue), " downgrade=", tostring(verdict.downgrade),
+    " reason=", tostring(verdict.reason))
+
+  -- ---- BiS Check: the top-level veto -------------------------------------
+  -- Above Before Advisor AND above every trust mode, because those all answer the
+  -- question "how much do we trust the advisor to pick a roll for you?", and this
+  -- answers a different one: "is the rule about to roll on something you have
+  -- already beaten?". The stale-BiS case this exists for is precisely a rule the
+  -- user trusts enough to have ticked Before Advisor on — a veto that Before
+  -- Advisor could skip would never fire on the rules that need it.
+  --
+  -- Always the held window, never an auto-cast: the entire point is to put the
+  -- decision back in front of the user. Trust mode is not consulted at all.
+  --
+  -- Gated on there BEING a roll to veto. RollMethod nil means no rule produced one,
+  -- so PassLoot was never going to roll and there is nothing to stop -- a red "we
+  -- held this for you" window over a roll nobody was making is pure noise, and on a
+  -- boss that drops three of them it is noise three times.
+  if verdict.downgrade and RollMethod ~= nil then
+    self:Debug("BiS Check: VETO -- holding the roll, fallback greed")
+    self:RecordBiSDowngrade(ctx, verdict)
+    local holdSecs = RollAdvisor.ResolveHoldSeconds(rollTime, api.minHold, api.margin)
+    self:ShowRollConfirm(RollID, ctx, verdict, holdSecs, greedFallback, advisorName)
+    if not self.db.profile.Quiet then
+      self:Print(string.format("|cffff5555%s|r %s -- %s",
+        L["RollAdvisor_BiSDowngrade"], ctx.itemLink or "?", verdict.reason or ""))
+    end
+    return true
+  end
+
+  -- A rule ticked "Before Advisor" wins everything below this line.
+  if beforeAdvisor then
+    if verdict.downgrade then
+      -- Reachable only when the veto above declined (no pending roll to stop).
+      self:Debug("BiS Check: downgrade seen but no roll pending; rule wins")
+    else
+      self:Debug("BeforeAdvisor: rule outranks the advisor for this roll")
+    end
+    return false
+  end
 
   local mode = api:GetTrustMode(advisorName)
   if mode == "advisory" then

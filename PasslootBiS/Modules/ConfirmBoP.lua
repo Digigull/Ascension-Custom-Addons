@@ -30,7 +30,11 @@ local Hooked = false
 function module:OnEnable()
 	self:RegisterDefaultVariables(self.ConfigOptions_RuleDefaults)
 	self:AddWidget(self.Widget)
-	-- self:RegisterEvent("LOOT_BIND_CONFIRM")  -- Fired when you loot an item that isn't being rolled on
+	-- LOOT_BIND_CONFIRM (the bind warning when you LOOT a BoP item rather than roll
+	-- on one) is deliberately not handled here: it carries a loot slot, not a RollID,
+	-- so there is no rule to hang this per-rule filter off. It is a profile-wide
+	-- toggle instead -- see PasslootBiS:LOOT_BIND_CONFIRM in Core/PassLoot.lua. Do not
+	-- register it here as well, or the slot gets confirmed twice.
 	self:RegisterEvent("CONFIRM_LOOT_ROLL")
 	-- self:RegisterEvent("CHAT_MSG_LOOT")
 	self:RegisterMessage("PasslootBiS_OnRoll")
@@ -42,7 +46,10 @@ function module:OnEnable()
 end
 
 function module:OnDisable()
-	self:UnregisterEvent("LOOT_BIND_CONFIRM")
+	-- Unregister what OnEnable actually registered. This used to unregister
+	-- LOOT_BIND_CONFIRM, which this module has never listened for, and so left
+	-- CONFIRM_LOOT_ROLL live after the module was switched off.
+	self:UnregisterEvent("CONFIRM_LOOT_ROLL")
 	-- self:UnregisterEvent("CHAT_MSG_LOOT")
 	self:UnregisterMessage("PasslootBiS_OnRoll")
 	self:UnregisterDefaultVariables()
@@ -110,9 +117,13 @@ function module:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
 	self:Debug("ItemLink: " .. (ItemLink or "nil"))
 	-- self:Debug("Checking items awaiting confirmation")
 	if (self.ItemsAwaitingConfirmation[RollID] and ItemLink == self.ItemsAwaitingConfirmation[RollID][1]) then
-		self:Debug("ConfirmLootRoll(" .. RollID .. "," .. RollMethod .. ")")
-		ConfirmLootRoll(RollID, RollMethod)
-		StaticPopup_Hide(Event, RollID)
+		-- Routed through the shared once-guard (PasslootBiS:ConfirmRollOnce): the
+		-- profile-wide AutoConfirmBinds answers this same event, so on a rule
+		-- that HAS this filter ticked both handlers fire for one roll. The guard makes
+		-- whichever runs second a no-op, and owns the popup-hide (twice, for the
+		-- dispatch-order reason documented there) instead of the single hide this
+		-- used to do.
+		PasslootBiS:ConfirmRollOnce(RollID, RollMethod)
 		self.ItemsAwaitingConfirmation[RollID] = nil
 	end
 	--[=[

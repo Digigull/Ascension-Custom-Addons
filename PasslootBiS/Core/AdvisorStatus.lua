@@ -303,8 +303,40 @@ function PasslootBiS:GetAdvisorStatus()
 			}
 		end
 	end
+	--- Row 4: BiS Check -- the downgrade veto (Core/RollAdvisor.lua). ----------
+	-- Needs THREE things, and says which one is missing: a scanner to score with,
+	-- spec weights to score against, and a BiS list for an item to be stale ON. The
+	-- last is this row's own question and is answered here rather than by the
+	-- scanner, because the list lives on this side.
+	local BiS = { ["Label"] = L["AdvisorStatus_BiSLabel"] }
+	local Lists = self.EnumerateBiSLists and self:EnumerateBiSLists() or {}
+	if (not Status) then
+		BiS.Color, BiS.Text = self.FontRed, L["AdvisorStatus_Unavailable"]
+		BiS.Tip = { BiS.Label, SilentTip }
+	elseif (not Status.enabled) then
+		BiS.Color, BiS.Text = self.FontYellow, L["AdvisorStatus_ScanningOff"]
+		BiS.Tip = { BiS.Label, L["AdvisorStatus_ScanningOff_Tip"] }
+	elseif (#Lists == 0) then
+		BiS.Color, BiS.Text = self.FontYellow, L["AdvisorStatus_BiSNoList"]
+		BiS.Tip = { BiS.Label, L["AdvisorStatus_BiSNoList_Tip"] }
+	elseif (not Status.hasWeights) then
+		-- Without weights nothing can be scored, so a downgrade cannot be spotted.
+		-- Same underlying cause as the gear row's "No spec set", different
+		-- consequence, so it gets its own sentence rather than sharing that one.
+		BiS.Color, BiS.Text = self.FontYellow, L["AdvisorStatus_GearNoSpec"]
+		BiS.Tip = { BiS.Label, L["AdvisorStatus_BiSNoSpec_Tip"] }
+	else
+		BiS.Color, BiS.Text = self.FontGreen, L["AdvisorStatus_Ready"]
+		BiS.Tip = {
+			BiS.Label,
+			L["AdvisorStatus_BiSReady_Tip"],
+			string.format(L["AdvisorStatus_BiSListsLine"], #Lists),
+		}
+	end
+
 	applyToggle(Gear, "gear")
 	applyToggle(Value, "value")
+	applyToggle(BiS, "bis")
 
 	-- Row 1 gets the shortcut to the scanner's own settings window instead. Offered
 	-- only when that window actually exists: an older scanner, or one loaded far
@@ -312,7 +344,7 @@ function PasslootBiS:GetAdvisorStatus()
 	-- nothing but apologise.
 	Link.OpensScanner = scannerOptions() ~= nil
 
-	return { Link, Gear, Value }
+	return { Link, Gear, Value, BiS }
 end
 
 -- Open the scanner's settings window — the same one its minimap button opens.
@@ -397,7 +429,8 @@ function PasslootBiS:Create_AdvisorStatusFrame()
 
 	Frame.Rows = {}
 	local Anchor = Frame.Title
-	for Index = 1, 3 do
+	-- Four rows: link, gear, value, BiS Check. Rows 2+ each carry a source checkbox.
+	for Index = 1, 4 do
 		local Row = {}
 
 		Row.Label = Frame:CreateFontString(nil, "BACKGROUND", "GameFontNormalSmall")
@@ -550,6 +583,10 @@ function PasslootBiS:RefreshAdvisorStatus()
 			Row.Value:Show()
 			if (Row.Check) then
 				Row.Check:SetChecked(Info.Enabled and true or false)
+				-- Re-show: the else-branch below hides it for a row with no info, and
+				-- nothing else ever brings it back. Harmless while the row count was
+				-- fixed; a latent bug the moment it is not.
+				Row.Check:Show()
 			end
 			if (Row.Open) then
 				-- Only offer the shortcut when there is a window behind it.

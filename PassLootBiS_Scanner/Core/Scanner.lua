@@ -40,6 +40,8 @@ local Filter      = ns.Filter
 local Alert       = ns.Alert
 local Auctionator = ns.Auctionator
 local Verdict     = ns.Verdict
+local WonLedger   = ns.WonLedger
+local ItemLink    = ns.ItemLink
 
 local ScaledStats  -- resolved from LibStub at login
 
@@ -58,6 +60,10 @@ local DEFAULTS = {
 	useSoundGold  = false,  -- cue on the high-value flag -- goldThreshold is its cutoff
 	tooltip       = true,   -- annotate item tooltips with score + upgrade arrow
 	goldThreshold = 500000, -- 50g in copper, for the Auctionator flag (Phase 4)
+	-- Score gear with its enchants zeroed out, so both sides of a compare are read
+	-- like the fresh drop the candidate always is. ON: measured faithful on this
+	-- client before being trusted -- ns.equippedStats has the whole story.
+	ignoreEnchants = true,
 	powerMode     = "off",  -- score a CoA flat Power stat: "off" | "pve" | "pvp"
 	powerWeight   = 1,      -- weight per point of the chosen Power (tunable in GUI)
 	-- minimap = { angle, hide } and options = { point, x, y } are seeded in
@@ -85,6 +91,20 @@ local function initDB()
 	if db.minimap.angle == nil then db.minimap.angle = 220 end   -- degrees around the ring
 	if db.minimap.hide  == nil then db.minimap.hide  = false end
 	if type(db.options) ~= "table" then db.options = {} end
+	-- One-time flip: "ignore enchants" went from an off-by-default experiment to the
+	-- default way gear is scored, once /plbisdebug measured the SetHyperlink read as
+	-- faithful on this client. The loop above only fills in ABSENT keys and every DB
+	-- an older build wrote has a literal `false` stored for this one, so changing
+	-- DEFAULTS alone would reach nobody who has ever run the addon.
+	--
+	-- The marker is deliberately NOT in DEFAULTS -- it has to still be nil here on
+	-- the first load after the change. It is what makes this a one-time flip rather
+	-- than a setting that re-ticks itself every login: untick the box afterwards and
+	-- it stays unticked.
+	if db.ignoreEnchantsDefaulted == nil then
+		db.ignoreEnchants = true
+		db.ignoreEnchantsDefaulted = true
+	end
 	ns.db = db   -- share with sibling modules (Tooltip, MinimapButton, Options)
 end
 
@@ -161,6 +181,81 @@ function ns.setSpec(class, spec)
 end
 
 ----------------------------------------------------------------------
+-- BiS-list membership + the run's win ledger (BiS Check)
+----------------------------------------------------------------------
+-- The BiS list belongs to PasslootBiS, not to us. Two ways to reach the answer,
+-- in order of trust:
+--   1. the roll ctx the host puts on the advisor call -- authoritative, already
+--      computed, and the only one available mid-roll for free;
+--   2. host.API:IsBiSItem(id, name) -- for the scanner's own alert path, which is
+--      driven off a link with no ctx anywhere near it.
+-- Both guarded: PasslootBiS is an OptionalDep, so with no host at all this simply
+-- answers false and BiS Check never fires (there is no BiS list to be stale).
+
+local function itemIdFromLink(link)
+	if type(link) ~= "string" then return nil end
+	local id = link:match("|Hitem:(%d+)")
+	return id and tonumber(id) or nil
+end
+
+function ns.isBiSItem(link, name, ctx)
+	if type(ctx) == "table" and ctx.isBiS ~= nil then
+		return ctx.isBiS and true or false
+	end
+	local host = rawget(_G, "PasslootBiS")
+	if not (host and host.API and type(host.API.IsBiSItem) == "function") then
+		return false
+	end
+	local ok, isBiS = pcall(host.API.IsBiSItem, host.API, itemIdFromLink(link), name)
+	return (ok and isBiS) and true or false
+end
+
+-- Loot-message patterns, built once at login from the client's own globals so the
+-- match follows whatever locale is running. Order matters -- see WonLedger.
+local lootPatterns
+
+local function buildLootPatterns()
+	if lootPatterns then return lootPatterns end
+	lootPatterns = {}
+	-- The "...x3." stacked forms MUST come first: the plain form's (.+) would
+	-- otherwise capture the count along with the link.
+	local formats = {
+		rawget(_G, "LOOT_ITEM_SELF_MULTIPLE"),
+		rawget(_G, "LOOT_ITEM_PUSHED_SELF_MULTIPLE"),
+		rawget(_G, "LOOT_ITEM_SELF"),
+		rawget(_G, "LOOT_ITEM_PUSHED_SELF"),
+	}
+	for i = 1, #formats do
+		local p = WonLedger and WonLedger.toPattern(formats[i])
+		if p then lootPatterns[#lootPatterns + 1] = p end
+	end
+	return lootPatterns
+end
+
+-- Record an item that just entered YOUR bags, so the rest of the run compares
+-- against it. Deliberately hooked on receipt rather than on winning a roll: master
+-- loot, personal loot and a free-for-all pickup all end the same way, and this
+-- catches every route in one place.
+--
+-- An item with no equipLoc (trash, reagents, quest items) scores nothing and is
+-- dropped by WonLedger.record, so no filtering is needed here.
+local function recordWin(link)
+	if not (WonLedger and ScaledStats) then return end
+	local weights = currentWeights()
+	if not weights then return end
+	local name, _, _, _, _, _, subType, _, equipLoc = GetItemInfo(link)
+	if not equipLoc or equipLoc == "" then return end
+	if not Slots.slotsFor(equipLoc) then return end
+	-- Through the shared reader like every other score. A freshly looted item has no
+	-- enchant to strip, so in practice this is the plain SetHyperlink read -- but a
+	-- ledger entry is compared against stripped equipped scores later, so it must not
+	-- be the one number computed by a different rule.
+	local stats = ns.strippedStats(link, subType, equipLoc)
+		or ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
+	WonLedger.record(equipLoc, Score.scoreItem(stats, weights), link, name)
+end
+
+----------------------------------------------------------------------
 -- The compare flow
 ----------------------------------------------------------------------
 
@@ -171,10 +266,66 @@ local function scoreRollItem(rollID, weights, subType, equipLoc)
 	return Score.scoreItem(stats, weights), stats
 end
 
+-- How an item's stats are read, and the one option that changes it.
+--
+-- ns.equippedStats below is THE one place equipped stats are read. Three callers
+-- had their own copy of that line (here, evalHand, and Core/Tooltip.lua's hover
+-- compare); the option has to reach all of them or the tooltip and the roll would
+-- quote different numbers for the same item.
+--
+-- An empty slot -> no lines -> empty stats -> score 0 (always beatable).
+--
+-- db.ignoreEnchants (ON by default): read an item with its enchant zeroed out.
+--
+-- The compare is asymmetric by construction and always in one direction: a loot
+-- roll is a fresh drop with no enchant on it, your equipped gear has one. So the
+-- equipped side carries value the candidate cannot have, every real upgrade reads
+-- smaller than it is, and a BiS item can score below enchanted gear it would
+-- actually beat -- which BiS Check then vetoes. Zeroing the enchant field of the
+-- link (Core/ItemLink.lua) and scoring THAT evens the two sides up.
+--
+-- It shipped off, because the strip means reading through SetHyperlink, which
+-- LibScaledStats warns "MAY be cached-first / nominal for scaled instances" -- on
+-- Ascension precisely the lie that library exists to route around. That is not a
+-- risk to take on reasoning, so /plbisdebug's [Enchant strip check] measures it:
+-- every equipped slot scored by instance AND by link. On the owner's gear (17
+-- slots, 2 of them enchanted) the two agreed everywhere, so the strip is faithful
+-- here and it is now the default. If a later report ever shows a MISMATCH row, that
+-- is the signal to untick the box -- the check exists to keep answering this.
+--
+-- Only enchanted links take the SetHyperlink path. An unenchanted item has nothing
+-- to strip, so it keeps the cheaper and more trustworthy read it always had (the
+-- real equipped instance, or the tooltip the client already rendered). That is why
+-- ItemLink.hasEnchant is asked first: it keeps the risky path down to the handful
+-- of items that actually gain something from it, rather than all 17 slots.
+--
+-- Gems are deliberately left in. Same argument applies to them, but enchants are
+-- what was asked about and stripping sockets would move far more scores; it is one
+-- field set away (ItemLink.FIELD_ENCHANT_AND_GEMS) if that is ever wanted.
+
+-- Enchant-free stats for an item LINK, or nil when there is nothing to do and the
+-- caller should use its own (cheaper) read. Every scoring site goes through here --
+-- equipped gear, the win ledger, the item dry run and the hover tooltip -- so "with
+-- enchants" and "without" can never mean different things in different windows.
+function ns.strippedStats(link, subType, equipLoc)
+	if not (db and db.ignoreEnchants) then return nil end
+	if not (ScaledStats and ItemLink and ItemLink.hasEnchant(link)) then return nil end
+	local stripped = ItemLink.stripEnchant(link)
+	if not stripped then return nil end
+	return ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, stripped)
+end
+
+function ns.equippedStats(slotId, subType, equipLoc)
+	local link = GetInventoryItemLink("player", slotId)
+	local stats = link and ns.strippedStats(link, subType, equipLoc)
+	if stats then return stats end
+	-- Nothing to strip, no link, or a link we could not parse: the real instance,
+	-- which is both the cheaper read and the authoritative one.
+	return ScaledStats:GetStatsWithDps("SetInventoryItem", subType, equipLoc, "player", slotId)
+end
+
 local function scoreEquipped(slotId, weights, subType, equipLoc)
-	-- An empty slot -> no lines -> empty stats -> score 0 (always beatable).
-	local stats = ScaledStats:GetStatsWithDps("SetInventoryItem", subType, equipLoc, "player", slotId)
-	return Score.scoreItem(stats, weights)
+	return Score.scoreItem(ns.equippedStats(slotId, subType, equipLoc), weights)
 end
 
 -- Evaluate one equipped hand slot for the weapon-loadout compare: its score, the
@@ -186,7 +337,7 @@ local function evalHand(slotId, weights)
 		return { score = 0, dpsW = 0, is2H = false, isWeapon = false }
 	end
 	local _, _, _, _, _, itemType, subType, _, eqLoc = GetItemInfo(link)
-	local stats = ScaledStats:GetStatsWithDps("SetInventoryItem", subType, eqLoc, "player", slotId)
+	local stats = ns.equippedStats(slotId, subType, eqLoc)
 	local score = Score.scoreItem(stats, weights)
 	local dpsW = (stats.weaponDps or 0) * (weights.weaponDps or 0)   -- DPS-weighted part
 	return {
@@ -212,13 +363,89 @@ function ns.weaponEquippedValue(equipLoc, weights)
 	return Slots.weaponReplacementValue(equipLoc, canDW, mh.score, mh.is2H, ohAdj)
 end
 
+-- The score a candidate for this slot has to beat.
+--
+-- Split out of compareRoll so the dry run (ns.API:GetLinkVerdict) reaches the SAME
+-- number a live roll would. A diagnostic that computes its own target is a
+-- diagnostic that can agree with itself while disagreeing with the feature.
+--
+-- Weapons/off-hands use the loadout rule (1H vs 2H, dual wield); everything else
+-- uses the worst equipped in the slot group (§6.2). On top of that, what you
+-- already WON this run counts as equipped, or the second shoulder of a run still
+-- reads as an upgrade over the shoulders you are technically still wearing
+-- (Core/WonLedger.lua has the full why).
+-- Second return value is the per-slot working, purely for /plbisdebug: a list of
+-- { slot, score } for the slot-group path, or nil for the weapon-loadout path,
+-- which resolves to one number with no per-slot breakdown to show. It exists
+-- because a target that disagrees with what the same report scores the equipped
+-- item at is otherwise unfalsifiable from the outside -- you can see the two
+-- numbers differ but not which read produced the odd one.
+function ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+	local target = ns.weaponEquippedValue(equipLoc, weights)
+	local wins = WonLedger and WonLedger.winsFor(equipLoc)
+	local parts
+	if target == nil then
+		local scores = {}
+		parts = {}
+		for i, slotId in ipairs(slotIds) do
+			scores[i] = scoreEquipped(slotId, weights, subType, equipLoc)
+			parts[i] = { slot = slotId, score = scores[i] }
+		end
+		if wins then
+			-- applyWins returns a NEW list, so the pre-win score stays readable
+			-- alongside it -- which is the whole point of showing the working.
+			scores = WonLedger.applyWins(scores, wins)
+			for i = 1, #scores do
+				if parts[i] then parts[i].afterWins = scores[i] end
+			end
+		end
+		target = Slots.worstEquipped(scores)
+	elseif wins then
+		-- Hand slots come back from the loadout rule as ONE already-resolved number,
+		-- not a per-slot list, so the displacement model has nothing to displace.
+		-- Raising the single bar is the honest approximation here: it can under-warn
+		-- on a dual-wield pair (a win in one hand lifts the bar for both) but never
+		-- over-warns, which is the right way round for a check whose false positive
+		-- costs you an item.
+		local best = WonLedger.bestFor(equipLoc)
+		if best and best.score > target then target = best.score end
+	end
+	return target, parts
+end
+
+-- Score vs. target -> the three verdict inputs. Also split out so the dry run and
+-- the live roll cannot drift apart.
+--
+-- BiS Check (the third reason; see Verdict.build) is only ever raised for an item
+-- the HOST says is on a currently-rolling BiS list -- a lesser item that was never
+-- on your list is just loot, not a mistake worth interrupting for. It needs the
+-- score to be STRICTLY below the target, not merely under the upgrade threshold:
+-- an item scoring +1% against a +3% threshold is not an upgrade, but it is not a
+-- downgrade either, and vetoing that roll would be wrong.
+function ns.judge(rollScore, target, equipLoc, isBiS)
+	local isUpgrade, delta = Score.verdict(rollScore, target, db.threshold)
+	local down
+	if isBiS and not isUpgrade and rollScore > 0 then
+		local d = Score.deltaFraction(rollScore, target)
+		if d < 0 then
+			local best = WonLedger and WonLedger.bestFor(equipLoc)
+			down = { delta = d, wonName = best and best.name or nil }
+		end
+	end
+	return isUpgrade, delta, down
+end
+
 -- Shared compare core: score the rolled item vs. the worst equipped in its slot
 -- group and read the optional Auctionator high-value flag. Used by BOTH the
 -- scanner's own alert (evaluateRoll) and the roll-advisor verdict (ns.API), so the
 -- two can never disagree. Returns a compare table, or nil if there's no roll link.
 -- `scannable` is false for non-equippable slots or when no spec weights are picked
 -- (then isUpgrade=false, delta=0); the gold flag is still evaluated in both cases.
-local function compareRoll(rollID)
+-- `ctx` is the host's roll context (PasslootBiS ProcessLootRoll), present only on
+-- the advisor path. Its isBiS field is the ONLY way this addon can know an item is
+-- on a BiS list -- that list lives in the host's rules. On the scanner's own alert
+-- path there is no ctx, so we ask the host directly through its published API.
+local function compareRoll(rollID, ctx)
 	local link = GetLootRollItemLink(rollID)
 	if not link then return nil end
 
@@ -233,6 +460,7 @@ local function compareRoll(rollID)
 	end
 
 	local name, _, _, _, _, itemType, subType, _, equipLoc, texture = GetItemInfo(link)
+	local isBiS = ns.isBiSItem(link, name, ctx)
 	local slotIds = Slots.slotsFor(equipLoc)
 	local weights = currentWeights()
 	-- Per-character armor/weapon filter: an unchecked category scores 0 (never an
@@ -240,19 +468,12 @@ local function compareRoll(rollID)
 	local scored = (not Filter) or Filter.isScored(itemType, subType, charFilter(), equipLoc)
 
 	local isUpgrade, delta = false, 0
+	local down                    -- BiS-downgrade info for Verdict.build, or nil
+	local rollScore, target
 	if slotIds and weights and scored then
-		local rollScore = scoreRollItem(rollID, weights, subType, equipLoc)
-		-- Weapons/off-hands use the loadout rule (1H vs 2H, dual wield); everything
-		-- else uses the worst equipped in the slot group as the target (§6.2).
-		local target = ns.weaponEquippedValue(equipLoc, weights)
-		if target == nil then
-			local scores = {}
-			for i, slotId in ipairs(slotIds) do
-				scores[i] = scoreEquipped(slotId, weights, subType, equipLoc)
-			end
-			target = Slots.worstEquipped(scores)
-		end
-		isUpgrade, delta = Score.verdict(rollScore, target, db.threshold)
+		rollScore = scoreRollItem(rollID, weights, subType, equipLoc)
+		target = ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+		isUpgrade, delta, down = ns.judge(rollScore, target, equipLoc, isBiS)
 	end
 
 	-- Optional high-value flag (Phase 4; guarded -- nil if no Auctionator fork).
@@ -269,6 +490,8 @@ local function compareRoll(rollID)
 		texture   = texture,
 		equipLoc  = equipLoc,
 		bop       = bop,
+		isBiS     = isBiS,
+		down      = down,
 		scannable = (slotIds ~= nil),
 		hadWeights = (weights ~= nil),
 		filtered  = (slotIds ~= nil) and (not scored),  -- excluded by the char filter
@@ -307,7 +530,7 @@ local function evaluateRoll(rollID)
 		slotName = slotName,
 		delta    = r.isUpgrade and r.delta or nil,
 		goldText = r.goldFlag and r.goldFlag.text or nil,
-		isBiS    = false,   -- TODO: mark BiS picks from an imported list (§6.3)
+		isBiS    = r.isBiS, -- from the host's BiS list (§6.3); see ns.isBiSItem
 	}, db)
 end
 
@@ -323,9 +546,9 @@ end
 
 local API = {}
 
-function API:GetRollVerdict(rollID)
+function API:GetRollVerdict(rollID, ctx)
 	if not db or not db.enabled then return nil end
-	local r = compareRoll(rollID)
+	local r = compareRoll(rollID, ctx)
 	if not r then return nil end
 	-- Two independent reasons to advise a roll, with DIFFERENT scope:
 	--   * stat upgrade  -- gated by the equip filter + a scannable slot + weights.
@@ -336,8 +559,138 @@ function API:GetRollVerdict(rollID)
 	--     compareRoll). This is INDEPENDENT of the character's equip filter and of
 	--     equippability: a BoE weapon of any type, a recipe, a trade good worth gold
 	--     is still worth greeding. So it must NOT be filter-gated.
+	--   * downgrade    -- BiS Check. Set only for an item the host says is on a
+	--     currently-rolling BiS list AND that scores below what it would replace
+	--     (compareRoll). Unlike the two above it is a reason NOT to roll, and the
+	--     host treats it as a veto rather than an invitation.
 	local goldText = r.goldFlag and r.goldFlag.text or nil
-	return Verdict.build(r.isUpgrade, r.delta, goldText)
+	return Verdict.build(r.isUpgrade, r.delta, goldText, r.down)
+end
+
+-- DIAGNOSTIC: what would this item link do if it were rolled right now?
+--
+-- Exists because BiS Check is almost impossible to test on purpose -- it needs a
+-- specific stale item to actually drop off a specific boss. This answers the same
+-- question against any link you can shift-click, using ns.effectiveTarget and
+-- ns.judge, which are the very functions the live roll path uses. If this says
+-- "downgrade" then a real roll would too.
+--
+-- Returns a REPORT, not a verdict: the host's diagnostic wants the intermediate
+-- numbers (score, target, why it was skipped) far more than the yes/no.
+--   { link, name, equipLoc, scannable, hadWeights, filtered, isBiS,
+--     score, target, isUpgrade, delta, down, verdict }
+-- `isBiS` is passed in by the host (it owns the BiS list); nil means "ask", which
+-- routes through the same ns.isBiSItem the alert path uses.
+function API:GetLinkVerdict(link, isBiS)
+	if type(link) ~= "string" or link == "" then return nil end
+	if not ScaledStats then return nil end
+	local name, _, _, _, _, itemType, subType, _, equipLoc = GetItemInfo(link)
+	if not name then
+		-- Cold cache: the query above is itself what starts the fill, so the caller
+		-- gets a "try again" rather than a wrong answer built from nils.
+		return { link = link, uncached = true }
+	end
+	if isBiS == nil then isBiS = ns.isBiSItem(link, name, nil) end
+
+	local slotIds = Slots.slotsFor(equipLoc)
+	local weights = currentWeights()
+	local scored = (not Filter) or Filter.isScored(itemType, subType, charFilter(), equipLoc)
+	local r = {
+		link = link, name = name, equipLoc = equipLoc,
+		scannable = (slotIds ~= nil), hadWeights = (weights ~= nil),
+		filtered = (slotIds ~= nil) and (not scored),
+		isBiS = isBiS and true or false,
+	}
+	if not (slotIds and weights and scored) then return r end
+
+	-- The candidate is stripped too when the option is on. A live roll never needs
+	-- this (SetLootRollItem reads a fresh drop, which has no enchant), but a dry run
+	-- is usually a link out of your own bags or off your own character, and scoring
+	-- an enchanted candidate against stripped equipped gear compares two different
+	-- things -- most visibly by making an item you are already WEARING read as a
+	-- large upgrade over itself.
+	local stats = ns.strippedStats(link, subType, equipLoc)
+		or ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, link)
+	r.score = Score.scoreItem(stats, weights)
+	r.target, r.targetParts = ns.effectiveTarget(equipLoc, subType, weights, slotIds)
+	r.isUpgrade, r.delta, r.down = ns.judge(r.score, r.target, equipLoc, r.isBiS)
+	r.verdict = Verdict.build(r.isUpgrade, r.delta, nil, r.down)
+	return r
+end
+
+-- DIAGNOSTIC: is the enchant strip safe to switch on for THIS character's gear?
+--
+-- The strip has to read the equipped item through SetHyperlink, which the library
+-- warns may report cached/nominal stats for a scaled instance instead of the real
+-- one. That is unverifiable from here, so this measures it instead of guessing:
+-- for each equipped slot it scores the item three ways --
+--   real     : SetInventoryItem, the true instance (what we use today)
+--   link     : SetHyperlink on the item's OWN link, unmodified
+--   stripped : SetHyperlink on the link with the enchant zeroed
+--
+-- The test is `real` vs `link`. Those two describe the SAME item, so if they agree
+-- then SetHyperlink is faithful on this client and `stripped` can be trusted; if
+-- they disagree the link scan is lying and the option must stay off, whatever the
+-- enchant is worth. `stripped` vs `link` is then just how much enchant was in the
+-- score, which is the number that says whether any of this was worth doing.
+--
+-- Returns { { slot, name, real, link, stripped }, ... } for filled, scoreable slots.
+function API:GetEnchantCheck()
+	local out = {}
+	if not (ScaledStats and ItemLink) then return out end
+	local weights = currentWeights()
+	if not weights then return out end
+	for _, slotId in ipairs(Slots.DIAG_SLOT_IDS or {}) do
+		local link = GetInventoryItemLink("player", slotId)
+		if link then
+			local name, _, _, _, _, _, subType, _, equipLoc = GetItemInfo(link)
+			if equipLoc and Slots.slotsFor(equipLoc) then
+				local stripped = ItemLink.stripEnchant(link)
+				local function score(setter, ...)
+					return Score.scoreItem(
+						ScaledStats:GetStatsWithDps(setter, subType, equipLoc, ...), weights)
+				end
+				out[#out + 1] = {
+					slot     = slotId,
+					name     = name or "?",
+					real     = score("SetInventoryItem", "player", slotId),
+					link     = score("SetHyperlink", link),
+					stripped = stripped and score("SetHyperlink", stripped) or nil,
+				}
+			end
+		end
+	end
+	return out
+end
+
+-- DIAGNOSTIC: a flat copy of what the win ledger holds for this run, so the host's
+-- report can show that the run tracking is actually recording things -- the one
+-- half of BiS Check that CAN be exercised without a stale item dropping.
+-- Returns { { equipLoc, count, bestScore, bestName }, ... }, sorted.
+function API:GetRunLedger()
+	if not WonLedger then return {} end
+	local out = {}
+	for _, equipLoc in ipairs(Slots.DIAG_EQUIPLOCS or {}) do
+		local wins = WonLedger.winsFor(equipLoc)
+		if wins and #wins > 0 then
+			local best = WonLedger.bestFor(equipLoc)
+			out[#out + 1] = {
+				equipLoc = equipLoc, count = #wins,
+				bestScore = best and best.score or 0,
+				bestName = best and best.name or nil,
+			}
+		end
+	end
+	table.sort(out, function(a, b) return a.equipLoc < b.equipLoc end)
+	return out
+end
+
+-- End the current run: drop everything the win ledger collected. Called by the
+-- host when the zone changes (Core/BiSCleanup.lua), which is where "a run" is
+-- defined -- the scanner does not watch zones itself, so the host's suggestion
+-- window and this ledger can never disagree about when the run ended.
+function API:EndRun()
+	if WonLedger then WonLedger.clear() end
 end
 
 -- Readiness snapshot for a host that wants to SHOW whether the scanner can
@@ -364,6 +717,9 @@ function API:GetStatus()
 	end
 	if db then
 		st.threshold, st.goldThreshold = db.threshold, db.goldThreshold
+		-- Reported so a host can SAY which way equipped gear is being scored; it
+		-- changes what every number in a compare means (ns.equippedStats).
+		st.ignoreEnchants = db.ignoreEnchants and true or false
 	end
 
 	-- currentWeights() is the same call the roll path makes, so "ready" here can
@@ -413,6 +769,9 @@ ef:RegisterEvent("ADDON_LOADED")
 ef:RegisterEvent("PLAYER_LOGIN")
 ef:RegisterEvent("START_LOOT_ROLL")
 ef:RegisterEvent("CANCEL_LOOT_ROLL")
+-- Feeds the run's win ledger (BiS Check): what actually landed in your bags this
+-- run is what the rest of the run gets compared against.
+ef:RegisterEvent("CHAT_MSG_LOOT")
 
 local function scannerOnEvent(_, event, arg1)
 	if event == "ADDON_LOADED" then
@@ -442,6 +801,12 @@ local function scannerOnEvent(_, event, arg1)
 		pcall(evaluateRoll, arg1)
 	elseif event == "CANCEL_LOOT_ROLL" then
 		if Alert and Alert.Hide then Alert.Hide() end
+	elseif event == "CHAT_MSG_LOOT" then
+		-- pcall for the same reason START_LOOT_ROLL has one: a scoring error here
+		-- must never surface as a Lua error on every item you pick up.
+		local link = WonLedger and
+			WonLedger.linkFromLootMessage(arg1, buildLootPatterns()) or nil
+		if link then pcall(recordWin, link) end
 	end
 end
 
