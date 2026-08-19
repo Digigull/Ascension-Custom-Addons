@@ -74,8 +74,8 @@ performance one. Current decisions:
 
 | Use | Strata | Examples |
 |---|---|---|
-| Persistent window left open while playing | `LOW` | cpp meter, PassLootBiS Loot Window |
-| Window that must clear the action bars / unit frames | `MEDIUM` + frame level 100 | BiS Scanner options/filter |
+| Persistent window left open while playing | `LOW` | cpp meter |
+| Window that must clear the action bars / unit frames | `MEDIUM` + frame level 100 | BiS Scanner options/filter, PassLootBiS Loot Window |
 | Deliberately opened; copy/paste popups | `FULLSCREEN_DIALOG` | cpp export/detail/glossary, BiS Scanner debug box |
 | Opened from *inside* the Interface Options panel | `FULLSCREEN_DIALOG` | PassLootBiS BiS Manager |
 | Attached to a Blizzard panel | match that panel | Honor Tracker panel (`HIGH`) |
@@ -88,7 +88,10 @@ Rules behind the table:
   are on `LOW` too (and they are `toplevel`, so clicking one lifts it over your window), and bar
   addons such as Bartender default to `MEDIUM`. A window that must never be drawn through by a
   health bar or an action button needs `MEDIUM` **and** a frame level well above its neighbours
-  (`ns.UI.WINDOW_LEVEL` = 100 in the Scanner) — within one strata the higher level wins.
+  — within one strata the higher level wins. Both addons that need this have a helper for it,
+  so don't hand-roll the pair: `ns.UI.applyWindowChrome()` (`PassLootBiS_Scanner/Core/UI.lua`)
+  and `PasslootBiS:ApplyWindowChrome()` (`PasslootBiS/Core/PassLoot.lua`), both `MEDIUM` + level
+  100.
 - **Nothing on `MEDIUM` or above may call `Raise()`.** The raise is the drag-freeze restack;
   it is only cheap on a sparse strata. Use a fixed high frame level for front-on-open instead.
 - **Exception: notifications.** A toast exists to be noticed and usually fires while bags are

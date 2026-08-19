@@ -1223,6 +1223,43 @@ local function mgrAcquireRow(f, i)
 	return row
 end
 
+-- Strata + frame level for a hand-rolled window that has to be visible while you
+-- play. Defined here for the same reason as the backdrop below: Core/PassLoot.lua
+-- loads first (see Core/Core.xml), so one edit moves every window that uses it.
+--
+-- MEDIUM, not LOW: LOW is where Blizzard's action bars and unit frames live, and
+-- they are toplevel, so clicking one restacks LOW and lifts it over anything of ours
+-- sitting there. MEDIUM clears them and still leaves the window UNDER the Blizzard
+-- panels on HIGH and above (bags, character sheet, world map), which is the layering
+-- custom UI is expected to take.
+--
+-- The level matters as much as the strata: bar addons (Bartender among them) default
+-- to MEDIUM too, and within one strata the higher frame level wins. Blizzard's frames
+-- and the bar addons sit in the low single digits there, so 100 clears them with room
+-- for a window's own children, which take 101 upwards.
+--
+-- It also replaces Raise() for front-on-open. Raise() reorders a frame against every
+-- sibling in its strata -- the exact operation the drag-freeze is made of, cheap on a
+-- sparse strata but the ~0.6-2.6s engine pass on a populated one, and MEDIUM is
+-- populated. Setting one frame's level reorders nothing, so call this again from the
+-- show path instead of calling Raise(). Like Raise() it cannot cross strata, so the
+-- window still stays under the Blizzard panels.
+--
+-- Never pair this (or any strata) with SetToplevel(true): a toplevel frame re-raises
+-- on every click/drag, which is that same restack once per grab. See the DRAGFREEZE
+-- notes in this file and management/docs/DRAG-FREEZE.md.
+PasslootBiS.WINDOW_STRATA = "MEDIUM"
+PasslootBiS.WINDOW_LEVEL = 100
+
+function PasslootBiS:ApplyWindowChrome(frame)
+	if not frame or type(frame.SetFrameStrata) ~= "function" then return frame end
+	frame:SetFrameStrata(self.WINDOW_STRATA)
+	if type(frame.SetFrameLevel) == "function" then
+		frame:SetFrameLevel(self.WINDOW_LEVEL)
+	end
+	return frame
+end
+
 -- House window chrome: the flat dark "Details-style" backdrop -- the tooltip
 -- background tiled behind a 1px WHITE8X8 border, tinted near-black -- replacing the
 -- ornate gold UI-DialogBox parchment. Defined here because Core/PassLoot.lua loads

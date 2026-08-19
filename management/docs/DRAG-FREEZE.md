@@ -174,9 +174,25 @@ frame:SetFrameStrata("LOW")   -- below the character panel/bags/world map, above
 frame:Raise()                 -- (once, on open) orders among LOW siblings only; cannot cross strata
 ```
 
-`LOW` is the right default for a **persistent window you leave open while playing** (a meter, a
-floating log): the default Blizzard panels render over it, which is what players expect from custom
-UI. Keep `FULLSCREEN_DIALOG` for windows you **deliberately open and read** (settings panels,
+**`LOW` does not clear the action bars or the unit frames** (added later, in the field). Blizzard's
+bars and unit frames are on `LOW` themselves, and they are `toplevel` — so clicking one restacks
+`LOW` and lifts it over your window. Bar addons such as Bartender default to `MEDIUM`. A window that
+must never be drawn through by a health bar or an action button therefore needs `MEDIUM` **and** a
+frame level well clear of its neighbours (100 in this repo; Blizzard frames and the bar addons sit in
+the low single digits), because within one strata the higher level wins:
+
+```lua
+frame:SetFrameStrata("MEDIUM")
+frame:SetFrameLevel(100)   -- front-of-strata with no restack; re-assert it on open instead of Raise()
+```
+
+That fixed level is also the correct replacement for `Raise()` here — `MEDIUM` is populated, so rule 2
+applies and `Raise()` is out. Setting one frame's level reorders nothing, and like `Raise()` it cannot
+cross strata, so the window still stays under the Blizzard panels.
+
+`LOW` is otherwise the right default for a **persistent window you leave open while playing** (a
+meter, a floating log): the default Blizzard panels render over it, which is what players expect
+from custom UI. Keep `FULLSCREEN_DIALOG` for windows you **deliberately open and read** (settings panels,
 copy/paste popups) and for anything launched from the options panel (rule 4).
 
 **This is spike-free only because there is no `SetToplevel`.** A `LOW` + `SetToplevel` window would
@@ -190,7 +206,7 @@ If you ever restore the flag, the strata becomes load-bearing again.
 | Window | Addon | State |
 |---|---|---|
 | BiS Manager | PassLootBiS | Option 2 — `FULLSCREEN_DIALOG`, no toplevel, `Raise()` on open |
-| Loot Window | PassLootBiS | Option 2 (since moved to `LOW`, see below — **re-test**) |
+| Loot Window | PassLootBiS | Option 2 (since moved to `LOW`, then to `MEDIUM` — see below — **re-test**) |
 | Roll-advisor popup | PassLootBiS | Option 2, no `Raise()` needed (non-overlapping slots) |
 
 **Applied but NOT yet in-game verified** — reasoned from the mechanism above, not measured:
@@ -203,7 +219,7 @@ If you ever restore the flag, the strata becomes load-bearing again.
 | Options + Filter windows | BiS Scanner | Dropped toplevel; strata → `LOW`, **since moved to `MEDIUM`** + frame level 100 so the action bars and unit frames stop drawing through them. `Raise()` dropped with that move (rule 2) — `frontOnOpen()` re-asserts the fixed level instead, which reorders nothing |
 | Export / detail / glossary | ClientPerfProbe | Dropped toplevel, `Raise()` on open |
 | 2 dropdown menus | ClientPerfProbe | Dropped toplevel (no `Raise()` — one menu open at a time) |
-| Loot Window | PassLootBiS | Strata → `LOW` (persistent log) |
+| Loot Window | PassLootBiS | Strata → `LOW` (persistent log), **since raised to `MEDIUM`** + frame level 100 for the same action-bar/unit-frame reason as the Scanner windows; `Raise()` on open dropped with that move (rule 2) |
 | PvP points panel | Honor Tracker | `DIALOG` → `HIGH` to match the character panel it attaches to. Deliberately **no** `Raise()` (rule 2) |
 
 **Deliberately unchanged, with reasons:**
