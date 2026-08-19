@@ -881,13 +881,82 @@ this case (epic vs rare); the item's real link is available too, via the bag slo
 1. **Split the scan buckets on something that works** — quality, or required/item level, or the
    listing's item id — instead of texture, and record the row's link in `AddScanItem` so a
    bucket knows what it holds. Contained inside `AuctionatorScan.lua`; fixes the *displayed*
-   list on the Sell and Buy tabs. **Not startable as written** — see the trailing-space note
-   above for the one decision to make first.
-2. **Give the Sell tab the item it was actually handed**, from `GetAuctionSellItemInfo`'s
-   quality or from the bag link, rather than resolving the name through `gItemLinkCache`.
-   Contained; fixes the recommendation for the item in the drop box.
+   list on the Sell and Buy tabs. **One decision left — see "What part 1 ran into" below.**
+2. ~~**Give the Sell tab the item it was actually handed**~~ — **DONE 2026-08-19, and the
+   mechanism was not the one written here.** See "Part 2 as built" below.
 3. **Teach the price database about variants.** The real one. See the recommended shape below
    — the summary is that it should *not* be a re-key.
+
+### Part 2 as built (2026-08-19)
+
+**The premise above was wrong, and worth correcting because it would have sent someone to the
+wrong file.** The Sell tab does *not* resolve its item by name through `gItemLinkCache`.
+`Atr_GetSellItemInfo` (`Auctionator.lua:907`) reads the link off
+`AtrScanningTooltip:SetAuctionSellItem()` — the one source a name cannot confuse — and writes it
+into the cache. By the time `DoSearch` runs, the cache already holds the right link.
+
+**The real cause is scan REUSE.** `Atr_FindScan` (`AuctionatorScan.lua:97`) caches scan objects by
+lowercased name and **only re-`Init`s when explicitly asked**:
+
+```lua
+if (gAllScans[itemNameLC] == nil) then ... scn:Init (itemName) ...
+elseif (init) then gAllScans[itemNameLC]:Init (itemName); end
+```
+
+`AtrSearch:Init` reuses a scan whose `whenScanned` is inside the rescan threshold without
+re-initialising it, so the scan keeps the `itemLink` — and with it the `itemQuality`, `itemClass`
+and `itemSubclass` that `UpdateItemLink` derives — of **whichever variant was seen first**. Drop
+the epic in the sell box after the rare has been scanned and the pane describes the rare. That is
+the reported symptom, and it is a different bug in a different file from the one this item
+predicted.
+
+**The fix** is three lines in `Atr_OnNewAuctionUpdate`: after `DoSearch`, if the sell item's real
+link disagrees with `gSellPane.activeScan.itemLink`, push it in through the existing
+`AtrScan:UpdateItemLink`, which recomputes quality, class and subclass from it. The scanned
+*listings* are deliberately left alone — they are name-keyed and still the right search. This
+corrects the item's **identity**, not its market data; the market data is part 3.
+
+**Verified** by `luac5.1 -p`. **Not verified in game.** The check is the reported case: scan the
+rare Bloodforged Imperial Jewel, then drop the epic in the sell box and confirm the header name
+colours epic and the disenchant line matches the epic.
+
+### What part 1 ran into (2026-08-19) — one decision, and it is the owner's
+
+Started part 1 and stopped before writing the split, because the measurement that unblocked it
+uncovered a second decision underneath. Recording it rather than guessing, since the wrong pick
+changes **what gets written to the price database**.
+
+**The bucket key and the database key are the same field.** The scan loop keys `self.items` by
+name, the space hack makes a second bucket by making a second *name*, and the finaliser writes
+`gAtr_ScanDB[scn.itemName]` (`AuctionatorScan.lua:668`). So *any* split into N buckets writes N
+database rows unless the two identities are separated first. That is the whole reason the
+trailing-space keys exist in people's databases at all — they are not a side effect, they are
+what the design does.
+
+Splitting on **quality** is the right test (free from `GetAuctionItemInfo`, and it separates the
+reported rare/epic pair; splitting on *level* would explode on this server, where gear is scaled
+per instance and every required level would become its own bucket). The open question is what the
+new buckets do about the database:
+
+| Option | Cost |
+|---|---|
+| **A. Variant buckets skip the DB write** — only the primary writes | Honest (there is nowhere correct to put a variant price until part 3), but the recorded price can **rise**: today the merged bucket writes the minimum across all variants, and the cheaper listing may be in the variant bucket. A price going up silently is the worst failure mode of the three. |
+| **B. Give `AtrScan` a `baseName` separate from `itemName`** — buckets split, both write `gAtr_ScanDB[baseName]`, last one wins | Keeps the DB key clean and stops new trailing-space rows forever. "Last wins" is arbitrary, but no worse than today's single merged number, and it is the shape part 3 wants to build on. |
+| **C. Merge the low prices across same-`baseName` buckets at finalise** | Preserves today's DB behaviour *exactly* while fixing the display. Most code, and it is throwaway once part 3 lands. |
+
+**Recommendation: B.** It is the only one that leaves the database in the shape part 3 is
+designed to extend, and its arbitrariness is bounded — one of two real prices for a name, where
+today you also get one number for a name. A is a silent price increase, which this addon should
+never do. C is work that part 3 deletes.
+
+**The three existing trailing-space rows** need no migration under any option: none has an
+unsuffixed twin, so they answer no lookup and shadow nothing. Stripping the space and adopting
+the value would give three items a price they currently lack — a small win, worth doing in the
+same pass, not worth a `__dbversion` bump.
+
+**Deferred to part 3, deliberately:** recording each row's link in `AddScanItem`. It costs a
+`GetAuctionItemLink` per listing across a full scan, and nothing reads it until the database can
+store a variant. Doing it now would buy nothing and slow every scan.
 
 ### Recommended shape for part 3 (2026-08-19)
 

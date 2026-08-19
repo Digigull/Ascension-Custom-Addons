@@ -4155,7 +4155,28 @@ function Atr_OnNewAuctionUpdate()
 		
 		if (gJustPosted_ItemName == nil) then
 			local cacheHit = gSellPane:DoSearch (auctionItemName, true, 20);
-			
+
+			-- SAME-NAME VARIANTS (backlog item 12, part 2).  Scans are cached by
+			-- NAME and reused: Atr_FindScan only re-Inits when asked to, so the
+			-- scan object keeps the itemLink -- and therefore the quality, class
+			-- and subclass -- of whichever variant was seen FIRST.  This server
+			-- ships genuinely different items under one name (a rare and an epic
+			-- Bloodforged Imperial Jewel), so dropping the epic in the sell box
+			-- landed on a scan still describing the rare.
+			--
+			-- We are not guessing here: Atr_GetSellItemInfo read this exact
+			-- item's link off AtrScanningTooltip:SetAuctionSellItem, which is the
+			-- one source that cannot be confused by a name.  So push it into the
+			-- scan and let UpdateItemLink recompute quality/class/subclass from
+			-- it.  The scanned LISTINGS are left alone -- they are name-keyed and
+			-- still the right search -- so this corrects the item's identity, not
+			-- its market data.  Correcting the market data is part 3.
+			if (auctionLink and gSellPane.activeScan
+				and gSellPane.activeScan.itemLink ~= auctionLink
+				and gSellPane.activeScan.UpdateItemLink) then
+				gSellPane.activeScan:UpdateItemLink (auctionLink);
+			end
+
 			gSellPane.totalItems	= Atr_GetNumItemInBags (auctionItemName);
 			gSellPane.fullStackSize = auctionLink and (select (8, GetItemInfo (auctionLink))) or 0;
 
