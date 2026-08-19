@@ -31,16 +31,34 @@ a per-addon doc; link it from the table below in one line rather than summarisin
 
 - **There is no Lua toolchain by default.** Install one before editing Lua:
   `apt-get install -y lua5.1`. Use **5.1 specifically** — that is what the 3.3.5 client runs.
-- **Syntax-check every Lua edit:** `luac5.1 -p <files>`. Cheap, and the only automated check
-  available; there is no test suite.
+- **Syntax-check every Lua edit:** `luac5.1 -p <files>`. Cheap, and the baseline check.
 - **Validate XML edits** with `python3 -c "import xml.etree.ElementTree as ET; ET.parse('f.xml')"`.
   Several addons build frames in XML, where a typo silently breaks the whole file in-game.
 - **Three files fail `luac5.1` on a UTF-8 BOM and are fine as they are** — the client's loader
   tolerates BOMs: `PasslootBiS/Core/Cache.lua`, `Auctionator-Finder-Ascension/Locales/esES.lua`,
   `Auctionator-Finder-Ascension/Locales/deDE.lua`. Do not "fix" them; just expect the noise when
   checking the whole repo.
-- Nothing here can be run or screenshotted — verification is parsing, reading, and the owner's
-  in-game test. Say plainly when a change is only reasoned, not verified.
+- **There is no test suite, but there ARE offline tests — run the ones that cover what you
+  touched.** They stub the client and run under bare `lua5.1` from the repo root, in about a
+  second each:
+
+  ```
+  lua5.1 management/addons/passlootbis/tools/contract-check.lua    # 20 assertions
+  lua5.1 management/addons/passlootbis/tools/usable-smoke.lua      # 14 assertions
+  lua5.1 management/addons/passlootbis/tools/report-smoke.lua      # 3 passes, non-zero on a crash
+  ```
+
+  All three pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
+  put new tests there. Several source files are deliberately shaped to be testable this way —
+  helpers kept global, `rawget(_G, "CreateFrame")` guards — so **preserve that** and extend the
+  pattern rather than adding an in-game debug command for something arithmetic.
+- The client itself cannot be run or screenshotted here. Beyond the checks above, verification
+  is parsing and reading. Say plainly when a change is only reasoned, not verified.
+- **Do not re-raise the owner's parked in-game checks.** Where a doc lists something as
+  "not verified in game", that is a record, not a request. The owner has the addons running and
+  has decided (2026-08) that they behave correctly; anything that misbehaves will be reported
+  when it does. Mention such an item only if the change in front of you actually touches it —
+  never as a standing caveat on unrelated work.
 
 ## The drag freeze — the one domain rule that matters
 

@@ -1,5 +1,23 @@
 # In-game test plan — BoP confirms, BiS Check, enchant strip
 
+## Status: closed out, 2026-08-19
+
+**The owner has the addons running and reports they work well.** Everything in this file that
+reads as an outstanding in-game check is **parked**, not pending. The plan below stays because
+it is the fastest way back into a problem *if one appears* — it is a diagnostic recipe, not a
+to-do list.
+
+What that means in practice for a future session:
+
+- **Do not open a change by listing these.** They are not blockers and not caveats on unrelated
+  work. The repo-wide rule is in `management/docs/CLAUDE.md`.
+- **Do use them the moment a symptom is actually reported.** Each entry already names the tell
+  and the next step, which is the whole point of having written them down.
+- The one item that was genuinely one check from closing — the enchant-strip **score** half of
+  the `21.9` investigation (§4) — is parked in that state deliberately. Its consequence is
+  recorded there: a target read too low would make BiS Check under-fire. If BiS Check ever
+  starts calling everything an upgrade, start there.
+
 Nothing in this repo can run the 3.3.5 client, so this is the list that turns
 "should work" into "does work". Written to be picked up cold in a fresh session — if
 you are that session, read `BIND-CONFIRMS.md` and `BIS-CHECK.md` first for why any

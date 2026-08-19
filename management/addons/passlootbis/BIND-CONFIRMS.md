@@ -109,6 +109,10 @@ indistinguishable from a feature that does not exist.
 
 `/plbisdebug` — see the "Diagnostics" section of `BIS-CHECK.md`. The line that
 settles a confirm question is `CONFIRM_LOOT_ROLL: auto-confirming roll N (origin)`.
+> **PARKED — owner's decision, 2026-08-19.** Bind confirmation is working in play. The
+> ladder below is what to ask *if* a prompt ever needs a click again; it is not an open
+> question to chase. See `management/docs/CLAUDE.md`.
+
 If a prompt still needed a click, ask of the trace, in order:
 
 1. **No `CONFIRM_LOOT_ROLL` line at all** — the event never reached us. Check the
