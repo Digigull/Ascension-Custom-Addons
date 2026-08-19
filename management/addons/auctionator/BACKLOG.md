@@ -750,8 +750,17 @@ rows stop taking mouse. The row width and the money column both stop short of th
 
 **Verified** by `luac5.1 -p`, XML parse, and an offline check of the display maths — that the
 newest-first indexing (`rows[n - (offset + i - 1)]`) reads the newest row at the top and pages
-correctly, and that the totals add up the three sources separately. **Not verified in game**, and
-the layout is the part to look at first: every coordinate in the panel is reasoned, not seen.
+correctly, and that the totals add up the three sources separately.
+
+**Verified in game 2026-08-19, and it verified stages 1 and 2 with it.** The owner's screenshot
+shows the tab live with twelve rows: **six `Bought` and six `Received`, quantities matching pair
+for pair** (x14, x20, x20, x20, x3, x11). So the buy capture, the mail sweep's multiset counting
+against a real Postal Open All, the tab wiring and the display all work — and incidentally that
+run of Linen Cloth arrived exactly as ordered, which is the first real data point against item 9.
+
+One layout fix from the same screenshot: the "Vendor sales are not recorded yet" note sat at the
+panel's left edge, running along the top of the auction house's character portrait. It is now
+centred under the title, anchored to the title itself so it follows if that moves.
 
 ### Left for v2
 

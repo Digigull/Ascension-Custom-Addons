@@ -686,8 +686,11 @@ function Atr_Ledger_Init ()
 	title:SetPoint ("TOP", -10, -18);
 	title:SetText ("Auctionator - "..LZT("Ledger"));
 
+	-- Centred under the title rather than at the panel's left edge, where it ran
+	-- along the top of the auction house's character portrait.  Anchored to the
+	-- title itself so it follows if that ever moves.
 	local note = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-	note:SetPoint ("TOPLEFT", 20, -44);
+	note:SetPoint ("TOP", title, "BOTTOM", 0, -4);
 	note:SetText (LZT("Auction house activity. Vendor sales are not recorded yet."));
 
 	-- column headings, matched to the row layout below
