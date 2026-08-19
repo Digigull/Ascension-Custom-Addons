@@ -200,7 +200,7 @@ If you ever restore the flag, the strata becomes load-bearing again.
 | `Atr_ProfitMarginPopup` | Auctionator | **The only other true variant-A frame found** — movable, `toplevel`, `DIALOG`. Moved to `FULLSCREEN_DIALOG` + dropped toplevel |
 | 3 confirm dialogs | Auctionator | `DIALOG` → `FULLSCREEN_DIALOG`, toplevel kept (rule 1) |
 | `Atr_Mask` | Auctionator | Dropped toplevel, strata left below the dialogs (rule 3) |
-| Options + Filter windows | BiS Scanner | Dropped toplevel, `raiseOnOpen()` in show paths; strata → `LOW` |
+| Options + Filter windows | BiS Scanner | Dropped toplevel; strata → `LOW`, **since moved to `MEDIUM`** + frame level 100 so the action bars and unit frames stop drawing through them. `Raise()` dropped with that move (rule 2) — `frontOnOpen()` re-asserts the fixed level instead, which reorders nothing |
 | Export / detail / glossary | ClientPerfProbe | Dropped toplevel, `Raise()` on open |
 | 2 dropdown menus | ClientPerfProbe | Dropped toplevel (no `Raise()` — one menu open at a time) |
 | Loot Window | PassLootBiS | Strata → `LOW` (persistent log) |

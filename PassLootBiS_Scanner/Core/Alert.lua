@@ -100,11 +100,12 @@ local function ensureFrame()
 	frame:SetHeight(52)
 	frame:SetPoint("CENTER", UIParent, "CENTER", 0, 180)
 	ns.UI.applyDarkBackdrop(frame)   -- shared house chrome (Core/UI.lua)
-	-- Strata deliberately left alone: applyWindowChrome() puts windows on LOW, under
-	-- the Blizzard panels, which is right for a window you go and look at but wrong
-	-- for a notification. This toast exists to be NOTICED, and the moment it fires
-	-- is usually the moment your bags are open -- on LOW it would be hidden behind
-	-- them exactly when it matters. Spike-free either way: no SetToplevel here.
+	-- Strata deliberately left alone: applyWindowChrome() pins windows to MEDIUM,
+	-- under the Blizzard panels on HIGH and above, which is right for a window you go
+	-- and look at but wrong for a notification. This toast exists to be NOTICED, and
+	-- the moment it fires is usually the moment your bags are open -- under them it
+	-- would be hidden exactly when it matters, so it keeps the strata it inherits from
+	-- UIParent rather than being pinned down. Spike-free either way: no SetToplevel.
 	frame:SetMovable(true)
 	frame:EnableMouse(true)
 	frame:RegisterForDrag("LeftButton")
