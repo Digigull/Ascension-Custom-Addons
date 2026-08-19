@@ -530,8 +530,8 @@ end
 -- minus its per-item reagent cost) times the recipe's yield.  One craft is what
 -- the ranking compares, because one craft is what a press of Create costs you
 -- and earns you; a recipe making 3 at 12g each beats one making 1 at 20g.  The
--- yield is printed on the row whenever it is more than 1, so the figure is
--- never mistaken for a per-item one.  Reagent cost goes through
+-- row is marked "(total)" whenever the recipe makes more than one, so the
+-- figure is never mistaken for a per-item one.  Reagent cost goes through
 -- Atr_Craft_ReagentPrice at the top of this file -- the one cascade the Crafted
 -- Goods Margin filter uses too, so the two never drift apart.
 --
@@ -840,15 +840,23 @@ local function Atr_ProfSort_Remap()
                 local shown = "|cff" .. hex .. base .. "|r";
 
                 -- The profit is for ONE CRAFT (see Atr_ProfSort_BuildOrder).  A
-                -- recipe that makes more than one gets its yield printed beside
-                -- the figure, so a row can never be read as a per-item number
-                -- when it is not one -- the mismatch that made multi-output
-                -- recipes look wrong on both this list and the tooltip.
+                -- recipe that makes more than one says so against the figure, so
+                -- a row can never be read as a per-item number when it is not
+                -- one -- the mismatch that made multi-output recipes look wrong
+                -- on both this list and the tooltip.
+                --
+                -- The marker is "(total)", not the yield.  "+31g x3" reads as an
+                -- instruction to multiply -- three times 31g -- when the figure
+                -- is ALREADY the whole craft (owner, 2026-08-19).  It is
+                -- deliberately appended with no space, so that when the row runs
+                -- out of width it is the marker that gets clipped rather than
+                -- the digits.  The tooltip has room to name the yield and still
+                -- says "x3"; a list row does not.
                 local profit = gProfSort_Profit and gProfSort_Profit[realIndex];
                 if (profit ~= nil) then
                     shown = shown .. "  " .. Atr_ProfSort_MoneyShort(profit);
                     local made = gProfSort_Made and gProfSort_Made[realIndex];
-                    if (made and made > 1) then shown = shown .. "|cff8888ffx" .. made .. "|r"; end
+                    if (made and made > 1) then shown = shown .. "|cff8888ff(total)|r"; end
                 end
 
                 btn:SetText(shown);

@@ -207,10 +207,15 @@ picked different scales:
   call apart if the question ever comes back — `Atr_Craft_GetCraftCost` and
   `Atr_ProfSort_RowCost` still return per-item costs with the yield beside them, and
   `/atrprofsort` still prints both scales.
-- **The profit sort ranks per craft**, and prints the yield next to the figure (`+36g x3`) so a
-  row can never be read as a per-item number when it is not one. `Atr_ProfSort_BuildOrder`'s
-  `profitByIndex` is now per-craft; `Atr_ProfSort_RowProfit` still returns per-item, and the
-  multiply lives where the ranking decision lives.
+- **The profit sort ranks per craft**, and marks a multi-output row `(total)` against the
+  figure (`+36g(total)`) so a row can never be read as a per-item number when it is not one.
+  `Atr_ProfSort_BuildOrder`'s `profitByIndex` is now per-craft; `Atr_ProfSort_RowProfit` still
+  returns per-item, and the multiply lives where the ranking decision lives.
+
+  The marker started as the yield (`+36g x3`) and was changed on the owner's report
+  (2026-08-19): next to a money figure `x3` reads as *multiply this by three*, which is exactly
+  backwards — the figure is already the whole craft. No space before it, deliberately, so a row
+  too narrow for both clips the marker rather than the digits.
 - **An assumed yield now defers to a known one.** `Atr_Craft_HarvestRecipeTooltip` stores
   `made = 1` because a recipe *item*'s tooltip never prints the yield. That record is keyed by
   name, so for a multi-output craft whose recipe the player happened to hover it reported a
