@@ -121,6 +121,8 @@ local BAZAAR_TAB	= 5;		-- BAZAAR_TAB
 ATR_BAZAAR_TAB		= BAZAAR_TAB;		-- BAZAAR_TAB: global so AuctionatorBazaar.lua can reference it
 local LEDGER_TAB	= 6;		-- LEDGER_TAB
 ATR_LEDGER_TAB		= LEDGER_TAB;		-- LEDGER_TAB: global so AuctionatorLedger.lua can reference it
+local ANALYSIS_TAB	= 7;		-- ANALYSIS_TAB
+ATR_ANALYSIS_TAB	= ANALYSIS_TAB;		-- ANALYSIS_TAB: global so AuctionatorAnalysis.lua can reference it
 
 local MODE_LIST_ACTIVE	= 1;
 local MODE_LIST_ALL		= 2;
@@ -935,12 +937,14 @@ function Atr_Init()
 	gFinderPane	= Atr_AddSellTab (ZT("Finder"),			FINDER_TAB);
 	gBazaarPane	= Atr_AddSellTab (ZT("Bazaar"),			BAZAAR_TAB);		-- BAZAAR_TAB
 	gLedgerPane	= Atr_AddSellTab (ZT("Ledger"),			LEDGER_TAB);		-- LEDGER_TAB
+	gAnalysisPane = Atr_AddSellTab (ZT("Analysis"),		ANALYSIS_TAB);		-- ANALYSIS_TAB
 
 	Atr_AddMainPanel ();
 
 	if (Atr_Finder_Init) then Atr_Finder_Init(); end
 	if (Atr_Bz_Init) then Atr_Bz_Init(); end		-- BAZAAR_TAB
 	if (Atr_Ledger_Init) then Atr_Ledger_Init(); end		-- LEDGER_TAB
+	if (Atr_An_Init) then Atr_An_Init(); end		-- ANALYSIS_TAB
 
 	Atr_SetupHookFunctions ();
 
@@ -1035,6 +1039,7 @@ local _AUCTIONATOR_BUY_TAB_INDEX = 0;
 local _AUCTIONATOR_FINDER_TAB_INDEX = 0;
 local _AUCTIONATOR_BAZAAR_TAB_INDEX = 0;		-- BAZAAR_TAB
 local _AUCTIONATOR_LEDGER_TAB_INDEX = 0;		-- LEDGER_TAB
+local _AUCTIONATOR_ANALYSIS_TAB_INDEX = 0;		-- ANALYSIS_TAB
 
 --------------------------------------------------------------------------------
 
@@ -1056,6 +1061,7 @@ function Atr_FindTabIndex (whichTab)
 				if (tab.auctionatorTab == FINDER_TAB)	then _AUCTIONATOR_FINDER_TAB_INDEX = i; end;
 				if (tab.auctionatorTab == BAZAAR_TAB)	then _AUCTIONATOR_BAZAAR_TAB_INDEX = i; end;		-- BAZAAR_TAB
 				if (tab.auctionatorTab == LEDGER_TAB)	then _AUCTIONATOR_LEDGER_TAB_INDEX = i; end;		-- LEDGER_TAB
+				if (tab.auctionatorTab == ANALYSIS_TAB)	then _AUCTIONATOR_ANALYSIS_TAB_INDEX = i; end;		-- ANALYSIS_TAB
 			end
 
 			i = i + 1;
@@ -1068,6 +1074,7 @@ function Atr_FindTabIndex (whichTab)
 	if (whichTab == FINDER_TAB)	then return _AUCTIONATOR_FINDER_TAB_INDEX; end;
 	if (whichTab == BAZAAR_TAB)	then return _AUCTIONATOR_BAZAAR_TAB_INDEX; end;		-- BAZAAR_TAB
 	if (whichTab == LEDGER_TAB)	then return _AUCTIONATOR_LEDGER_TAB_INDEX; end;		-- LEDGER_TAB
+	if (whichTab == ANALYSIS_TAB)	then return _AUCTIONATOR_ANALYSIS_TAB_INDEX; end;		-- ANALYSIS_TAB
 
 	return 0;
 end
@@ -1328,9 +1335,11 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
 	if (Atr_Finder_Panel) then Atr_Finder_Panel:Hide(); end
 	if (Atr_Bz_Panel) then Atr_Bz_Panel:Hide(); end		-- BAZAAR_TAB
 	if (Atr_Ledger_Panel) then Atr_Ledger_Panel:Hide(); end		-- LEDGER_TAB
+	if (Atr_An_Panel) then Atr_An_Panel:Hide(); end		-- ANALYSIS_TAB
 	if (Atr_Finder_OnTabClick) then Atr_Finder_OnTabClick (index); end
 	if (Atr_Bz_OnTabClick) then Atr_Bz_OnTabClick (index); end		-- BAZAAR_TAB
 	if (Atr_Ledger_OnTabClick) then Atr_Ledger_OnTabClick (index); end		-- LEDGER_TAB
+	if (Atr_An_OnTabClick) then Atr_An_OnTabClick (index); end		-- ANALYSIS_TAB
 
 	gBuyState = ATR_BUY_NULL;			-- just in case
 	gItemPostingInProgress = false;		-- just in case
@@ -1372,6 +1381,7 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
 		if (index == Atr_FindTabIndex(FINDER_TAB))	then gCurrentPane = gFinderPane; end;
 		if (index == Atr_FindTabIndex(BAZAAR_TAB))	then gCurrentPane = gBazaarPane; end;		-- BAZAAR_TAB
 		if (index == Atr_FindTabIndex(LEDGER_TAB))	then gCurrentPane = gLedgerPane; end;		-- LEDGER_TAB
+		if (index == Atr_FindTabIndex(ANALYSIS_TAB))	then gCurrentPane = gAnalysisPane; end;		-- ANALYSIS_TAB
 
 		if (index == Atr_FindTabIndex(SELL_TAB))	then AuctionatorTitle:SetText ("Auctionator - "..ZT("Sell"));			end;
 		if (index == Atr_FindTabIndex(BUY_TAB))		then AuctionatorTitle:SetText ("Auctionator - "..ZT("Buy"));			end;
@@ -1379,6 +1389,7 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
 		if (index == Atr_FindTabIndex(FINDER_TAB))	then AuctionatorTitle:SetText ("Auctionator - "..ZT("Finder"));		end;
 		if (index == Atr_FindTabIndex(BAZAAR_TAB))	then AuctionatorTitle:SetText ("Auctionator - "..ZT("Bazaar"));		end;		-- BAZAAR_TAB
 		if (index == Atr_FindTabIndex(LEDGER_TAB))	then AuctionatorTitle:SetText ("Auctionator - "..ZT("Ledger"));		end;		-- LEDGER_TAB
+		if (index == Atr_FindTabIndex(ANALYSIS_TAB))	then AuctionatorTitle:SetText ("Auctionator - "..ZT("Analysis"));	end;		-- ANALYSIS_TAB
 
 		Atr_ClearHlist();
 		Atr_SellControls:Hide();
@@ -1410,7 +1421,8 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
             end
 		else
 			if (index ~= Atr_FindTabIndex(FINDER_TAB) and index ~= Atr_FindTabIndex(BAZAAR_TAB)
-				and index ~= Atr_FindTabIndex(LEDGER_TAB)) then		-- LEDGER_TAB
+				and index ~= Atr_FindTabIndex(LEDGER_TAB)
+				and index ~= Atr_FindTabIndex(ANALYSIS_TAB)) then		-- ANALYSIS_TAB
 				Atr_Hlist:Show();
 				Atr_Hlist_ScrollFrame:Show();
 			end
@@ -1486,6 +1498,11 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
 			if (Atr_Ledger_Panel) then
 				AuctionFrameMoneyFrame:Show();
 				Atr_Ledger_Panel:Show();
+			end
+		elseif (index == Atr_FindTabIndex(ANALYSIS_TAB)) then		-- ANALYSIS_TAB
+			if (Atr_An_Panel) then
+				AuctionFrameMoneyFrame:Show();
+				Atr_An_Panel:Show();
 			end
 		else
 			_G["Atr_Main_Panel"]:Show();
@@ -5807,7 +5824,7 @@ function Atr_IsTabSelected(whichTab)
 	end
 
 	if (not whichTab) then
-		return (Atr_IsTabSelected(SELL_TAB) or Atr_IsTabSelected(MORE_TAB) or Atr_IsTabSelected(BUY_TAB) or Atr_IsTabSelected(FINDER_TAB) or Atr_IsTabSelected(BAZAAR_TAB) or Atr_IsTabSelected(LEDGER_TAB));		-- LEDGER_TAB
+		return (Atr_IsTabSelected(SELL_TAB) or Atr_IsTabSelected(MORE_TAB) or Atr_IsTabSelected(BUY_TAB) or Atr_IsTabSelected(FINDER_TAB) or Atr_IsTabSelected(BAZAAR_TAB) or Atr_IsTabSelected(LEDGER_TAB) or Atr_IsTabSelected(ANALYSIS_TAB));		-- ANALYSIS_TAB
 	end
 
 	return (PanelTemplates_GetSelectedTab (AuctionFrame) == Atr_FindTabIndex(whichTab));
@@ -5817,7 +5834,7 @@ end
 
 function Atr_IsAuctionatorTab (tabIndex)
 
-	if (tabIndex == Atr_FindTabIndex(SELL_TAB) or tabIndex == Atr_FindTabIndex(MORE_TAB) or tabIndex == Atr_FindTabIndex(BUY_TAB) or tabIndex == Atr_FindTabIndex(FINDER_TAB) or tabIndex == Atr_FindTabIndex(BAZAAR_TAB) or tabIndex == Atr_FindTabIndex(LEDGER_TAB) ) then		-- LEDGER_TAB
+	if (tabIndex == Atr_FindTabIndex(SELL_TAB) or tabIndex == Atr_FindTabIndex(MORE_TAB) or tabIndex == Atr_FindTabIndex(BUY_TAB) or tabIndex == Atr_FindTabIndex(FINDER_TAB) or tabIndex == Atr_FindTabIndex(BAZAAR_TAB) or tabIndex == Atr_FindTabIndex(LEDGER_TAB) or tabIndex == Atr_FindTabIndex(ANALYSIS_TAB) ) then		-- ANALYSIS_TAB
 
 		return true;
 
