@@ -50,12 +50,12 @@ local ScaledStats  -- resolved from LibStub at login
 local DEFAULTS = {
 	enabled       = true,
 	threshold     = 0.03,   -- +3% minimum delta to call an upgrade (§6.3)
-	strongDelta   = 0.10,   -- >= +10% counts as a "strong" upgrade (sound cue)
 	-- class/spec are PER-CHARACTER (a character is exactly one class); they live in
 	-- chardb, not here -- see initCharDB. Kept out of the account-wide DEFAULTS.
 	useChat       = true,
 	useFrame      = false,  -- floating frame off by default; chat is the safe minimum
-	useSound      = false,
+	useSound      = false,  -- cue on ANY upgrade -- the threshold above is the cutoff
+	useSoundGold  = false,  -- cue on the high-value flag -- goldThreshold is its cutoff
 	tooltip       = true,   -- annotate item tooltips with score + upgrade arrow
 	goldThreshold = 500000, -- 50g in copper, for the Auctionator flag (Phase 4)
 	powerMode     = "off",  -- score a CoA flat Power stat: "off" | "pve" | "pvp"
@@ -306,7 +306,6 @@ local function evaluateRoll(rollID)
 		texture  = r.texture,
 		slotName = slotName,
 		delta    = r.isUpgrade and r.delta or nil,
-		strong   = r.isUpgrade and (r.delta >= db.strongDelta),
 		goldText = r.goldFlag and r.goldFlag.text or nil,
 		isBiS    = false,   -- TODO: mark BiS picks from an imported list (§6.3)
 	}, db)
@@ -667,7 +666,7 @@ SlashCmdList["PLBISSCAN"] = function(msg)
 		chat("scanning: " .. (db.enabled and "|cff00ff00on|r" or "|cffff0000off|r")
 			.. ", spec: " .. (chardb.class and chardb.spec and (chardb.class .. " / " .. chardb.spec) or "|cffff0000none|r")
 			.. ", threshold: " .. string.format("+%d%%", math.floor(db.threshold * 100 + 0.5)))
-		chat("commands: options | filter | on | off | toggle | threshold <n%> | spec | spec <Class> | <Spec> | frame | chat | sound | tooltip | debug | price <item>")
+		chat("commands: options | filter | on | off | toggle | threshold <n%> | spec | spec <Class> | <Spec> | frame | chat | sound | soundgold | tooltip | debug | price <item>")
 	elseif cmd == "on" then
 		db.enabled = true; chat("scanning |cff00ff00on|r.")
 	elseif cmd == "off" then
@@ -776,7 +775,10 @@ SlashCmdList["PLBISSCAN"] = function(msg)
 		chat("chat alerts " .. (db.useChat and "on" or "off") .. ".")
 	elseif cmd == "sound" then
 		db.useSound = not db.useSound
-		chat("sound cue " .. (db.useSound and "on" or "off") .. ".")
+		chat("upgrade sound cue " .. (db.useSound and "on" or "off") .. ".")
+	elseif cmd == "soundgold" then
+		db.useSoundGold = not db.useSoundGold
+		chat("high-value sound cue " .. (db.useSoundGold and "on" or "off") .. ".")
 	elseif cmd == "tooltip" then
 		db.tooltip = not db.tooltip
 		chat("tooltip score/arrow " .. (db.tooltip and "on" or "off") .. ".")

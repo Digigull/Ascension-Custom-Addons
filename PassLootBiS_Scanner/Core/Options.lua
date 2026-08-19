@@ -162,7 +162,7 @@ local function build()
 
 	frame = CreateFrame("Frame", "PLBiSScannerOptions", UIParent)
 	frame:SetWidth(320)
-	frame:SetHeight(580)
+	frame:SetHeight(606)
 	-- DRAG-FREEZE FIX: drag-safe strata via the shared helper (see Core/UI.lua).
 	-- HIGH + SetToplevel(true) froze the client ~1s on first drag; FULLSCREEN_DIALOG
 	-- alone still cost ~50ms on EVERY drag while the toplevel flag remained, so the
@@ -216,10 +216,32 @@ local function build()
 	makeCheck("Floating alert frame", 16, -228,
 		function() return ns.db and ns.db.useFrame end,
 		function(v) if ns.db then ns.db.useFrame = v end end)
-	makeCheck("Sound on strong upgrade", 16, -254,
+	-- The two sound cues have no thresholds of their own: the upgrade slider and the
+	-- gold threshold below already say what counts, so a cue just follows its flag.
+	makeCheck("Sound on upgrade", 16, -254,
 		function() return ns.db and ns.db.useSound end,
 		function(v) if ns.db then ns.db.useSound = v end end)
-	makeCheck("Hide minimap button", 16, -280,
+	makeCheck("Sound on high value (gold)", 16, -280,
+		function() return ns.db and ns.db.useSoundGold end,
+		function(v) if ns.db then ns.db.useSoundGold = v end end)
+
+	-- Test: fires whatever the two boxes above would fire for an item that is both
+	-- an upgrade and high value, so you hear the real cues rather than a stand-in.
+	local soundTest = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	soundTest:SetWidth(56)
+	soundTest:SetHeight(22)
+	soundTest:SetPoint("TOPLEFT", frame, "TOPLEFT", 244, -268)
+	soundTest:SetText("Test")
+	soundTest:SetScript("OnClick", function()
+		local played = ns.Alert and ns.Alert.PlayCues
+			and ns.Alert.PlayCues({ delta = 0.1, goldText = "test" }, ns.db or {}) or 0
+		if played == 0 then
+			DEFAULT_CHAT_FRAME:AddMessage(
+				"|cff33ff99PLBiS|r both sound cues are off -- tick one to hear it.")
+		end
+	end)
+
+	makeCheck("Hide minimap button", 16, -306,
 		function() return ns.db and ns.db.minimap and ns.db.minimap.hide end,
 		function(v)
 			if ns.MinimapButton and ns.MinimapButton.SetHidden then
@@ -230,9 +252,9 @@ local function build()
 		end)
 
 	-- Upgrade threshold slider (0-15%, stored as a fraction in db.threshold).
-	makeLabel("Upgrade threshold", 20, -318)
+	makeLabel("Upgrade threshold", 20, -344)
 	slider = CreateFrame("Slider", "PLBiSScannerOptionsThreshold", frame, "OptionsSliderTemplate")
-	slider:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -344)
+	slider:SetPoint("TOPLEFT", frame, "TOPLEFT", 24, -370)
 	slider:SetWidth(250)
 	slider:SetMinMaxValues(0, 15)
 	slider:SetValueStep(1)
@@ -246,9 +268,9 @@ local function build()
 	end)
 
 	-- Gold threshold (Phase 4): the Auctionator high-value flag cutoff, in gold.
-	makeLabel("Gold flag threshold (g)", 20, -384)
+	makeLabel("Gold flag threshold (g)", 20, -410)
 	goldBox = CreateFrame("EditBox", "PLBiSScannerOptionsGold", frame, "InputBoxTemplate")
-	goldBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 26, -404)
+	goldBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 26, -430)
 	goldBox:SetWidth(80)
 	goldBox:SetHeight(20)
 	goldBox:SetAutoFocus(false)
@@ -266,17 +288,17 @@ local function build()
 
 	-- CoA Power scoring: pick which flat Power stat (if any) to fold into scores,
 	-- and how much a point of it is worth (db.powerMode + db.powerWeight).
-	makeLabel("Score CoA Power", 20, -432)
+	makeLabel("Score CoA Power", 20, -458)
 	powerDrop = CreateFrame("Frame", "PLBiSScannerOptionsPowerDrop", frame, "UIDropDownMenuTemplate")
-	powerDrop:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -448)
+	powerDrop:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -474)
 	UIDropDownMenu_SetWidth(powerDrop, 100)
 	UIDropDownMenu_Initialize(powerDrop, powerInit)
 
 	local wLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	wLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 196, -446)
+	wLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 196, -472)
 	wLabel:SetText("Weight")
 	powerBox = CreateFrame("EditBox", "PLBiSScannerOptionsPowerWeight", frame, "InputBoxTemplate")
-	powerBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 200, -462)
+	powerBox:SetPoint("TOPLEFT", frame, "TOPLEFT", 200, -488)
 	powerBox:SetWidth(60)
 	powerBox:SetHeight(20)
 	powerBox:SetAutoFocus(false)
@@ -296,7 +318,7 @@ local function build()
 	local filterBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	filterBtn:SetWidth(220)
 	filterBtn:SetHeight(22)
-	filterBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -500)
+	filterBtn:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, -526)
 	filterBtn:SetText("Armor / weapon filter (char)")
 	filterBtn:SetScript("OnClick", function() Options.ToggleFilter() end)
 
@@ -314,6 +336,7 @@ local function build()
 			db.useChat  = true
 			db.useFrame = false
 			db.useSound = false
+			db.useSoundGold = false
 			db.threshold = 0.03
 		end
 		Options.Refresh()

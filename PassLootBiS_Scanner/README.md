@@ -79,9 +79,14 @@ global checks — neither is required.
 | `/plbs threshold <n>` | Minimum percent delta to call something an upgrade (default 3) |
 | `/plbs spec` | List every class and spec |
 | `/plbs spec <Class> \| <Spec>` | Set your spec (the dropdowns are easier) |
-| `/plbs chat` / `frame` / `sound` / `tooltip` | Toggle each output surface |
+| `/plbs chat` / `frame` / `sound` / `soundgold` / `tooltip` | Toggle each output surface |
 | `/plbs price <item>` | Probe the Auctionator fork's last-scanned price for one item |
 | `/plbs debug` | Dump the raw stat lines the scorer sees into a copyable box |
+
+The two sound cues have no thresholds of their own — `sound` fires on any upgrade
+(the upgrade threshold decides what that is) and `soundgold` on any high-value
+flag (the gold threshold decides that one). The options window has a **Test**
+button next to them that plays exactly what is ticked.
 
 ## Saved variables
 
