@@ -164,6 +164,7 @@ upstream tabs and need no save/restore dance.
 | `AUCTIONATOR_VENDOR_LEARNED` | `obs` / `base` / `cb` / `log` | vendor sales — see `VENDOR-PRICE-RESEARCH.md` |
 | `AUCTIONATOR_FINDER_SETTINGS` | Finder options, plus `statKeys` = set of every stat key ever seen on gear | Finder + options panel |
 | `AUCTIONATOR_ITEM_LOCATIONS` | who owns what, where | `FinderItemCount` |
+| `AUCTIONATOR_LEDGER` | `{ ver, rows = { {t, src, who, name, link, id, qty, unit, …} } }` — what you bought and listed | `AuctionatorLedger` (BACKLOG item 7) |
 
 ### The finding that matters most: there is no market price series
 

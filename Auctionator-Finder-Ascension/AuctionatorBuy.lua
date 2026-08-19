@@ -293,6 +293,15 @@ function Atr_Buy_BuyNextOnPage ()
 		
 		if (Atr_DoesAuctionMatch ("list", i, gAtr_Buy_ItemName, gAtr_Buy_BuyoutPrice, gAtr_Buy_StackSize)) then
 			
+			-- LEDGER (BACKLOG item 7): record the INTENDED purchase here, the
+			-- only moment this listing is addressable as ("list", i).  What
+			-- actually arrives in the mail is a different question and is item
+			-- 9's, so the ledger row leaves its delivered side nil rather than
+			-- assuming the two match.
+			if (type (Atr_Ledger_RecordBuy) == "function") then
+				pcall (Atr_Ledger_RecordBuy, i, gAtr_Buy_BuyoutPrice);
+			end
+
 			PlaceAuctionBid("list", i, gAtr_Buy_BuyoutPrice);
 				
 			numBoughtThisPage  = numBoughtThisPage + 1;
