@@ -14,7 +14,7 @@ are the durable part.
 
 ---
 
-## 1. SELL tab — drop the header icon, keep the title, move the hover
+## 1. SELL tab — drop the header icon, keep the title, move the hover — DONE
 
 **Asked:** on the Sell tab remove the top icon, keep the title, and make hover-over possible
 on the sell item.
@@ -50,6 +50,43 @@ Two things to be careful of:
 
 **Open:** the drop zone (`Atr_Sell_DropZoneEnsure`, `Auctionator.lua:2443`) is a *separate*
 37px target in the left column and is not what this item is about. Leave it.
+
+**Built.** All in `Auctionator.lua`; the XML is untouched.
+
+- **`Atr_Sell_HeaderHoverEnsure`** (next to `Atr_Sell_SetHeaderName`) is the whole feature: it
+  hides `Atr_RecommendItem_Tex`, and creates/refits `Atr_Sell_HeaderHover`, an invisible
+  `Button` sat over the name string. Sized from `GetStringWidth` — the *measured* string, not
+  `ATR_SELL_NAME_W` — because the name is chopped to fit, so its real width is only known once
+  `Atr_Sell_SetHeaderName` has run. Hence "Ensure": it is called again on every path that
+  rewrites the header, which is what makes it survive the block being re-shown wholesale.
+- **The icon is hidden, never moved or removed.** Its `ATR_SELL_GEOM` entry, its XML and its
+  `Atr_SetTextureButton` feeds all stay. That matters because **the header is shared with the
+  BUY tab**, where the icon still draws the searched item — so every part of this is gated on
+  `Atr_IsTabSelected(SELL_TAB)`, and off the SELL tab `Ensure` only hides the hover.
+- **Ordering is the load-bearing detail.** Both `Atr_ShowElems(recommendElements)` and
+  `Atr_SetTextureButton` call `Show()` on the icon, so `Ensure` is called *after* each of the
+  three `Atr_SetTextureButton ("Atr_RecommendItem_Tex", …)` sites, not before.
+- **Hide is not left to `Ensure` alone.** The hover is `recommendElements[8]`, so
+  `Atr_Show/HideElems` take it down with the block — in particular the unconditional
+  `Atr_HideElems` on every tab switch, which is what stops an invisible hover lingering over
+  another tab's header. `Ensure` additionally mirrors `Atr_Recommend_Text:IsShown()`, covering
+  the one path that shows the name on its own after a `HideElems`
+  (`Atr_ShowItemNameAndTexture`).
+- **`Atr_ShowRecTooltip` now resolves its owner** to the hover frame when that is shown, and
+  falls back to the icon otherwise (the BUY tab). It has to *resolve*, not be set once:
+  `Atr_Idle` re-calls this every frame while the tooltip is up, and `SetOwner` on a hidden
+  frame anchors nothing.
+- **The name slides left**, `LEFT (48, -48)` → `LEFT (6, -48)`, into the x the 37px icon
+  occupied. `Atr_ResetSellExpandedLayout` puts it back for the other tabs via `ATR_SELL_GEOM`.
+- **`ATR_SELL_NAME_W` was deliberately left at 215.** The basis note is anchored from the
+  right, so the 42px this frees shows up as clearance between name and note, not as room for a
+  longer name. Widening it is a separate, one-line decision if longer names are wanted.
+
+**Verified** by `luac5.1 -p` and by reading every path that shows the icon or the header name.
+**Not verified in-game** — in particular the hover's fit around the quality-coloured string
+(colour escapes are excluded from `GetStringWidth`, which is the assumption the width rests on)
+and the tooltip's `ANCHOR_RIGHT` placement now that its owner sits at x 6 rather than the
+icon's, so it opens further right across the header.
 
 ---
 
@@ -303,7 +340,7 @@ grown set with no refresh plumbing.
 
 ---
 
-## 5. Finder — "My iLvL" should not default on
+## 5. Finder — "My iLvL" should not default on — DONE
 
 **Asked:** remove "My iLvL" as a default check.
 
@@ -330,6 +367,25 @@ Its `gFdr_AutoReq` / `gFdr_ReqUserOff` pair exists only to serve the auto-tick, 
 `AUCTIONATOR_FINDER_SETTINGS.reqOnly` is written from inside that block. Removing the auto-tick
 means the persisted setting has to be honoured from wherever the user's own click lands, or the
 checkbox will forget itself between sessions.
+
+**Built.** The `My Lvl` block is out of `Fdr_AutoFillMinLevel`, and `gFdr_AutoReq` /
+`gFdr_ReqUserOff` are gone with it — they existed only to remember an override of an auto-tick
+that no longer happens. `Usable` and the auto-filled minimum level box are untouched.
+
+**The persisted setting needed no new plumbing**, which is worth recording because the item
+above flagged it as the risk. `reqOnly` was already written by the checkbox's own `OnClick`
+(`AuctionatorFinder.lua:3954`) and already read back at creation
+(`reqchk:SetChecked (AUCTIONATOR_FINDER_SETTINGS.reqOnly …)`, `:3951`) — the auto-tick's writes
+were a *third* writer layered on top. Removing them leaves one writer and one reader, so the
+checkbox now remembers exactly the user's own last click. `Atr_Finder_ClearFilters` still
+clears it, which is correct: Clear Filters is a user action.
+
+The comment left in place says the auto-tick was removed on request and that nothing in that
+function may write `reqOnly` — the failure mode if it is ever re-added is silent, and it
+overwrites a saved choice the user did make.
+
+**Verified** by `luac5.1 -p` and by grepping that no reference to either removed global
+survives. **Not verified in-game.**
 
 ---
 

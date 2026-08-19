@@ -868,6 +868,12 @@ function Atr_Init()
 	recommendElements[6] = _G["Atr_Recommend_Basis_Text"];
 	recommendElements[7] = _G["Atr_RecommendItem_Tex"];
 
+	-- 8 is the SELL header name's hover target (see Atr_Sell_HeaderHoverEnsure).
+	-- It rides in this table so Atr_Show/HideElems take it down with the rest of
+	-- the block -- notably the unconditional HideElems on every tab switch, which
+	-- is what stops an invisible hover lingering over another tab's header.
+	recommendElements[8] = Atr_Sell_HeaderHoverEnsure ();
+
 	-- create the lines that appear in the item history scroll pane
 
 	local line, n;
@@ -2365,6 +2371,75 @@ function Atr_Sell_SetHeaderName (itemName, itemLink)
             end
         end
     end
+
+    Atr_Sell_HeaderHoverEnsure();
+end
+
+-- Hover target for the header name.
+--
+-- The SELL header used to open with a 37px item icon (Atr_RecommendItem_Tex)
+-- and the tooltip hung off it.  The icon is gone from this tab (owner's
+-- request, 2026-08) and the name has moved into the space it left, so the
+-- hover has to move onto the name.  Two things that forces:
+--
+--   * A FontString cannot take OnEnter, so an invisible Button is parked over
+--     it.  Its width is the MEASURED string, not ATR_SELL_NAME_W: the name is
+--     chopped to fit, so how wide it actually is only becomes known after
+--     Atr_Sell_SetHeaderName has run.  Hence "Ensure" -- this is called again
+--     every time the header name or icon is rewritten.
+--   * The tooltip owner has to be a SHOWN frame.  GameTooltip:SetOwner on a
+--     hidden one anchors nothing, and Atr_Idle re-calls Atr_ShowRecTooltip on
+--     every frame while the tooltip is up, so the old icon cannot stay owner.
+--
+-- The icon frame itself is left where it is, just hidden.  It still draws the
+-- searched item on the BUY tab, which shares this header, and it is listed in
+-- ATR_SELL_GEOM -- hiding rather than moving keeps that save/restore honest.
+-- Everything here is therefore gated on the SELL tab being the selected one.
+--
+-- Visibility is not decided here alone: the frame is element 8 of
+-- recommendElements, so Atr_Show/HideElems take it down with the rest of the
+-- block.  Mirroring the name below covers the one path that shows the name on
+-- its own after a HideElems (Atr_ShowItemNameAndTexture).
+ATR_SELL_HOVER_PAD = 2;     -- slack around the measured string, each side
+
+function Atr_Sell_HeaderHoverEnsure ()
+
+    local fs = Atr_Recommend_Text;
+    if (not fs) then return nil; end
+
+    local hover = Atr_Sell_HeaderHover;
+    if (not hover) then
+        hover = CreateFrame ("Button", "Atr_Sell_HeaderHover", fs:GetParent());
+        hover:SetScript ("OnEnter", function () Atr_ShowRecTooltip(); end);
+        hover:SetScript ("OnLeave", function () Atr_HideRecTooltip(); end);
+        Atr_Sell_HeaderHover = hover;
+    end
+
+    local onSell = (Atr_IsTabSelected and Atr_IsTabSelected (SELL_TAB)) and true or false;
+
+    if (not onSell) then
+        hover:Hide();
+        return hover;
+    end
+
+    if (Atr_RecommendItem_Tex) then Atr_RecommendItem_Tex:Hide(); end
+
+    -- GetStringHeight is the drawn height; GetHeight on a FontString that was
+    -- never sized reports the same thing, and is the fallback only because a
+    -- zero-height Button swallows nothing and the hover would silently die.
+    local w = fs:GetStringWidth() or 0;
+    local h = (fs.GetStringHeight and fs:GetStringHeight()) or fs:GetHeight() or 0;
+    if (w < 1) then w = 1;  end
+    if (h < 1) then h = 12; end
+
+    hover:ClearAllPoints();
+    hover:SetPoint ("TOPLEFT", fs, "TOPLEFT", -ATR_SELL_HOVER_PAD, ATR_SELL_HOVER_PAD);
+    hover:SetWidth  (w + ATR_SELL_HOVER_PAD * 2);
+    hover:SetHeight (h + ATR_SELL_HOVER_PAD * 2);
+
+    if (fs:IsShown()) then hover:Show(); else hover:Hide(); end
+
+    return hover;
 end
 
 -- Vertical flow of the left column below the price rows.  Two states, one
@@ -2581,17 +2656,25 @@ function Atr_ApplySellExpandedLayout()
 
     ---- 2. header strip: the recommend block moves into the light band ----
 
-    -- Two rows.  Row 1 is the item icon, its name, and the basis note; row 2
-    -- carries both prices.  The basis note anchors to Atr_FullScanButton's
-    -- LEFT edge so the right end of the strip stays measured, not guessed.
-    if (Atr_RecommendItem_Tex) then
-        Atr_RecommendItem_Tex:ClearAllPoints();
-        Atr_RecommendItem_Tex:SetPoint ("TOPLEFT", panel, "TOPLEFT", 6, -37);
-    end
+    -- Two rows.  Row 1 is the item name and the basis note; row 2 carries both
+    -- prices.  The basis note anchors to Atr_FullScanButton's LEFT edge so the
+    -- right end of the strip stays measured, not guessed.
+    --
+    -- Row 1 used to open with the item icon at (6, -37), 37px wide, with the
+    -- name beside it at 48.  The icon is dropped from this tab (owner's
+    -- request, 2026-08) and the name takes the x it vacated.  The icon is not
+    -- moved out of the way here -- Atr_Sell_HeaderHoverEnsure hides it, which
+    -- leaves its ATR_SELL_GEOM entry and its BUY-tab use alone.
+    --
+    -- ATR_SELL_NAME_W is deliberately NOT widened by the 42px this frees: the
+    -- basis note is anchored from the right, so the extra room shows up as
+    -- clearance between the two rather than as a longer name.  Widen it there
+    -- if longer names are wanted.
     if (Atr_Recommend_Text) then
         Atr_Recommend_Text:ClearAllPoints();
-        Atr_Recommend_Text:SetPoint ("LEFT", panel, "TOPLEFT", 48, -48);
+        Atr_Recommend_Text:SetPoint ("LEFT", panel, "TOPLEFT", 6, -48);
     end
+    Atr_Sell_HeaderHoverEnsure();
     if (Atr_Recommend_Basis_Text and Atr_FullScanButton) then
         Atr_Recommend_Basis_Text:ClearAllPoints();
         Atr_Recommend_Basis_Text:SetPoint ("RIGHT", Atr_FullScanButton, "LEFT", -8, 6);
@@ -3227,6 +3310,12 @@ function Atr_ShowItemNameAndTexture(itemName)
 	Atr_Recommend_Text:SetText (color..itemName);
 
 	Atr_SetTextureButton ("Atr_RecommendItem_Tex", 1, gCurrentPane.activeScan.itemLink);
+
+	-- After, not before: the call above shows the icon, and on the SELL tab the
+	-- icon is meant to stay hidden.  This also refits the hover to the name that
+	-- was just written -- note this path sets the name directly rather than
+	-- through Atr_Sell_SetHeaderName, so it needs its own call.
+	Atr_Sell_HeaderHoverEnsure ();
 end
 
 
@@ -3603,6 +3692,7 @@ function Atr_UpdateRecommendation (updatePrices)
 	Atr_RecommendPerStack_Text:SetText (string.format (ZT("for your stack of %d"), Atr_StackSize()));
 
 	Atr_SetTextureButton ("Atr_RecommendItem_Tex", Atr_StackSize(), gCurrentPane.activeScan.itemLink);
+	Atr_Sell_HeaderHoverEnsure ();		-- re-hides the icon, refits the name hover
 
 	MoneyFrame_Update ("Atr_RecommendPerItem_Price",  zc.round(new_Item_BuyoutPrice));
 	MoneyFrame_Update ("Atr_RecommendPerStack_Price", zc.round(new_Item_BuyoutPrice * Atr_StackSize()));
@@ -3742,7 +3832,15 @@ function Atr_ShowRecTooltip ()
 	if (link) then
 		if (num < 1) then num = 1; end;
 		
-		GameTooltip:SetOwner(Atr_RecommendItem_Tex, "ANCHOR_RIGHT");
+		-- Owner is whatever the pointer is actually over.  On the SELL tab that is
+		-- the header name's hover frame; the icon it replaced is hidden there, and
+		-- SetOwner on a hidden frame anchors the tooltip to nothing.  Atr_Idle
+		-- re-runs this every frame while the tooltip is up, so it has to keep
+		-- resolving to a shown frame, not just at OnEnter.
+		local owner = (Atr_Sell_HeaderHover and Atr_Sell_HeaderHover:IsShown())
+		              and Atr_Sell_HeaderHover or Atr_RecommendItem_Tex;
+
+		GameTooltip:SetOwner(owner, "ANCHOR_RIGHT");
 		GameTooltip:SetHyperlink (link, num);
 		gCurrentPane.tooltipvisible = true;
 	end
@@ -4233,6 +4331,7 @@ function Atr_UpdateUI_SellPane (needsUpdate)
 			Atr_Sell_SetHeaderName (string.format (ZT("Auction created for %s"), gJustPosted_ItemName), nil);
 			MoneyFrame_Update ("Atr_RecommendPerStack_Price", gJustPosted_BuyoutPrice);
 			Atr_SetTextureButton ("Atr_RecommendItem_Tex", gJustPosted_StackSize, gJustPosted_ItemLink);
+			Atr_Sell_HeaderHoverEnsure ();		-- re-hides the icon, refits the name hover
 
 			gCurrentPane.currIndex = gCurrentPane.activeScan:FindInSortedData (gJustPosted_StackSize, gJustPosted_BuyoutPrice);
 
