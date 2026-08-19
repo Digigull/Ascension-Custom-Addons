@@ -105,6 +105,9 @@ not yet known to test anything.
 
 ## If it resurfaces
 
+> **PARKED — owner's decision, 2026-08-19.** The Usable rule is behaving; this section is the
+> recipe for the next occurrence, not an open item. See `management/docs/CLAUDE.md`.
+
 The whole point of the `red lines:` field is that the next occurrence costs one
 shift-click rather than a dungeon:
 
