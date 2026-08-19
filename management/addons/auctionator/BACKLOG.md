@@ -194,11 +194,19 @@ picked different scales:
 - `Atr_Craft_FindRowForItem(link, name)` split out of `Atr_Craft_LiveCostForItem`, with
   `Atr_Craft_LiveYieldForItem` on top of it — the item→row match is wanted for the yield too
   and should not exist twice.
-- **The tooltip shows both scales, each labelled**, when the yield is above 1:
-  `Craft cost (each)` / `Craft profit (each)`, then `Craft cost x3` / `Craft profit x3`. A
-  yield of 1 is unchanged. Under the Shift stack multiplier the per-craft pair stands down —
-  every line is already scaled by the hovered stack and says so, and two multipliers on one
-  tooltip is the same ambiguity again.
+- **The tooltip shows the PER-CRAFT figures, tagged with the yield**, when the yield is above
+  1: `Craft cost x3` / `Craft profit x3`. A yield of 1 is unchanged. Under the Shift stack
+  multiplier the yield multiply stands down — every line is already scaled by the hovered
+  stack and says so through `xstring`, and two multipliers on one tooltip is the same
+  ambiguity again.
+
+  **This shipped first as both scales side by side** — `(each)` and `x3` — which was correct
+  and was clutter. The owner asked for the per-item pair to go (2026-08-19): one craft is what
+  a press of Create costs and earns, it is what the profit sort ranks on, and the tag is what
+  keeps it honest against the per-item Auction line above it. Both figures remain a function
+  call apart if the question ever comes back — `Atr_Craft_GetCraftCost` and
+  `Atr_ProfSort_RowCost` still return per-item costs with the yield beside them, and
+  `/atrprofsort` still prints both scales.
 - **The profit sort ranks per craft**, and prints the yield next to the figure (`+36g x3`) so a
   row can never be read as a per-item number when it is not one. `Atr_ProfSort_BuildOrder`'s
   `profitByIndex` is now per-craft; `Atr_ProfSort_RowProfit` still returns per-item, and the

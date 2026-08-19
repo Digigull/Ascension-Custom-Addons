@@ -1876,12 +1876,17 @@ end
 --   rest of the tip is showing per-stack prices we scale both figures by the
 --   stack too, so the craft lines never disagree with the Auction line above.
 --
---   MULTI-OUTPUT RECIPES get both scales, each labelled.  Distilled Flask of
---   the Unyielding makes 3, so "what does it cost" has two honest answers --
---   one flask, or one press of Create -- and an unlabelled figure sitting under
---   a per-item Auction price is read as whichever the reader was expecting.
---   The per-item pair comes first (that is the scale the Auction line above is
---   on) and the per-craft pair follows it, tagged with the yield.
+--   MULTI-OUTPUT RECIPES are shown PER CRAFT, tagged with the yield.  Distilled
+--   Flask of the Unyielding makes 3, so "what does it cost" has two honest
+--   answers -- one flask, or one press of Create -- and an unlabelled figure
+--   sitting under a per-item Auction price is read as whichever the reader was
+--   expecting.  One craft is the answer worth the tooltip room: it is what a
+--   press of Create actually costs and earns, and it is what the profit sort
+--   ranks on (Atr_ProfSort_BuildOrder), so the two agree by construction.  The
+--   tag is what keeps it honest against the per-item Auction line above --
+--   these lines say "x3" where that one says nothing.  Showing both scales was
+--   the first shape of this; it was correct and it was clutter (owner,
+--   2026-08-19).
 function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xstring)
 
 	if (tip == nil or link == nil) then return; end
@@ -1933,35 +1938,30 @@ function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xst
 	-- Does this recipe make more than one?  Under the Shift stack multiplier
 	-- every line on the tooltip is already scaled by the hovered stack and says
 	-- so through xstring; a second multiplier there would be two scales arguing
-	-- on one tooltip, so the per-craft pair stands down and these lines read
-	-- exactly as they always did.
+	-- on one tooltip, so we leave those lines per item, exactly as they always
+	-- were, and let xstring speak.
 	madeCount = tonumber (madeCount) or 1;
 	if (madeCount < 1) then madeCount = 1; end
-	local showPerCraft = (madeCount > 1) and not (num and showStackPrices);
-	local eachTag      = showPerCraft and "|cFFAAAAFF (each)|r" or "";
-	local craftTag     = "|cFFAAAAFF x"..madeCount.."|r";
+	local perCraft = (madeCount > 1) and not (num and showStackPrices);
 
-	-- One place writes a profit/loss/unknown line, so the per-item and
-	-- per-craft pairs cannot end up phrased or coloured differently.
-	local function profitLine (label, sell, cost)
-		if (sell == nil or sell <= 0) then			-- cost known, market price not
-			tip:AddDoubleLine (ZT("Craft profit")..label, "|cFFAAAAAA"..ZT("unknown").."|r");
-			return;
-		end
-		local margin = sell - cost;
-		if (margin >= 0) then
-			tip:AddDoubleLine (ZT("Craft profit")..label, "|cFF44FF44"..zc.priceToMoneyString (margin).."|r");
-		else
-			tip:AddDoubleLine (ZT("Craft loss")..label, "|cFFFF4444-"..zc.priceToMoneyString (-margin).."|r");
-		end
+	if (perCraft) then
+		craftCost = craftCost * madeCount;
+		if (sellPrice) then sellPrice = sellPrice * madeCount; end
+		xstring = xstring.."|cFFAAAAFF x"..madeCount.."|r";
 	end
 
-	tip:AddDoubleLine (ZT("Craft cost")..xstring..eachTag, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost));
-	profitLine (xstring..eachTag, sellPrice, craftCost);
+	tip:AddDoubleLine (ZT("Craft cost")..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost));
 
-	if (showPerCraft) then
-		tip:AddDoubleLine (ZT("Craft cost")..craftTag, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost * madeCount));
-		profitLine (craftTag, sellPrice and (sellPrice * madeCount) or nil, craftCost * madeCount);
+	if (sellPrice == nil or sellPrice <= 0) then			-- cost known, market price not
+		tip:AddDoubleLine (ZT("Craft profit")..xstring, "|cFFAAAAAA"..ZT("unknown").."|r");
+		return;
+	end
+
+	local margin = sellPrice - craftCost;
+	if (margin >= 0) then
+		tip:AddDoubleLine (ZT("Craft profit")..xstring, "|cFF44FF44"..zc.priceToMoneyString (margin).."|r");
+	else
+		tip:AddDoubleLine (ZT("Craft loss")..xstring, "|cFFFF4444-"..zc.priceToMoneyString (-margin).."|r");
 	end
 end
 -- FINDER_TAB end: crafted-goods profitability -----------------------------
