@@ -578,16 +578,41 @@ modern Auctionator's, not this 2.9.9 fork's, and the file supplied was named
    would look like: this fork writing into a table another addon owns.
 3. **Ascension ships its own Auctionator variant** that wrote the file.
 
-**Closed by the owner, 2026-08-19, and it was none of the three.** `Bronzebeard - Warcraft
-Reborn` is a **predecessor of the realm actually in use** — Rexxar - Conquest of Azeroth is the
-new version of that server, similar enough that some naming carried over. All scanning has only
-ever been done on Rexxar - CoA, whose two keys are the plain numbers this addon reads and
-writes. The table-shaped entries are a historical residue under realm keys that never match at
-runtime, so nothing reads them and nothing is broken. No code, no shim, no warning: **the fix
-was a question.**
+**Closed by the owner, 2026-08-19.** `Bronzebeard - Warcraft Reborn` is a **predecessor of the
+realm actually in use** — Rexxar - Conquest of Azeroth is the new version of that server,
+similar enough that some naming carried over. All scanning has only ever been done on
+Rexxar - CoA, whose two keys are the plain numbers this addon reads and writes. The
+table-shaped entries are a historical residue under realm keys that never match at runtime, so
+nothing reads them and nothing is broken. No code, no shim, no warning: **the fix was a
+question.**
+
+**Confirmed later the same day, and it was possibility 1 — the dump was simply another addon's
+file.** The owner listed `Interface/AddOns` and the account's `SavedVariables`:
+
+- **Only `Auctionator-Finder-Ascension` is installed.** There is no `Auctionator`,
+  `Auctionator_Price_Database` or `Auctionator_Pricing_History` folder, so possibility 2 (two
+  Auctionators sharing globals) is ruled out, not merely unlikely. Stock Auctionator splits its
+  two big tables into companion addon folders and therefore writes three files; this fork
+  declares everything in one `.toc` and writes exactly one. Three files means three folders once
+  existed.
+- **Those three files are frozen at `Jul 21 16:31`** — all to the same minute, one final logout —
+  against `Aug 19 08:31` for this addon's own file. The analysed `Auctionator_Price_Database.lua`
+  was 82 KB; `Auctionator-Finder-Ascension.lua` was 1.14 MB.
+
+So the foreign shape was read out of a file that **no installed addon can load**. SavedVariables
+are loaded per addon folder, and those folders are gone: this fork has never had those rows in
+memory and could not. That closes the item on evidence rather than on inference — the realm-key
+explanation above still holds, and is now the second reason rather than the only one.
 
 Worth keeping in mind if a realm is ever renamed *into* one of those keys, and worth keeping as
-the reason this item existed — the shape is real, it is just not this realm's.
+the reason this item existed — the shape is real, it is just not this realm's, and it is not
+even this addon's file.
+
+**What it cost:** every conclusion drawn from that dump was drawn from a month-stale file
+belonging to a different addon. The item 2 findings that survive it (scroll naming, the vellum
+correction) survive because they are about what items on the server are *called*, which does not
+depend on who wrote the file. Nothing that dump said about *this* addon's database was ever
+evidence. Hence the file-name warning now sitting at the top of the next section.
 
 **If it turns out to be real**, the fix is small but the decision is not: read `mr` when an
 entry is a table (a compatibility shim for a format we do not write), or detect the foreign
@@ -844,6 +869,15 @@ most open questions and needs no code. The file is the **account-level** one —
 copy; `tools/README.md` explains why and how to take one cleanly (fully exit the client first,
 or the last session's learning is missing).
 
+> **Take the file named after the addon folder, and no other.** This fork declares all 35 of its
+> saved variables in one `.toc`, so **everything it owns is in `Auctionator-Finder-Ascension.lua`**
+> — there is no companion file. A `SavedVariables` folder that has been through a few installs
+> can also hold `Auctionator.lua`, `Auctionator_Price_Database.lua` and
+> `Auctionator_Pricing_History.lua`; those are **stock Auctionator's**, which splits its big
+> tables into companion addon folders. The 2026-08-19 dump was one of those by mistake, which is
+> the whole of item 10 above. Size is the quick tell — this addon's file was 1.14 MB against
+> stock's stale 82 KB.
+
 What each open question gets out of it:
 
 | Question | Variable | What settles it |
@@ -854,10 +888,16 @@ What each open question gets out of it:
 | What yield was harvested for a multi-output recipe? | `AUCTIONATOR_CRAFT_RECIPES[id].made` | **Partial.** This field stores `GetTradeSkillNumMade`'s FIRST return only. A `made = 1` on a recipe known to make 3 proves `minMade` is 1 — but not whether `maxMade` is 3 (a one-line fix) or also 1 (needs the manual box). Only `/atrprofsort distilled` separates those two. |
 | Does a market price series exist? | `AUCTIONATOR_MEAN_PRICE_DATABASE` | Confirms `FRAMEWORK.md` §5 against real data — the sample arrays should carry no timestamps. |
 
-**Taken 2026-08-19 (price DB only).** It confirmed the scroll naming and corrected the vellum
-assumption — see item 2. It also surfaced a new issue, item 10 below, which the addon's own
-code did not predict. Still wanted: `AUCTIONATOR_NPC_PRICES` and `AUCTIONATOR_CRAFT_RECIPES`
-from the same account, which the supplied file did not include.
+**Taken 2026-08-19 (price DB only) — and it was the wrong file.** It was stock Auctionator's
+`Auctionator_Price_Database.lua`, a month stale and belonging to an addon no longer installed
+(item 10). It confirmed the scroll naming and corrected the vellum assumption — see item 2 —
+and those hold, because they are about item *names* on the server. Nothing else it suggested
+about this addon's data was ever evidence.
+
+**Still wanted, and now the whole of it in one file:** `Auctionator-Finder-Ascension.lua`. It
+carries `AUCTIONATOR_NPC_PRICES` and `AUCTIONATOR_CRAFT_RECIPES` (neither was in the supplied
+file), the real `AUCTIONATOR_PRICE_DATABASE`, and — since 2026-08-19 — `statKeys`, which shows
+whether item 4's learning is accumulating in practice.
 
 ## Answered by the owner, 2026-08-19
 
