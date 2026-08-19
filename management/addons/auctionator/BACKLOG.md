@@ -5,8 +5,9 @@ the record of what each item actually means against the code as it stands; it is
 doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
-Nothing below has been implemented. Nothing below has been tested in-game — every "current
-behaviour" note is read from source, not observed.
+Items marked **DONE** have shipped; the rest have not been implemented. **Nothing here has
+been tested in game** — every "current behaviour" note is read from source, not observed, and
+a shipped item's own section says what was and was not verified.
 
 Anchors are `file:line` at the time of writing and will drift; the symbol names next to them
 are the durable part.
@@ -133,51 +134,95 @@ confirm there:
 2. That the vellum prices come from a **vendor**, not the auction house. Opening any enchanting
    supplier is what makes that happen.
 
+
+**Follow-up shipped 2026-08-19: the figures now appear on the enchant's tooltip.** The profit
+sort had been ranking enchanting rows correctly for a while, but hovering the row still showed
+`Auction unknown` and no craft lines at all — `ShowTipWithPricing` is built entirely on
+`GetItemInfo`, which returns nothing for an `|Henchant:` link, so there was never an item for
+it to talk about. `Atr_AddEnchantTradeSkillTip` (`AuctionatorHints.lua`) now handles an
+enchanting recipe hover from the trade skill *index* instead, and the `SetTradeSkillItem` hook
+diverts to it, skipping the item path entirely rather than leaving its `Auction unknown` line
+above a real scroll price. It prints the scroll it is sold as, the scroll's auction price and
+median, the craft cost (labelled `(+vellum)`, since the vellum is in the total but not in the
+window's reagent list) and the profit. Reagent hovers are never diverted. Same ALT gate and
+same `AUCTIONATOR_A_TIPS` gate as every other addon price line. **Not verified in game.**
+
 ---
 
-## 3. Multi-output crafts price wrong (Distilled Flasks makes 3)
+## 3. Multi-output crafts price wrong (Distilled Flasks makes 3) — DONE
 
 **Asked, twice in the list:** some crafts produce multiple items — Distilled Flasks makes 3
 per craft — and profit is off. If the yield can't be recognised reliably, let the user type a
 per-craft yield on the trade skill window, defaulting to 1.
 
-**Current behaviour.** The yield is already read and already divided out, in both paths:
+**The diagnostic has now been read in game (owner, 2026-08-19), and it is outcome 1.**
+`/atrprofsort distilled` reported:
 
-- `Atr_Craft_Harvest` (`AuctionatorFinderProfession.lua:58`) stores `made` from
-  `GetTradeSkillNumMade(i)`, and `Atr_Craft_GetCraftCost` divides the reagent total by it
-  (`:145`).
-- `Atr_ProfSort_RowCost` (`AuctionatorFinderProfession.lua:344`) reads `GetTradeSkillNumMade`
-  live and divides the same way (`:369`, `math.floor(total / made)`).
+```
+[43] Distilled Flask of the Unyielding
+     NumMade:  min=3  max=3   (cost maths uses min)
+     sells as: Distilled Flask of the Unyielding
+     sell=47g69s96c  cost=30g51s99c  profit=17g17s97c   (all per item)
+```
 
-Both take only the **first** return of `GetTradeSkillNumMade`, which is `minMade`; the second
-is `maxMade`. Both clamp `< 1` up to 1.
+So `GetTradeSkillNumMade` **does** report the yield on this client, both returns agree, and the
+arithmetic already divided by it — 30g51s99c is the reagent total (91g55s97c) over 3. The
+manual per-recipe yield box is therefore **not needed and was not built**; item 3's fallback
+plan is retired rather than deferred.
 
-So if the profit is off by exactly 3x on Distilled Flasks, the cause is upstream of our
-arithmetic: `GetTradeSkillNumMade` is returning 1 (or nothing) for that recipe on this client.
-That is the thing to verify first, and it is cheap — add the yield to the `/atrprofsort`
-diagnostic output and read it off a live Alchemy window.
+**What was actually wrong was that nothing said which scale a figure was on**, and two places
+picked different scales:
 
-**Decided (owner, 2026-08-19): add the diagnostic first, and do not build the manual box until
-it has been read in-game.** The diagnostic is now **built** — `/atrprofsort distilled` prints
-`NumMade: min=? max=?` for every matching row, plus the cost, sell price and profit it derived.
-Three outcomes, and only one needs the box:
+- The **tooltip** put a per-*item* craft cost directly under a per-*item* Auction price with no
+  label on either, so the pair could equally be read as one flask's sale price against a whole
+  craft's cost — which is how it was read, and it is not a misreading the reader can settle
+  from the tooltip.
+- The **profit sort** ranked on per-item profit. That silently answers a different question
+  from the one the list is for: one press of Create consumes one set of reagents, so a recipe
+  making 3 at 12g each earns 36g where one making 1 at 20g earns 20g. Ranked per item the
+  flask lost to the potion.
 
-1. `GetTradeSkillNumMade` returns 3 → our maths is right and the error is elsewhere
-   (most likely the reagent price, or the produced item's own auction price). Re-open.
-2. It returns `1, 3` (min 1, max 3) → take `max`, or the midpoint. One-line fix, no UI.
-3. It returns `1, 1` or nils → the client genuinely does not expose it. **Then** build the
-   manual override.
+**Built.**
 
-Both returns are printed separately because the cost maths reads only the first (`minMade`) and
-the whole question is whether the second differs.
+- `Atr_Craft_RowYield(i)` (`AuctionatorFinderProfession.lua`) — the single read of
+  `GetTradeSkillNumMade`. The harvest, the live cost and the profit sort each had their own
+  copy; three copies of a clamp are three chances to answer differently for one recipe. Still
+  `minMade`, deliberately (see the comment there); `/atrprofsort` still prints both returns.
+- The yield is now **carried, not re-derived**: `Atr_Craft_GetCraftCost` returns `cost, made`,
+  `Atr_ProfSort_RowCost` returns `cost, made`, `Atr_ProfSort_RowProfit` returns
+  `profit, cost, sell, made`, and `Atr_Craft_LiveCostForItem` returns `cost, found, made`.
+- `Atr_Craft_FindRowForItem(link, name)` split out of `Atr_Craft_LiveCostForItem`, with
+  `Atr_Craft_LiveYieldForItem` on top of it — the item→row match is wanted for the yield too
+  and should not exist twice.
+- **The tooltip shows both scales, each labelled**, when the yield is above 1:
+  `Craft cost (each)` / `Craft profit (each)`, then `Craft cost x3` / `Craft profit x3`. A
+  yield of 1 is unchanged. Under the Shift stack multiplier the per-craft pair stands down —
+  every line is already scaled by the hovered stack and says so, and two multipliers on one
+  tooltip is the same ambiguity again.
+- **The profit sort ranks per craft**, and prints the yield next to the figure (`+36g x3`) so a
+  row can never be read as a per-item number when it is not one. `Atr_ProfSort_BuildOrder`'s
+  `profitByIndex` is now per-craft; `Atr_ProfSort_RowProfit` still returns per-item, and the
+  multiply lives where the ranking decision lives.
+- **An assumed yield now defers to a known one.** `Atr_Craft_HarvestRecipeTooltip` stores
+  `made = 1` because a recipe *item*'s tooltip never prints the yield. That record is keyed by
+  name, so for a multi-output craft whose recipe the player happened to hover it reported a
+  whole craft's cost against one item's sale price — the reported symptom exactly, reachable
+  without any client bug at all. `Atr_Craft_GetCraftCost` now asks the open profession window
+  for the real yield when, and only when, the record's own yield is that assumption.
+- `/atrprofsort <text>` prints **both** scales per row, labelled, and marks which one the list
+  ranks on.
 
-**If the manual override is built:** a small numeric box on the trade skill window, applying
-to the selected recipe, default 1, persisted per recipe (by produced item ID, falling back to
-recipe name — enchants have no item ID, see item 2) in a new account-wide saved variable. Read
-it as an override *before* `GetTradeSkillNumMade` in both `Atr_ProfSort_RowCost` and
-`Atr_Craft_Harvest`, so the Sell tab's margin filter agrees with the trade skill window. An
-override of 1 must be distinguishable from "not set", or a user who deliberately sets 1 gets
-overwritten by a later correct harvest.
+**Verified** under bare `lua5.1` against a mock trade skill window: the yield reaching every
+consumer, per-item vs per-craft agreeing to a factor of the yield, the enchant row still
+costing with its vellum at yield 1, the ranking putting the multi-output row first, and the
+assumed-yield record deferring to the live window (and standing when no window is open).
+**Not verified in game.**
+
+**Still open, and cheap to settle:** whether 30g51s99c per flask is *right*, i.e. whether the
+reagent prices behind it are. Outcome 1 said the maths is right and any remaining error is in
+a reagent price or the produced item's own auction price; nothing above tests that. The new
+`per craft x3` line makes it checkable at a glance — 91g55s97c of reagents against a 127g80s
+stack of 3 on the AH.
 
 ---
 
