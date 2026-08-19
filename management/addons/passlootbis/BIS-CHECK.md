@@ -90,6 +90,44 @@ positive costs you an item outright.
   early unless there is an upgrade or a gold flag, so the host's veto window is the
   only UI for it. Do not "fix" that into a second popup.
 
+## Enchants on the equipped side
+
+The compare is asymmetric by construction and it always points one way:
+
+| Side | Read via | Enchanted? |
+|---|---|---|
+| the roll | `SetLootRollItem` | no — a fresh drop |
+| equipped | `SetInventoryItem` | **yes** |
+
+So your equipped score carries enchant value the candidate cannot have, real
+upgrades read smaller than they are, and — the part that matters here — **a BiS item
+can score below enchanted gear it would actually beat, and BiS Check vetoes a roll
+it should have allowed.** Enchant skew is a false-positive source for this feature,
+not just a cosmetic scoring wobble.
+
+`db.ignoreEnchants` (scanner options → "Ignore enchants on equipped gear") scores the
+equipped item from its own link with the enchant field zeroed
+(`Core/ItemLink.lua`). All three equipped-scan sites — `scoreEquipped`, `evalHand`
+and the hover tooltip — now go through one `ns.equippedStats`, or the tooltip and
+the roll window would quote different numbers for the same item.
+
+**It is OFF by default, and that is deliberate.** Stripping the enchant means
+reading the equipped item through `SetHyperlink`, which LibScaledStats warns "MAY be
+cached-first / nominal for scaled instances" — on Ascension that is exactly the lie
+the library exists to route around. Trading a known, bounded enchant skew for a
+possible unbounded scaled-stat skew is not a trade to make blind.
+
+So it is measured instead. `/plbisdebug` scores every equipped slot three ways —
+`real` (`SetInventoryItem`), `link` (`SetHyperlink`, unmodified) and `stripped`
+(`SetHyperlink`, enchant zeroed). **`real` vs `link` is the test**: those two
+describe the same item by two routes, so if they agree `SetHyperlink` is faithful
+here and the option is safe to enable; if any slot disagrees the report says do not
+enable it. `stripped` vs `link` is then simply how much enchant was in the score.
+
+Gems are left in. Same argument applies to them, but the owner asked about enchants
+and stripping sockets too would move more scores than were asked about. It is one
+field set away — `ItemLink.FIELD_ENCHANT_AND_GEMS`.
+
 ## Diagnostics — `/plbisdebug`
 
 BiS Check is close to untestable on purpose: it needs one specific stale item to

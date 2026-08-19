@@ -49,7 +49,15 @@ end
 -- A scanner advisor with the new diagnostic surface.
 local scanner = {}
 function scanner:GetStatus() return { enabled=true, hasWeights=true, class="Hunter",
-  spec="Ranger", threshold=0.03, placeholder=false } end
+  spec="Ranger", threshold=0.03, placeholder=false, ignoreEnchants=false } end
+-- Slot 3 deliberately disagrees between real and link: that is the "SetHyperlink is
+-- lying about a scaled item" case the check exists to catch, and the report has to
+-- come back with the do-NOT-enable verdict rather than a clean bill of health.
+function scanner:GetEnchantCheck() return {
+  { slot=1,  name="Helm",      real=100.0, link=100.0, stripped=88.0 },
+  { slot=3,  name="Shoulders", real=131.5, link=104.2, stripped=104.2 },
+  { slot=15, name="Cloak",     real=60.0,  link=60.0,  stripped=60.0 },
+} end
 function scanner:GetRunLedger() return { { equipLoc="INVTYPE_SHOULDER", count=1,
   bestScore=131.5, bestName="Won Mantle" } } end
 function scanner:GetLinkVerdict(link, isBiS)

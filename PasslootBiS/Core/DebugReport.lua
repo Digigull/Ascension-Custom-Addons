@@ -184,6 +184,60 @@ local function addConfirmSection(out)
 	out[#out + 1] = "  allow multiple popups:  " .. yn(p.AllowMultipleConfirmPopups)
 end
 
+-- Is the scanner's "ignore enchants" option safe to switch on for THIS gear?
+--
+-- The option scores equipped items through SetHyperlink so the enchant can be
+-- zeroed out of the link, and LibScaledStats warns that path may report cached or
+-- nominal stats for a scaled instance. Rather than guess, this prints the measured
+-- answer: `real` and `link` describe the SAME item by two routes, so if they agree
+-- the link scan is faithful here and the option can be trusted. If they disagree,
+-- leave it off -- an enchant skew is a known, bounded error, and the scaled-stat
+-- lie is the unbounded one this whole addon exists to avoid.
+local function addEnchantSection(out)
+	out[#out + 1] = "[Enchant strip check]"
+	local scanner = scannerAPI()
+	if not (scanner and scanner.GetEnchantCheck) then
+		out[#out + 1] = "  unavailable (scanner not loaded, or older)"
+		return
+	end
+	local ok, rows = pcall(scanner.GetEnchantCheck, scanner)
+	if not ok or type(rows) ~= "table" then
+		out[#out + 1] = "  check failed: " .. tostring(rows)
+		return
+	end
+	if #rows == 0 then
+		out[#out + 1] = "  nothing scoreable equipped (or no spec weights picked)"
+		return
+	end
+	out[#out + 1] = "  slot  real   link   stripped  item"
+	local mismatch, enchanted = 0, 0
+	for _, r in ipairs(rows) do
+		-- 0.5 of a weighted point: below that it is float noise in the tooltip
+		-- numbers, not a different item being described.
+		local drift = math.abs((r.real or 0) - (r.link or 0))
+		if drift > 0.5 then mismatch = mismatch + 1 end
+		if r.stripped and math.abs((r.link or 0) - r.stripped) > 0.5 then
+			enchanted = enchanted + 1
+		end
+		out[#out + 1] = string.format("  %-4d  %-6.1f %-6.1f %-9s %s%s",
+			r.slot, r.real or 0, r.link or 0,
+			r.stripped and string.format("%.1f", r.stripped) or "-",
+			tostring(r.name), drift > 0.5 and "   <- MISMATCH" or "")
+	end
+	if mismatch > 0 then
+		out[#out + 1] = "  VERDICT: " .. mismatch ..
+			" slot(s) score differently by link than by instance -- do NOT enable" ..
+			" 'Ignore enchants'; SetHyperlink is not faithful on this client."
+	else
+		out[#out + 1] = "  VERDICT: link and instance agree on every slot -- the strip is safe here."
+		out[#out + 1] = "  " .. enchanted .. " slot(s) currently carry enchant value in their score."
+	end
+	local sok, st = pcall(scanner.GetStatus, scanner)
+	if sok and type(st) == "table" then
+		out[#out + 1] = "  option 'Ignore enchants' is currently: " .. yn(st.ignoreEnchants)
+	end
+end
+
 -- Push a synthetic downgrade through the REAL contract, in game, between the
 -- INSTALLED copies of the two addons. The offline check in management/ proves the
 -- two files in the repo agree; this proves the two folders in Interface\AddOns do,
@@ -273,6 +327,7 @@ function PasslootBiS:BuildDebugReport(link)
 	addBiSListSection(out); out[#out + 1] = ""
 	addRunSection(out);     out[#out + 1] = ""
 	addConfirmSection(out); out[#out + 1] = ""
+	addEnchantSection(out); out[#out + 1] = ""
 	addContractSection(out)
 	if link then
 		out[#out + 1] = ""

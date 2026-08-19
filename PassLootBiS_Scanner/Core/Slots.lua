@@ -168,5 +168,22 @@ for equipLoc in pairs(Slots.EQUIPLOC_SLOTS) do
 end
 table.sort(Slots.DIAG_EQUIPLOCS)
 
+-- Every inventory slot id a scoreable equipLoc can occupy, deduped and ordered,
+-- for diagnostics that walk the paperdoll (the enchant check in Scanner.lua).
+-- Derived, like DIAG_EQUIPLOCS, so it cannot fall out of step with the table above.
+Slots.DIAG_SLOT_IDS = {}
+do
+	local seen = {}
+	for _, equipLoc in ipairs(Slots.DIAG_EQUIPLOCS) do
+		for _, slotId in ipairs(Slots.EQUIPLOC_SLOTS[equipLoc]) do
+			if not seen[slotId] then
+				seen[slotId] = true
+				Slots.DIAG_SLOT_IDS[#Slots.DIAG_SLOT_IDS + 1] = slotId
+			end
+		end
+	end
+	table.sort(Slots.DIAG_SLOT_IDS)
+end
+
 ns.Slots = Slots
 return Slots

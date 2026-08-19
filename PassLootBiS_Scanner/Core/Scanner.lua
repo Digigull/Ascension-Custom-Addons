@@ -41,6 +41,7 @@ local Alert       = ns.Alert
 local Auctionator = ns.Auctionator
 local Verdict     = ns.Verdict
 local WonLedger   = ns.WonLedger
+local ItemLink    = ns.ItemLink
 
 local ScaledStats  -- resolved from LibStub at login
 
@@ -59,6 +60,9 @@ local DEFAULTS = {
 	useSoundGold  = false,  -- cue on the high-value flag -- goldThreshold is its cutoff
 	tooltip       = true,   -- annotate item tooltips with score + upgrade arrow
 	goldThreshold = 500000, -- 50g in copper, for the Auctionator flag (Phase 4)
+	-- Score equipped gear WITHOUT its enchants, so a fresh drop is compared like for
+	-- like (ns.equippedStats has the full why, including why this is off by default).
+	ignoreEnchants = false,
 	powerMode     = "off",  -- score a CoA flat Power stat: "off" | "pve" | "pvp"
 	powerWeight   = 1,      -- weight per point of the chosen Power (tunable in GUI)
 	-- minimap = { angle, hide } and options = { point, x, y } are seeded in
@@ -242,10 +246,47 @@ local function scoreRollItem(rollID, weights, subType, equipLoc)
 	return Score.scoreItem(stats, weights), stats
 end
 
+-- THE one place equipped stats are read. Three callers had their own copy of this
+-- line (here, evalHand, and Core/Tooltip.lua's hover compare); the option below has
+-- to reach all three or the tooltip and the roll would quote different numbers for
+-- the same item.
+--
+-- An empty slot -> no lines -> empty stats -> score 0 (always beatable).
+--
+-- db.ignoreEnchants: score the equipped item WITHOUT its enchant, by scanning its
+-- link with the enchant field zeroed (Core/ItemLink.lua). The comparison is
+-- otherwise unfair in a way that always points the same direction: a loot roll is
+-- a fresh drop with no enchant on it, your equipped item has one, so the equipped
+-- side scores high and real upgrades read as smaller than they are (or as
+-- downgrades, which is what BiS Check would then veto).
+--
+-- Gems are deliberately left in. They are the same kind of player investment and
+-- the same argument applies, but the owner asked about enchants; stripping sockets
+-- as well would change more scores than were asked about, and it is one extra field
+-- set away (ItemLink.FIELD_ENCHANT_AND_GEMS) whenever that is wanted.
+--
+-- OFF by default, and this is the important part: it moves the equipped read from
+-- SetInventoryItem (your real instance) to SetHyperlink, which LibScaledStats
+-- warns "MAY be cached-first / nominal for scaled instances". On Ascension that is
+-- precisely the lie the whole library exists to route around, so trading a known
+-- enchant skew for a possible scaled-stat skew is not a trade to make blind.
+-- /plbisdebug reports the three numbers side by side (see API:GetEnchantCheck) so
+-- it can be checked on real gear before being trusted.
+function ns.equippedStats(slotId, subType, equipLoc)
+	if db and db.ignoreEnchants then
+		local link = GetInventoryItemLink("player", slotId)
+		local stripped = link and ItemLink and ItemLink.stripEnchant(link)
+		if stripped then
+			return ScaledStats:GetStatsWithDps("SetHyperlink", subType, equipLoc, stripped)
+		end
+		-- No link, or a link we could not parse: fall through to the real instance
+		-- rather than scoring the slot as empty.
+	end
+	return ScaledStats:GetStatsWithDps("SetInventoryItem", subType, equipLoc, "player", slotId)
+end
+
 local function scoreEquipped(slotId, weights, subType, equipLoc)
-	-- An empty slot -> no lines -> empty stats -> score 0 (always beatable).
-	local stats = ScaledStats:GetStatsWithDps("SetInventoryItem", subType, equipLoc, "player", slotId)
-	return Score.scoreItem(stats, weights)
+	return Score.scoreItem(ns.equippedStats(slotId, subType, equipLoc), weights)
 end
 
 -- Evaluate one equipped hand slot for the weapon-loadout compare: its score, the
@@ -257,7 +298,7 @@ local function evalHand(slotId, weights)
 		return { score = 0, dpsW = 0, is2H = false, isWeapon = false }
 	end
 	local _, _, _, _, _, itemType, subType, _, eqLoc = GetItemInfo(link)
-	local stats = ScaledStats:GetStatsWithDps("SetInventoryItem", subType, eqLoc, "player", slotId)
+	local stats = ns.equippedStats(slotId, subType, eqLoc)
 	local score = Score.scoreItem(stats, weights)
 	local dpsW = (stats.weaponDps or 0) * (weights.weaponDps or 0)   -- DPS-weighted part
 	return {
@@ -515,6 +556,51 @@ function API:GetLinkVerdict(link, isBiS)
 	return r
 end
 
+-- DIAGNOSTIC: is the enchant strip safe to switch on for THIS character's gear?
+--
+-- The strip has to read the equipped item through SetHyperlink, which the library
+-- warns may report cached/nominal stats for a scaled instance instead of the real
+-- one. That is unverifiable from here, so this measures it instead of guessing:
+-- for each equipped slot it scores the item three ways --
+--   real     : SetInventoryItem, the true instance (what we use today)
+--   link     : SetHyperlink on the item's OWN link, unmodified
+--   stripped : SetHyperlink on the link with the enchant zeroed
+--
+-- The test is `real` vs `link`. Those two describe the SAME item, so if they agree
+-- then SetHyperlink is faithful on this client and `stripped` can be trusted; if
+-- they disagree the link scan is lying and the option must stay off, whatever the
+-- enchant is worth. `stripped` vs `link` is then just how much enchant was in the
+-- score, which is the number that says whether any of this was worth doing.
+--
+-- Returns { { slot, name, real, link, stripped }, ... } for filled, scoreable slots.
+function API:GetEnchantCheck()
+	local out = {}
+	if not (ScaledStats and ItemLink) then return out end
+	local weights = currentWeights()
+	if not weights then return out end
+	for _, slotId in ipairs(Slots.DIAG_SLOT_IDS or {}) do
+		local link = GetInventoryItemLink("player", slotId)
+		if link then
+			local name, _, _, _, _, _, subType, _, equipLoc = GetItemInfo(link)
+			if equipLoc and Slots.slotsFor(equipLoc) then
+				local stripped = ItemLink.stripEnchant(link)
+				local function score(setter, ...)
+					return Score.scoreItem(
+						ScaledStats:GetStatsWithDps(setter, subType, equipLoc, ...), weights)
+				end
+				out[#out + 1] = {
+					slot     = slotId,
+					name     = name or "?",
+					real     = score("SetInventoryItem", "player", slotId),
+					link     = score("SetHyperlink", link),
+					stripped = stripped and score("SetHyperlink", stripped) or nil,
+				}
+			end
+		end
+	end
+	return out
+end
+
 -- DIAGNOSTIC: a flat copy of what the win ledger holds for this run, so the host's
 -- report can show that the run tracking is actually recording things -- the one
 -- half of BiS Check that CAN be exercised without a stale item dropping.
@@ -569,6 +655,9 @@ function API:GetStatus()
 	end
 	if db then
 		st.threshold, st.goldThreshold = db.threshold, db.goldThreshold
+		-- Reported so a host can SAY which way equipped gear is being scored; it
+		-- changes what every number in a compare means (ns.equippedStats).
+		st.ignoreEnchants = db.ignoreEnchants and true or false
 	end
 
 	-- currentWeights() is the same call the roll path makes, so "ready" here can

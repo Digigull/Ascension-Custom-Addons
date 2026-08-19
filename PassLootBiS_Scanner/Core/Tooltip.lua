@@ -260,7 +260,10 @@ local function annotate(tt)
 			local sig = Tooltip.weightsSignature(ns.chardb, ns.db)
 			if sig ~= cacheSig then wipeEquippedCache(); cacheSig = sig end
 			local scores = Tooltip.equippedScores(slotIds, equippedCache, function(slotId)
-				local eStats = ScaledStats:GetStatsWithDps("SetInventoryItem", subType, equipLoc, "player", slotId)
+				-- Through the shared reader, so the "ignore enchants" option reaches the
+				-- hover tooltip too. With its own copy of this scan the tooltip and the
+				-- roll window would quote different numbers for the same item.
+				local eStats = ns.equippedStats(slotId, subType, equipLoc)
 				return Score.scoreItem(eStats, weights)
 			end)
 			worst = Slots.worstEquipped(scores)

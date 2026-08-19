@@ -19,6 +19,7 @@ Data\Weights.lua
 # --- Pure logic cores (offline-testable under lua5.1) ---
 Core\Score.lua
 Core\Slots.lua
+Core\ItemLink.lua
 Core\SpecWeights.lua
 Core\Filter.lua
 Core\Verdict.lua
