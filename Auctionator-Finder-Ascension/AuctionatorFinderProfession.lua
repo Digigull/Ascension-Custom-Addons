@@ -26,6 +26,18 @@
 -- The Crafted Goods Margin filter then knows the craft cost of anything from
 -- either source.  Coverage grows as professions are opened and recipes viewed.
 
+-- zc lives in the addon table (zcUtils.lua keeps it file-local and only exports
+-- it there), so every file that wants it has to capture it.  This one did not,
+-- and `zc` therefore resolved to a nil GLOBAL in all eleven uses below -- each
+-- of them guarded with `zc and`, so the failure was silent.  What it cost:
+-- Atr_Craft_Harvest could not turn a produced item's link into an ID, so every
+-- NON-enchant recipe fell out at `if (madeID)` and the profession-window
+-- harvest stored only enchants.  The 2026-08-19 dump is the evidence -- 191
+-- recipes, zero numeric keys, and no alchemy at all despite the window having
+-- been open.  Match the capture the other Finder files use.
+local addonName, addonTable = ...;
+local zc = addonTable and addonTable.zc or _G.zc;
+
 local function Atr_Craft_DB()
     AUCTIONATOR_CRAFT_RECIPES = AUCTIONATOR_CRAFT_RECIPES or {};
     return AUCTIONATOR_CRAFT_RECIPES;

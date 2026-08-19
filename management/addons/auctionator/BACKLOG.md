@@ -206,11 +206,11 @@ are crafted items (blacksmithing/tailoring names). **Every key is a string name 
 keys**, so `Atr_Craft_GetRecipe`'s itemID path is dead in practice and only the name fallback
 ever fires. Worth knowing before item 12 touches name-keying.
 
-**The vellum question is still open, and now we know why.** `AUCTIONATOR_NPC_PRICES` is
-**empty** — zero entries. `Atr_NPC_HarvestMerchant` only stores an item that is `Trade Goods`,
-unlimited stock, priced in gold, no extended cost, so an empty table after weeks of play means
-no qualifying vendor has been opened with this build loaded. One visit to an enchanting
-supplies vendor fills it, and the next dump then names the vellum outright.
+**The vellum question is still open, and the reason turned out to be a bug.**
+`AUCTIONATOR_NPC_PRICES` was empty — and stayed empty after the owner visited an enchanting and
+an alchemy supply vendor and reloaded. It was not a missing visit: `Atr_NPC_HarvestMerchant`
+could never store anything, because its file never captured `zc`. See item 14, fixed the same
+day. One supply-vendor visit *after that fix* names the vellum.
 
 ---
 
@@ -302,10 +302,10 @@ a reagent price or the produced item's own auction price; nothing above tests th
 `per craft x3` line makes it checkable at a glance — 91g55s97c of reagents against a 127g80s
 stack of 3 on the AH.
 
-**The 2026-08-19 dump cannot settle it: there is no alchemy in it.** All 191 harvested recipes
-are enchanting scrolls or crafted armour/weapons; no flask, no transmute, no `Arcanite Bar`. So
-the alchemy window has not been opened with this build, and both this item's open question and
-item 11's are waiting on the same single visit. What the dump *does* prove is that
+**The 2026-08-19 dump cannot settle it: there is no alchemy in it** — and item 14 explains why.
+The profession-window harvest dropped every recipe that produces an *item*, which is all of
+alchemy, so opening the window changed nothing. Fixed the same day; the yields arrive on the
+first alchemy window opened after it. What the dump *does* prove is that
 `GetTradeSkillNumMade`'s first return is **not universally clamped to 1 on this server** —
 three scroll recipes are stored `made = 2`. So a flask recorded as `made = 1` would be a real
 reading of `minMade`, not an API that always says one.
@@ -957,9 +957,66 @@ item 12 part 3, which has to touch both databases' value shapes anyway.
 
 ---
 
+## 14. Two files never captured `zc`, so every itemID lookup in them was nil — DONE
+
+**Found 2026-08-19** by the dump, not by a report. Two observations that looked unrelated —
+`AUCTIONATOR_NPC_PRICES` empty after weeks of play, and `AUCTIONATOR_CRAFT_RECIPES` holding 191
+recipes with **zero numeric keys** — are one bug.
+
+`zc` is file-local in `zcUtils.lua` and exported only as `addonTable.zc`. Sixteen files capture
+it with `local addonName, addonTable = ...; local zc = addonTable and addonTable.zc or _G.zc;`.
+**Two did not**, so in those two `zc` resolved to a nil *global* — and because every use site is
+written defensively as `zc and zc.ItemIDfromLink`, nothing errored. It just quietly did nothing,
+forever.
+
+**`AuctionatorFinderMerchant.lua` (1 use).** `Atr_NPC_HarvestMerchant` sets
+`local ItemID = (zc and zc.ItemIDfromLink) or nil` and then stores under
+`if (itemID) then db[itemID] = unit`. With `ItemID` nil the condition never held: **the NPC price
+learner has never recorded a single item.** Confirmed twice over — the owner visited an
+enchanting and an alchemy supply vendor, reloaded, and the table was still empty.
+
+**`AuctionatorFinderProfession.lua` (11 uses).** Worse, because it silently halved a feature.
+`Atr_Craft_Harvest` keys a recipe by its produced item's ID, *except* enchants, which are keyed
+by scroll name:
+
+```lua
+if (Atr_Craft_IsEnchantLink(madeLink)) then madeID = Atr_Craft_ScrollName(rowName);
+else                                        madeID = ItemID and tonumber((ItemID(madeLink))) or nil; end
+if (madeID) then ... db[madeID] = ... end
+```
+
+With `ItemID` nil, `madeID` was nil for everything that is not an enchant, so **the
+profession-window harvest stored enchants and nothing else.** The 103 non-enchant recipes in the
+dump all came from the other source, the recipe-*tooltip* harvest, which is name-keyed and was
+never affected. That is why the file has zero numeric keys, and why opening an alchemy window
+produced no flasks, no transmutes and no `Arcanite Bar`: alchemy makes items, so every row hit
+the dead branch. Reagent IDs were nil for the same reason; reagents still priced because the
+record keeps the name too.
+
+**The fix** is the capture those two files were missing, matching the other sixteen. Two lines
+each, no logic touched.
+
+**What it unblocks.** Item 11's open question is answered without an experiment — transmutes
+were never stored, and the cause was not the item-link theory. Item 3 gets its flask yields the
+first time an alchemy window is opened after the fix, and item 2 gets its vellum the first time
+a supply vendor is. All three were waiting on data this bug was eating.
+
+**Watch for on the next dump:** `AUCTIONATOR_CRAFT_RECIPES` will start carrying **numeric** keys
+from the window harvest while the 103 existing name keys stay. That is expected and both readers
+handle it (`Atr_Craft_GetCraftCost` tries ID then name), but a recipe seen from both sources will
+occupy two rows. Harmless — the ID row wins and carries the better data — and worth folding into
+item 13's tidy-up rather than fixing separately.
+
+**Verified** by `luac5.1 -p`, by a repo-wide re-check that no other file has the same gap (the
+only other hit, `AuctionatorQuery.lua`, uses `zc.` in commented-out debug lines only), and by the
+two dumps that are the evidence for the diagnosis. **Not verified in game** — the check is a
+supply vendor and an alchemy window, then a dump.
+
+---
+
 ## Suggested order
 
-Items 1–5 and 11 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–5, 11 and 14 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 6** — Finder recipe filter, the last small self-contained feature. The in-game check
@@ -1020,15 +1077,18 @@ the server. Nothing else it suggested about this addon's data was ever evidence.
 | Question | Answer |
 |---|---|
 | Are scrolls named `"Scroll of <enchant>"`? | **Yes** — 88 `Scroll of Enchant ...` keys in `AUCTIONATOR_CRAFT_RECIPES`. |
-| Which item is the vellum here? | **Still open.** `AUCTIONATOR_NPC_PRICES` is empty; no qualifying vendor has been opened with this build. One visit fixes it. |
+| Which item is the vellum here? | **Still open — and it exposed a bug.** `AUCTIONATOR_NPC_PRICES` stayed empty even after two supply-vendor visits: the harvest could never write (item 14). |
 | Was enchanting really absent from the harvest? | **Confirmed fixed** — 88 of 191 recipes are enchants. |
-| What yield was harvested for a multi-output recipe? | **Not answerable yet** — no alchemy recipes at all. But `made = 2` exists on three scrolls, so the API is not clamped to 1. |
+| What yield was harvested for a multi-output recipe? | **Not answerable yet** — no alchemy recipes at all, because the window harvest was dropping them (item 14). `made = 2` on three scrolls proves the API is not clamped to 1. |
 | Does a market price series exist? | **No, confirmed on real data.** 5267 mean entries, 8898 samples, all bare numbers in an array, no timestamps, max 14 samples against the cap of 15. `FRAMEWORK.md` §5 stands. |
 | How many same-name variants? (item 12) | **3 trailing-space keys in 5267**, none with an unsuffixed twin. Part 1 unblocked. |
 | Is item 4's learning accumulating? | **Not yet visible** — the dump predates the merged build. |
 | What is the price DB's shape? (item 10) | One realm key, 5267 entries, **all plain numbers**, `__dbversion = 2`. |
 
-It also produced item 13 (a third of the file is redundant) and a vendor-research re-run:
+It also produced item 13 (a third of the file is redundant), item 14 (two files never captured
+`zc`, so the NPC harvest never wrote and the profession harvest stored only enchants — found
+because a *second* dump, taken straight after two vendor visits, was byte-identical apart from
+one timestamp), and a vendor-research re-run:
 `diff-vendor-seed` reports **0 disagreements and 0 contested tuples** across 1349 obs and 453
 base facts, with 88 + 65 new real facts — see `VENDOR-PRICE-RESEARCH.md`.
 
@@ -1052,17 +1112,19 @@ item 11's transmute question together.
 - **Item 3:** whether 30g51s99c per flask is *right* — i.e. whether the reagent prices behind
   it are. The maths and the display are settled; nothing shipped tests the inputs. The
   `Craft cost x3` line makes it a glance: 91g55s97c of reagents against a 127g80s stack of 3.
-  **Waiting on an alchemy window being opened once** — the 2026-08-19 dump has no alchemy in it.
+  **Waiting on an alchemy window being opened once _after item 14's fix_** — before it, opening
+  the window stored nothing.
 - **Item 2 (built, needs one in-game check):** whether the *weapon* vellum's name is in the
   candidate list, and whether both vellums price from a vendor rather than the auction house.
   `/atrprofsort stamina` answers both. Neither breaks the numbers if wrong — see item 2.
-  **Waiting on an enchanting supplies vendor being opened once** — `AUCTIONATOR_NPC_PRICES` is
-  empty, so a dump cannot answer it until then.
+  **Waiting on a supply vendor being opened once _after item 14's fix_** — before it, the NPC
+  price harvest could not write at all.
 - **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
   ("Already known") string.
-- **Item 11:** whether the profession harvest stores transmutes at all — i.e. whether this
-  client returns an item link for those rows. The 2026-08-19 dump cannot separate "not stored"
-  from "alchemy never opened": there are no alchemy rows of any kind. Decides only whether the Sell tab and bag
+- **Item 11:** ~~whether the profession harvest stores transmutes at all~~ — **answered
+  2026-08-19: it did not, and the item-link theory was wrong.** The window harvest dropped every
+  recipe producing an item, because its file never captured `zc` (item 14). Fixed; re-check on
+  the next dump. Decides only whether the Sell tab and bag
   tooltips know an `Arcanite Bar`'s craft cost with the profession window closed; the trade
   skill window is correct either way. `/atrprofsort transmute` now prints the link.
 - **Item 8:** ~~what `AUCTIONATOR_PRICE_DATABASE` actually retains~~ — **answered 2026-08-19:
