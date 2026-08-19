@@ -679,6 +679,29 @@ drops the oldest row while keeping the newest and warns exactly once. **Not veri
   mailbox (`MAIL_INBOX_UPDATE`, `GetInboxHeaderInfo`) and its own subsystem. Until it lands the
   ledger records what you spent and listed, never what came back — so it must not be presented as
   profit. That is exactly the "absent, not zero" rule this item's scope note sets.
+
+  **Design against Postal's "Open All" from the first line, not afterwards** (owner, 2026-08-19:
+  that is how their mail actually gets opened). Confirmed first: **this addon has no mail code at
+  all today** — no `MAIL_*` event is registered anywhere, so stage 2 starts from zero and has
+  nothing to conflict with. What a mass-opener changes about the design:
+
+  - **Never key on the inbox INDEX.** Taking or deleting a mail re-indexes everything after it, so
+    an index captured one frame is a different mail the next. Identity has to come from content —
+    sender, subject, money, attachment, expiry — because 3.3.5 gives a mail no stable id.
+  - **That identity is also the DEDUP key**, and it has to survive a relog: the same unread mail is
+    seen again on every mailbox visit until it is taken, and each sighting must not add a row.
+    Record what has been counted, not just what has been seen.
+  - **`MAIL_INBOX_UPDATE` arrives in storms** while Postal works, exactly like `MERCHANT_UPDATE`
+    and `TRADE_SKILL_UPDATE` do. Both of those are already solved in this addon by the same
+    pattern — a dedicated frame, a short settle timer, and a session throttle keyed on a
+    fingerprint (`AuctionatorFinderMerchant.lua` is the cleaner of the two to copy).
+  - **A mail can vanish between being seen and being read.** Postal takes the money and the item
+    and then deletes it, so every read needs `pcall`-level tolerance and a missing mail must be a
+    no-op rather than a half-written row.
+  - **This is also where item 9's delivered side gets observed** — what actually arrived, against
+    what the buy loop intended. Which means the one moment that answers item 9 is the moment
+    Postal is racing through fastest. Worth building the capture to run *before* the take, on the
+    inbox listing, rather than trying to observe the take itself.
 - **Stage 3 — the tab.** Rename the existing Ledger sub-tab to **History** (it shows price
   history, and `Atr_ShowHistory` already sets its column heading to `History`, so the label was
   the odd one out), freeing the name, then build the Ledger view. `FRAMEWORK.md` §8 has the
