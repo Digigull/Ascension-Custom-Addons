@@ -137,12 +137,48 @@ The trace holds three greed rolls the addon cast and three `CONFIRM_LOOT_ROLL n:
 our roll, leaving the popup` lines (ids 4, 9, 8), and the owner had to click Okay by
 hand a few times.
 
-**Owner's testimony, asked directly: they did not click Need or Greed on any of
-them.** That is the load-bearing fact, because nothing else raises this popup —
-`CONFIRM_LOOT_ROLL` fires only in response to a `RollOnLoot` call, so those rolls
-were ours and the `CastRolls` identity check refused our own casts. **This is
-therefore a live bug and not merely a scoping decision** — the widening removes the
-symptom, but something is wrong underneath and the ledger is the place to look.
+**Cause found, and it is not the ledger.** The owner then reported a Lua error from
+the same run:
+
+```
+Interface\AddOns\PasslootBiS\Core\ModulesGUI.lua:233: attempt to concatenate a boolean value
+```
+
+`Modules/ExceptionalItem.lua` built its trace line as
+`"Exceptionaltem: " .. "true" and itemObj.isBloodforged or "false" .. ...`. `..` binds
+tighter than `and`/`or`, so that whole expression collapses to
+`(truthy string) and isBloodforged or (...)` — it passed a raw **boolean** to `Debug`,
+which concatenated it and threw. That throw happens inside `Widget:SetMatch`, which
+runs for every registered widget at the top of `EvaluateItem`, and **nothing on the
+path pcalls it** (`Core/Cache.lua` `GetItemEvaluation` → `EvaluateItem` →
+`ProcessLootRoll` → `START_LOOT_ROLL`). So one Bloodforged/Heroic/Mythic/Ascended drop
+killed the entire roll evaluation: no rule matched, no roll was cast, and — because
+`SetMatch` runs *before* the first `Checking rule` line — **no trace lines were
+written for that item at all**.
+
+That accounts for every observation at once, without any ledger bug:
+
+- The three `CONFIRM_LOOT_ROLL` ids (4, 9, 8) have **no evaluation lines anywhere in
+  the trace**. They are the items that crashed out.
+- The addon did not roll them, so the owner rolled them by hand, so the popup was
+  genuinely *not ours* — the old gate was reporting the truth.
+- "Only a few times": only forged items are affected, and on Ascension that is a
+  minority of drops but not a rare one.
+- The three items that *do* appear in the trace (Lodestone Hoop, Belt of the
+  Gladiator, Razor Blade of the Hawkeye) are ordinary BoE greens/blues — no bind
+  prompt is expected for them, which is why the window holds zero auto-confirm lines
+  and that is not evidence of anything.
+
+**The Heisenbug worth remembering: `Prototypes:Debug` returns early when the trace is
+off, so this only fired *while tracing was on*.** Turning the trace on to find out why
+a roll was missed was itself what made the roll get missed. A diagnostic that changes
+the behaviour it is measuring is the worst kind, which is why the fix hardens the
+helper (`tostring` on every argument) as well as the one broken caller — see the
+comment on `PasslootBiS.Prototypes:Debug` in `Core/ModulesGUI.lua`.
+
+**The widening above still stands** — the owner asked for hand-cast prompts to be
+answered and that is a reasonable thing to want on its own. It just was not the cure
+for this run's clicking; this was.
 
 Two things about reading that report, both of which caught me out once:
 
@@ -158,14 +194,12 @@ Two things about reading that report, both of which caught me out once:
   absence of `ConfirmBoP CONFIRM_LOOT_ROLL` lines in `[Trace]` says nothing about
   whether that module ran.
 
-The leading hypothesis for the refusal is that `GetLootRollItemLink(RollID)` does not
-answer during `CONFIRM_LOOT_ROLL` on this client — the ledger stores a link at cast
-time and compares it at confirm time, and a nil there fails the compare for every
-BoP roll we make. The client's own `GroupLootFrame` handler uses
-`GetLootRollItemInfo` at that moment, not the link, so FrameXML is no evidence
-either way. The new origin word settles it: **`addon-cast, roll no longer live`
-confirms this hypothesis, `addon-cast, link changed` points at rollID recycling
-instead, and a plain `hand-cast` would mean the ledger entry was never written and
-the fault is on the cast side.**
+There was an intermediate hypothesis — that `GetLootRollItemLink(RollID)` does not
+answer during `CONFIRM_LOOT_ROLL` on this client, failing the ledger compare for every
+BoP roll we cast — recorded here because it was wrong and the crash above explains the
+evidence better. **The ledger has never been shown to misfire.** The origin word on the
+new auto-confirm line still settles it either way next run: `addon-cast` on a roll the
+addon cast means the ledger is fine, and `addon-cast, roll no longer live` would revive
+the link hypothesis.
 
 The single-setting merge and the widening are both reasoned and syntax-checked only.

@@ -221,18 +221,38 @@ PasslootBiS.Prototypes.ShowTooltip = PasslootBiS.ShowTooltip
 -- SetCursorPosition(0) requires I ClearFocus(), which will create a loop that I don't really like.
 PasslootBiS.Prototypes.ScrollLeft = PasslootBiS.ScrollLeft
 
+-- Trace line from a MODULE (the filter plugins under Modules/), prefixed with the
+-- module's own name. Same contract as PasslootBiS:Debug (Core/PassLoot.lua): captured
+-- into the trace ring, echoed to chat only when DebugEcho is also on.
+--
+-- tostring() on every argument is NOT tidying. This concatenated raw, and one caller
+-- passing a boolean (Modules/ExceptionalItem.lua had a precedence bug that did exactly
+-- that on any forged item) threw from here -- out through Widget:SetMatch, which runs
+-- for every widget at the top of EvaluateItem with no pcall anywhere up the chain, so
+-- the whole roll evaluation died and the item was never auto-rolled. Diagnostic output
+-- must never be able to change what the addon does, and a debug helper that can throw
+-- is the one place that rule gets broken by accident. Call sites that build their own
+-- string still have to be careful; this only closes the door on the arguments.
+--
+-- The other half: this used to Pour() straight to chat and never reach the ring, so
+-- module lines spammed chat while being invisible in /plbisdebug -- backwards, since
+-- the ring is what you paste into a bug report. `/plbisdebug chat` brings the live
+-- echo back.
 function PasslootBiS.Prototypes:Debug(...)
-  local DebugLine, Counter
-  if ( PasslootBiS.DebugVar == true ) then
-    if ( self.GetName ) then
-      DebugLine = "("..(self:GetName() or "")..") "
-    else
-      DebugLine = ""
-    end
-    for Counter = 1, select("#", ...) do
-      DebugLine = DebugLine..select(Counter, ...)
-    end
-    -- PasslootBiS:Print(_G[PasslootBiS.db.profile.OutputFrame], DebugLine)
+  if ( PasslootBiS.DebugVar ~= true ) then
+    return
+  end
+  local DebugLine, Counter = "", nil
+  if ( self.GetName ) then
+    DebugLine = "("..tostring(self:GetName() or "")..") "
+  end
+  for Counter = 1, select("#", ...) do
+    DebugLine = DebugLine..tostring(select(Counter, ...))
+  end
+  if ( PasslootBiS.DebugCapture ) then
+    PasslootBiS:DebugCapture(DebugLine)
+  end
+  if ( PasslootBiS.DebugEcho ) then
     PasslootBiS:Pour("|cff33ff99PasslootBiS|r: "..DebugLine)
   end
 end
