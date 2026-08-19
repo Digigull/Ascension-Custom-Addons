@@ -21,16 +21,18 @@ ns.Alert = Alert
 
 local PREFIX = "|cff33ff99PLBiS|r "   -- matches BiSRollLog's chat color
 
--- The two cues, one per reason-to-need (§7). Distinct on purpose: with both
--- toggles on you can tell an upgrade from a gold flag without looking away.
+-- ONE cue, shared by both reasons-to-need (§7): the coin jingle. (Superseded:
+-- the upgrade cue used to be the client's own LEVELUP kit, so that with both
+-- toggles on you could tell an upgrade from a gold flag by ear. In practice an
+-- item that is both -- the common case -- fired the two together and just sounded
+-- like a bug, so the coin now answers for both and Alert.cues() de-duplicates it.)
 --
 -- A cue is either a SoundEntries.dbc kit name (`kit`, played with PlaySound) or a
 -- file shipped in this addon (`file`, played with PlaySoundFile). Note that BOTH
 -- fail SILENTLY on this client -- a misspelt kit name and a missing file are
 -- equally soundless, with no error -- which is what the options window's Test
 -- button exists to catch.
-local UPGRADE_SOUND = { kit = "LEVELUP" }
-
+--
 -- Shipped coin jingle (Sounds/coin.ogg), supplied by the addon owner. Converted
 -- for this client: trimmed of 74ms leading silence, lifted ~13.5dB (the source
 -- peaked at -19.7dBFS, some 20dB under WoW's own effects, so it vanished under
@@ -38,7 +40,12 @@ local UPGRADE_SOUND = { kit = "LEVELUP" }
 -- sound engine is built around. Sounds/coin.mp3 is the same audio in the other
 -- format the client accepts: if the .ogg turns out silent on an Ascension build,
 -- swap the extension on the line below -- that is the whole fallback.
-local VALUE_SOUND   = { file = "Interface\\AddOns\\PassLootBiS_Scanner\\Sounds\\coin.ogg" }
+local COIN_SOUND = { file = "Interface\\AddOns\\PassLootBiS_Scanner\\Sounds\\coin.ogg" }
+
+-- Both toggles point at the same cue today; kept as two names so a future split
+-- back to distinct sounds is a one-line change here, not a rewrite of cues().
+local UPGRADE_SOUND = COIN_SOUND
+local VALUE_SOUND   = COIN_SOUND
 
 -- Format a delta fraction as a signed percent, or "new" for an empty slot.
 local function fmtDelta(delta)
@@ -73,14 +80,24 @@ ns.Alert.summary = Alert.summary   -- exposed for tests (pure)
 -- db.useSoundGold likewise rides the gold threshold. (Superseded: this used to
 -- fire only above a second, hidden `strongDelta` cutoff of +10%, which meant the
 -- visible threshold you set was silently not the one the sound obeyed.)
+--
+-- Both toggles resolve to the same coin cue, so the list is de-duplicated by
+-- identity: an item that is both an upgrade AND high value, with both boxes
+-- ticked, plays the coin ONCE rather than twice over itself.
 function Alert.cues(info, db)
 	db = db or {}
 	local out = {}
+	local function add(cue)
+		for i = 1, #out do
+			if out[i] == cue then return end
+		end
+		out[#out + 1] = cue
+	end
 	if db.useSound and info.delta ~= nil then
-		out[#out + 1] = UPGRADE_SOUND
+		add(UPGRADE_SOUND)
 	end
 	if db.useSoundGold and info.goldText then
-		out[#out + 1] = VALUE_SOUND
+		add(VALUE_SOUND)
 	end
 	return out
 end
