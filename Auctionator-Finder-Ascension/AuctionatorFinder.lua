@@ -148,6 +148,19 @@ function Atr_Finder_SetIgnoreWarn (v)
 	if (Atr_Finder_WarnIgnoreCheck)	then Atr_Finder_WarnIgnoreCheck:SetChecked (v and true or nil); end
 end
 
+-- One setting, two checkboxes -- the Finder's own toolbar and the options
+-- panel -- mirrored the same way Atr_Finder_SetIgnoreWarn does it. The toolbar
+-- one is where you actually reach for it; the options row stays because that is
+-- where someone reading the option list will look for it.
+function Atr_Finder_SetHideKnownRecipes (v)
+
+	AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
+	AUCTIONATOR_FINDER_SETTINGS.hideKnownRecipes = v and true or false;
+
+	if (Atr_Finder_HideKnownCheck)		then Atr_Finder_HideKnownCheck:SetChecked (v and true or nil); end
+	if (Atr_Finder_Opt_KnownRecipes_CB)	then Atr_Finder_Opt_KnownRecipes_CB:SetChecked (v and true or nil); end
+end
+
 local function Fdr_MoneyString (copper)
 
 	if (copper == nil or copper <= 0) then
@@ -4164,6 +4177,33 @@ function Atr_Finder_Init ()
 		Atr_Finder_RebuildDisplay ();
 		Fdr_SortAndRedisplay ();
 	end);
+
+	-- "Hide known" sits in the HEADER BAND, directly above Group.  The control
+	-- row itself is full -- search box, Categories, the level range, three
+	-- checkboxes and the stat dropdown leave no 24px gap anywhere -- and the band
+	-- above it holds only the centred title, which ends well left of here.
+	--
+	-- Anchored to Group rather than placed by absolute offset, so it stays put if
+	-- that row is ever re-laid-out.  Terse label like its neighbours; the tooltip
+	-- carries the detail.
+	local known = CreateFrame ("CheckButton", "Atr_Finder_HideKnownCheck", panel, "UICheckButtonTemplate");
+	known:SetSize (24, 24);
+	known:SetPoint ("BOTTOMLEFT", group, "TOPLEFT", 0, 2);
+	known:SetChecked ((type (Fdr_HideKnownRecipes_Enabled) == "function")
+					  and Fdr_HideKnownRecipes_Enabled () and true or nil);
+	_G["Atr_Finder_HideKnownCheckText"]:SetText (FT("Hide known"));
+	known:SetScript ("OnClick", function (self)
+		Atr_Finder_SetHideKnownRecipes (self:GetChecked());
+		Atr_Finder_RebuildDisplay ();
+		Atr_Finder_Redisplay ();
+	end);
+	known:SetScript ("OnEnter", function (self)
+		GameTooltip:SetOwner (self, "ANCHOR_TOPLEFT");
+		GameTooltip:SetText (FT("Hide known recipes"), 1, 1, 1);
+		GameTooltip:AddLine (FT("Removes recipe listings this character has already learned. Read from the recipe's own tooltip, so it costs nothing until a search returns recipes. Knowing is per character; the setting is shared."), nil, nil, nil, true);
+		GameTooltip:Show();
+	end);
+	known:SetScript ("OnLeave", function () GameTooltip:Hide(); end);
 
 	-- stat dropdown (only if the client has the dropdown library loaded)
 	if (UIDropDownMenu_Initialize) then

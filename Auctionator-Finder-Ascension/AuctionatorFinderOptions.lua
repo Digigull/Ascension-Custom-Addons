@@ -137,7 +137,12 @@ function Fdr_Options_Apply ()
 	AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
 	AUCTIONATOR_FINDER_SETTINGS.feedPriceDB   = gFdr_OptRows.prices:GetChecked() and true or false;
 	AUCTIONATOR_FINDER_SETTINGS.gearToFinder  = gFdr_OptRows.gearjump:GetChecked() and true or false;
-	AUCTIONATOR_FINDER_SETTINGS.hideKnownRecipes = gFdr_OptRows.knownrecipes:GetChecked() and true or false;
+	-- through the setter, so the Finder's own toolbar checkbox moves with it
+	if (type (Atr_Finder_SetHideKnownRecipes) == "function") then
+		Atr_Finder_SetHideKnownRecipes (gFdr_OptRows.knownrecipes:GetChecked());
+	else
+		AUCTIONATOR_FINDER_SETTINGS.hideKnownRecipes = gFdr_OptRows.knownrecipes:GetChecked() and true or false;
+	end
 
 	-- the filter only reads its setting at rebuild, so a toggle has to ask for one
 	if (type (Atr_Finder_RebuildDisplay) == "function" and Atr_Finder_Panel) then

@@ -521,21 +521,34 @@ is a mild annoyance; hiding one you wanted is a lost purchase.
   rendered recipe tooltip for reagents, so it reads the known-line in the same pass, which is
   what this item's original plan asked for.
 
-### Where the checkbox went, and why not where the plan said
+### Where the checkbox went
 
-The plan said "next to `Usable`/`My Lvl`". **The Finder's control row has no space left**: the
-search box, Categories, the level range, three checkboxes and the stat dropdown run from x=72 to
-x=732 with no 24px gap anywhere. Adding a second control row would push the results grid down and
-cost one of the 15 visible rows. Asked the owner (2026-08-19), who chose the **Finder options
-panel** — no layout risk, alongside the existing scan options. `Fdr_Options_Apply` triggers a
-rebuild so a toggle takes effect on results already on screen.
+The plan said "next to `Usable`/`My Lvl`". **The control row has no space left**: the search box,
+Categories, the level range, three checkboxes and the stat dropdown run from x=72 to x=732 with no
+24px gap anywhere, and a second control row would push the results grid down and cost one of the
+15 visible rows. It shipped in the **Finder options panel** first, and the owner then looked at it
+in game and asked for it on the Finder page after all — **in the header band, above `Group`**,
+which a screenshot showed is empty apart from the centred title, and the title ends well to the
+left of x=494.
+
+So it is now **both**, mirrored through `Atr_Finder_SetHideKnownRecipes` the same way
+`Atr_Finder_SetIgnoreWarn` mirrors its pair. The toolbar checkbox is where you reach for it; the
+options row stays because that is where someone reading the option list will look. The toolbar one
+is anchored to `Atr_Finder_GroupCheck` rather than placed by absolute offset, so it follows if that
+row is ever re-laid-out.
+
+**`Clear` deliberately does not reset it.** It is a persisted preference, not a per-search filter,
+and a Clear button silently turning a saved setting back on would be a surprise.
 
 The preference is account-wide (a habit) even though the knowledge is per character.
 
-**Verified** by `luac5.1 -p` on all three changed files. **Not verified in game.** Two things to
-look at first: whether Ascension's recipe tooltips carry the stock string at all (the original
-open question — if they do not, nothing is hidden and nothing breaks), and whether the class name
-at index 9 of `GetAuctionItemClasses` really is Recipe on this server.
+**Verified in game 2026-08-19** — and this is the item's original open question answered:
+**Ascension's recipe tooltips do carry the string.** The owner's per-character file came back with
+about **250 entries** in `AUCTIONATOR_KNOWN_RECIPES`, all numeric item IDs, including this
+server's own ranges (`967xxx`, `1061xxx`, `100xxx`, `339080`). So the detection works on custom
+recipes, not just stock ones, and `GetAuctionItemClasses` index 9 really is Recipe here.
+
+**Not verified in game:** the new toolbar checkbox's placement, which is one screenshot away.
 
 ---
 
@@ -1389,10 +1402,9 @@ to become visible.
   vellums price from a vendor rather than the auction house.~~ — **closed 2026-08-19.** Both
   names are in the price database and both candidate names match; both vellums are vendor-sold
   at 2g40s (`52510`, `52511`) and now price from there instead of the AH's 6g85s / 3g22s.
-- **Item 6 (built, needs one in-game check):** whether Ascension's recipe tooltips carry the
-  stock `ITEM_SPELL_KNOWN` ("Already known") string, and whether class 9 of
-  `GetAuctionItemClasses` is Recipe here. If either is wrong the filter hides nothing and
-  nothing else changes — search recipes with the option on and see whether known ones drop out.
+- ~~**Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN` string~~ —
+  **closed 2026-08-19: they do.** ~250 recipes cached on the owner's character, including this
+  server's custom ID ranges.
 - ~~**Item 11:** whether the profession harvest stores transmutes at all~~ — **closed
   2026-08-19.** It did not, and the item-link theory was wrong: the window harvest dropped every
   recipe producing an item because its file never captured `zc` (item 14). After the fix,
