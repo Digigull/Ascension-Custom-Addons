@@ -21,6 +21,25 @@ ns.Alert = Alert
 
 local PREFIX = "|cff33ff99PLBiS|r "   -- matches BiSRollLog's chat color
 
+-- The two cues, one per reason-to-need (§7). Distinct on purpose: with both
+-- toggles on you can tell an upgrade from a gold flag without looking away.
+--
+-- A cue is either a SoundEntries.dbc kit name (`kit`, played with PlaySound) or a
+-- file shipped in this addon (`file`, played with PlaySoundFile). Note that BOTH
+-- fail SILENTLY on this client -- a misspelt kit name and a missing file are
+-- equally soundless, with no error -- which is what the options window's Test
+-- button exists to catch.
+local UPGRADE_SOUND = { kit = "LEVELUP" }
+
+-- Shipped coin jingle (Sounds/coin.ogg), supplied by the addon owner. Converted
+-- for this client: trimmed of 74ms leading silence, lifted ~13.5dB (the source
+-- peaked at -19.7dBFS, some 20dB under WoW's own effects, so it vanished under
+-- combat), and resampled 48kHz stereo -> 44.1kHz mono, which is what the 3.3.5
+-- sound engine is built around. Sounds/coin.mp3 is the same audio in the other
+-- format the client accepts: if the .ogg turns out silent on an Ascension build,
+-- swap the extension on the line below -- that is the whole fallback.
+local VALUE_SOUND   = { file = "Interface\\AddOns\\PassLootBiS_Scanner\\Sounds\\coin.ogg" }
+
 -- Format a delta fraction as a signed percent, or "new" for an empty slot.
 local function fmtDelta(delta)
 	if delta == math.huge then return "new slot" end
@@ -45,6 +64,28 @@ function Alert.summary(info)
 end
 
 ns.Alert.summary = Alert.summary   -- exposed for tests (pure)
+
+-- Which sound cues this alert should fire, given the channel toggles. Pure, so
+-- the options window's Test button can play exactly what a real alert would.
+--
+-- There is deliberately NO separate sound threshold. db.useSound fires on ANY
+-- upgrade -- the upgrade-threshold slider already decides what counts as one, and
+-- db.useSoundGold likewise rides the gold threshold. (Superseded: this used to
+-- fire only above a second, hidden `strongDelta` cutoff of +10%, which meant the
+-- visible threshold you set was silently not the one the sound obeyed.)
+function Alert.cues(info, db)
+	db = db or {}
+	local out = {}
+	if db.useSound and info.delta ~= nil then
+		out[#out + 1] = UPGRADE_SOUND
+	end
+	if db.useSoundGold and info.goldText then
+		out[#out + 1] = VALUE_SOUND
+	end
+	return out
+end
+
+ns.Alert.cues = Alert.cues   -- exposed for tests (pure)
 
 -- The rest is UI; skip when no WoW API.
 if not rawget(_G, "CreateFrame") then
@@ -85,7 +126,8 @@ local function ensureFrame()
 	return frame
 end
 
--- Show an alert. `db` carries the channel toggles (useFrame/useChat/useSound).
+-- Show an alert. `db` carries the channel toggles
+-- (useFrame/useChat/useSound/useSoundGold).
 function Alert.Show(info, db)
 	db = db or {}
 	local line = Alert.summary(info)
@@ -102,9 +144,21 @@ function Alert.Show(info, db)
 		f:Show()
 	end
 
-	if db.useSound and info.strong then
-		PlaySound("LEVELUP")   -- a distinct cue on a strong upgrade
+	Alert.PlayCues(info, db)
+end
+
+-- Play the cues Alert.cues() picks; returns how many fired (the Test button in
+-- the options window reports "nothing is on" when that is 0).
+function Alert.PlayCues(info, db)
+	local cues = Alert.cues(info, db)
+	for _, cue in ipairs(cues) do
+		if cue.file then
+			PlaySoundFile(cue.file)
+		else
+			PlaySound(cue.kit)
+		end
 	end
+	return #cues
 end
 
 -- Hide the floating frame (call when the roll ends).
