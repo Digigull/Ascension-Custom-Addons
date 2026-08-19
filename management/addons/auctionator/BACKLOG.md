@@ -82,13 +82,32 @@ an item ID from that link and silently skips the row when it can't get one. So e
 probably absent from `AUCTIONATOR_CRAFT_RECIPES` too, and the Sell tab's Crafted Goods Margin
 filter never sees it either.
 
-**Likely fix shape.** Try the row name, then `"Scroll of " .. rowName`, then the enchant's
-scroll item if we can resolve one. Worth doing as a named helper both `RowProfit` and the
-harvest can use, rather than a `string.format` at the call site — the same mismatch will come
-back for any craft whose row name is not its product name.
+**Confirmed by the owner's price database, 2026-08-19.** The dump settles both halves of the
+mapping, and corrects an assumption that would otherwise have shipped wrong:
 
-**Unverified.** Whether Ascension names its scrolls the same way stock 3.3.5 does. Confirm
-in-game with one known enchant before writing the mapping.
+- **Scroll naming is exactly `"Scroll of " .. <enchant name>`** — 25 scrolls in the dump, every
+  one of that form (`Scroll of Enchant Weapon - Lesser Striking`, `Scroll of Enchant Bracer -
+  Lesser Strength`, …). The mapping is safe to build on.
+- **The vellum is NOT one item here.** The dump carries **`Enchanting Vellum - Armor`**, which
+  means this server keeps the *pre-3.2* armor/weapon vellum split rather than the single
+  consolidated "Enchanting Vellum" (38682) that retail 3.3.5 uses. So a fix that adds one
+  hardcoded vellum would be wrong for every weapon enchant.
+- **The target word picks the vellum.** Enchants are named `Enchant <Target> - <Effect>`;
+  targets observed in the dump are Chest, Boots, Bracer, Gloves, Shield, Cloak, Weapon and
+  2H Weapon. Only the two Weapon variants take the weapon vellum. Armor is the right default
+  for an unparsed name — a new armor slot is far likelier than a new weapon type.
+
+**Fix shape.** A named helper both `RowProfit` and the harvest use, rather than a
+`string.format` at the call site — the same mismatch returns for any craft whose row name is
+not its product name. Resolve vellums **by name** with several candidates tried in order, not
+by a hardcoded ID: the ID that the NPC price lookup needs can be recovered from the item cache,
+and where it cannot be, the auction price still answers. Enchant recipes should be harvested
+under the scroll's name so the Sell tab's margin filter and the craft-cost tooltip cover
+scrolls too.
+
+**Still unverified:** the *vendor* price of each vellum, which needs an enchanting supplier to
+have been opened so the NPC price learner records it. Until then the observed 2g40s stands as
+a cold-start constant.
 
 ---
 
@@ -372,6 +391,61 @@ columns for a real case. Recorded here only so the observation is not lost.
 
 ---
 
+---
+
+## 10. NEW — the price database on one realm is in a format this addon cannot read
+
+**Found while reading the owner's dump, 2026-08-19.** Not reported by the owner; surfaced by
+the data. Recorded because it may invalidate every price-dependent feature on the affected
+realm, which would include the enchanting work above.
+
+The supplied `AUCTIONATOR_PRICE_DATABASE` holds four realm keys, in **two different shapes**:
+
+| Realm key | Entries | Shape |
+|---|---:|---|
+| `Rexxar - Conquest of Azeroth_Alliance` | 53 | plain numbers |
+| `Rexxar - Conquest of Azeroth` | 16 | plain numbers |
+| `Bronzebeard - Warcraft Reborn_Alliance` | 178 tables + 3 plain | `{ mr, id, cc, sc, lastScan, H<day>, L<day> }` |
+| `Bronzebeard - Warcraft Reborn` | 347 tables | `{ mr, po, lastScan, H<day> }` |
+
+**This addon reads and writes plain numbers only.** Every access is
+`gAtr_ScanDB[name]` treated as a number — `AuctionatorHints.lua:287`, `AuctionatorScan.lua:668`,
+`AuctionatorFinderPriceDB.lua:165`, and the rest. Nothing anywhere reads `mr`, `id`, `cc`, `sc`
+or the `H<day>`/`L<day>` keys. So on the Bronzebeard realms `Atr_GetAuctionPrice` returns a
+**table**, every `tonumber()` on it yields nil, and every price-dependent feature — craft
+profit, the margin filters, tooltip price lines, the Bazaar's rates — silently reports nothing.
+
+**Where the foreign format came from is not established.** The rich per-day high/low shape is
+modern Auctionator's, not this 2.9.9 fork's, and the file supplied was named
+`Auctionator_Price_Database.lua` rather than this addon's own
+`Auctionator-Finder-Ascension.lua`. Three possibilities, and the fix differs for each:
+
+1. **The dump is simply another addon's file** and this fork's own saved variables are fine. In
+   that case nothing is wrong and this item closes. Most likely, and cheapest to check.
+2. **Another Auctionator has been run alongside this one**, which the addon's own `README.md`
+   warns against in its first lines — same globals, same saved variables. The 3 plain-number
+   entries sitting among 178 tables on `Bronzebeard - Warcraft Reborn_Alliance` are what that
+   would look like: this fork writing into a table another addon owns.
+3. **Ascension ships its own Auctionator variant** that wrote the file.
+
+**Check first, before writing any code:** ask which addons are installed, and get
+`Auctionator-Finder-Ascension.lua` specifically. If that file's price DB is plain numbers, this
+item closes as "the dump was a different addon's".
+
+**If it turns out to be real**, the fix is small but the decision is not: read `mr` when an
+entry is a table (a compatibility shim for a format we do not write), or detect the foreign
+shape and warn the user that two Auctionators are fighting over one saved variable. The second
+is more honest, since silently half-adopting another addon's schema invites the two to keep
+overwriting each other.
+
+**Note for item 8 (Advisor), if the format is ever adopted:** those `H<day>`/`L<day>` keys are
+a real dated high/low series — `Mithril Ore` carries `H5457/L5457` and `H5456/L5456`. That is
+exactly the price history `FRAMEWORK.md` §5 says does not exist here. It is not *our* data and
+this fork does not produce it, so §5 stands as written for this addon — but it shows the shape
+an Advisor would want, and is worth remembering when that item is scoped.
+
+---
+
 ## Suggested order
 
 1. **Item 7 (Ledger)** — unblocks 8 and 9, and is the biggest new surface.
@@ -396,13 +470,15 @@ What each open question gets out of it:
 | Question | Variable | What settles it |
 |---|---|---|
 | Are scrolls named `"Scroll of <enchant>"`? | `AUCTIONATOR_PRICE_DATABASE` | The DB is name-keyed, so the scroll names are literally the keys. Definitive. |
-| Which item is Enchanting Vellum here? | `AUCTIONATOR_NPC_PRICES` | itemID → price. An entry near the observed 2g40s is the candidate; confirms or replaces `ATR_ENCHANT_VELLUM_ID`. Needs an enchanting vendor to have been opened. |
+| Which item is the vellum here? | `AUCTIONATOR_NPC_PRICES` | itemID → price, so an entry near the observed 2g40s is the candidate. **Needs an enchanting vendor to have been opened** — the supplied dump was the price DB only, so this is still open. |
 | Was enchanting really absent from the harvest? | `AUCTIONATOR_CRAFT_RECIPES` | Confirms the item 2 diagnosis outright — pre-fix there should be no enchant entries at all. |
 | What yield was harvested for a multi-output recipe? | `AUCTIONATOR_CRAFT_RECIPES[id].made` | **Partial.** This field stores `GetTradeSkillNumMade`'s FIRST return only. A `made = 1` on a recipe known to make 3 proves `minMade` is 1 — but not whether `maxMade` is 3 (a one-line fix) or also 1 (needs the manual box). Only `/atrprofsort distilled` separates those two. |
 | Does a market price series exist? | `AUCTIONATOR_MEAN_PRICE_DATABASE` | Confirms `FRAMEWORK.md` §5 against real data — the sample arrays should carry no timestamps. |
 
-Worth taking one before the enchanting fix is loaded, since a pre-fix dump is the only clean
-evidence of what the harvest was missing.
+**Taken 2026-08-19 (price DB only).** It confirmed the scroll naming and corrected the vellum
+assumption — see item 2. It also surfaced a new issue, item 10 below, which the addon's own
+code did not predict. Still wanted: `AUCTIONATOR_NPC_PRICES` and `AUCTIONATOR_CRAFT_RECIPES`
+from the same account, which the supplied file did not include.
 
 ## Answered by the owner, 2026-08-19
 
