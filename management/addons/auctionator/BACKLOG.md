@@ -770,23 +770,121 @@ centred under the title, anchored to the title itself so it follows if that move
 - **Item 9 is now answerable**: `buy` rows carry what the loop intended, `won` rows what actually
   arrived. Nothing compares them yet — that comparison is item 9's own work.
 
-## 8. NEW — Advisor
+## 8. NEW — Analysis tab (was: Advisor)
 
-**Asked:** "Ore is up go mine, crafting profit good make this..."
+**Asked, originally:** "Ore is up go mine, crafting profit good make this..."
 
-**Deliberately underspecified, and that is fine for now.** Everything an advisor needs is
-already computed somewhere: `Atr_ProfSort_BuildOrder`
-(`AuctionatorFinderProfession.lua:436`) already ranks every recipe you can make by profit;
-the price DB has history; the Bazaar knows vendor stock. What is missing is (a) a *trend* —
-"ore is up" needs a price yesterday to compare against, and (b) a place to say it.
+**Rescoped with the owner 2026-08-19**, once items 7, 12 and 13 had settled what data exists.
+It becomes its own main tab called **Analysis**, and the owner's own idea leads it:
 
-**The gate on this one is data, not UI.** Price history exists per scan, but the addon does
-not currently keep a dated series per item that would let it say "up 30% this week". Confirm
-what `AUCTIONATOR_PRICE_DATABASE` actually retains before designing anything — if it keeps
-only a current price, the advisor cannot exist until it keeps a series, and the Ledger (item
-7) is the natural place for that plumbing to land.
+> "Track how many different named sellers are selling a given item. If in say two hours the user
+> scans again and the same seller has sold the item, give it some more weight as a fluid item.
+> Still holding the item is more stale rating. This has been something I have wanted to know for
+> some time to help understand better items to farm."
 
-Scope this properly with the owner once the Ledger is in. Do not start it before then.
+**That is the right instinct and nothing else in this addon can answer it.** Price says what an
+item is worth; it says nothing about whether anyone is buying. An item at 50g that moves once a
+week is worse to farm than one at 5g that moves twenty times a day, and no price database can
+tell those apart.
+
+### The data is already being collected
+
+- **`owner` is stored per listing** — `AtrScan:AddScanItem` keeps `sd["owner"]` today.
+- **`GetAuctionItemTimeLeft` is already called** — the Finder reads `rec.timeLeft` for its Time
+  column (1=Short, 2=Medium, 3=Long, 4=Very Long).
+
+So a listing can be fingerprinted as `owner + stackSize + buyout` and diffed across scans without
+any new capture. What is missing is retention and the arithmetic.
+
+### The refinement that makes it rigorous: sold vs expired
+
+A listing that vanishes has not necessarily sold — it may have expired or been cancelled, and
+counting those as sales would inflate every number on the tab. **`timeLeft` separates them.**
+
+A listing seen with **Long or Very Long** remaining that is gone at the next scan cannot have
+expired in that window, so it was bought or cancelled — overwhelmingly bought. One that vanishes
+from **Short** most likely expired. That single distinction turns "turnover" from a vague feel
+into a defensible sales estimate, and it costs nothing because the field is already read.
+
+### Candidate features
+
+**A — Turnover and liquidity (the core; nothing else in the addon does this)**
+
+| | Feature | Notes |
+|---|---|---|
+| A1 | **Seller depth** — distinct sellers per item | how contested the item is |
+| A2 | **Listing turnover** — fingerprint listings, diff across scans | vanished vs still held, the owner's original idea |
+| A3 | **Sold vs expired**, from `timeLeft` | what makes A2 an estimate rather than a guess |
+| A4 | **Seller concentration** | one seller holding 80% of supply is a different market from ten sharing it — they can move the price at will, and they will notice you |
+| A5 | **Median listing lifetime** | "time to sell" |
+| A6 | **Undercut churn** — how often the lowest price changes | high churn means active competition, and a thin margin |
+
+**B — What to farm and craft (the original ask)**
+
+| | Feature | Notes |
+|---|---|---|
+| B1 | **Farm score = estimated sales rate x unit price** | gold per unit time. **This is what "items to farm" actually means**, and A1–A3 are what make it computable |
+| B2 | **Recipe profit ranking** | already computed by `Atr_ProfSort_BuildOrder`; needs surfacing, not building |
+| B3 | **Reagent pressure** | which reagents your profitable recipes need, and whether those are liquid enough to buy |
+
+**C — Price trend (needs a dated series; see the note below)**
+
+| | Feature | Notes |
+|---|---|---|
+| C1 | **Now vs history** | the literal "ore is up" ask |
+| C2 | **Volatility band** | is 30g normal for this item or an outlier |
+| C3 | **Price/turnover quadrant** | dear and liquid is the sweet spot; cheap and stale is the trap |
+
+**D — From the Ledger (item 7 already records this)**
+
+| | Feature | Notes |
+|---|---|---|
+| D1 | **Realised margin per item** | what you actually paid against what you actually got — the only number here that is not an estimate |
+| D2 | **Sell-through rate** | of what you listed, how much sold versus expired |
+| D3 | **Capital tied up** | gold sitting in unsold listings, plus deposits burned |
+
+**E — Scope and plumbing**
+
+| | Feature | Notes |
+|---|---|---|
+| E1 | **Watchlist of items or categories** | the owner's suggestion, and it is also what bounds the storage problem |
+| E2 | **Scan freshness** | every number above decays; the tab must say how old its evidence is |
+| E3 | **Retention policy** | decided before the first row is written, as with the Ledger |
+
+### Honest limits, to design around rather than discover
+
+- **Disappeared is not sold.** `timeLeft` narrows it and never proves it. Everything in group A is
+  an estimate and the tab should say so — the same "absent, not zero" rule the Ledger follows.
+- **Only what you scan.** `getAll` is disabled on this server, so coverage is whatever you
+  searched. This is why E1 is not optional: the watchlist is the unit of analysis.
+- **Turnover is a FLOOR, not a count.** Anything posted and sold between two scans is invisible.
+  Two scans two hours apart cannot see a third listing that lived twenty minutes.
+- **Rates must be per elapsed time, not per scan.** Scan cadence is irregular and user-driven, so
+  "3 sold since last scan" means nothing without the interval.
+- **`owner` can come back nil** — `AtrSearch:ProcessBatch` already counts `numNilOwners` — so
+  seller-count arithmetic needs a rule for unknown owners rather than treating them as one seller.
+
+### Suggested v1
+
+**A1 + A2 + A3 over a watchlist, with B1 as the headline number.** That is the owner's own idea,
+made rigorous by the `timeLeft` distinction, answering the question they actually asked ("what is
+worth farming") — and it is self-contained: no price series, no new capture, only retention and
+arithmetic over data the scan already produces.
+
+C needs the dated series and can follow. D is nearly free whenever the tab exists, since the
+Ledger already holds it.
+
+### On the price series (C), for when it is wanted
+
+The machinery already exists and is tested: `Atr_AddHistoricalPrice`, `ToTightTime` /
+`FromTightTime`, and `Atr_Condense_History` already keep a dated series — they are simply pointed
+at **your own postings** rather than at the market. Feeding them market prices is a writer and a
+retention rule, not a new subsystem.
+
+**The naive version does not fit**, though: 5771 names x one sample a day x 30 days is ~170,000
+entries, several megabytes, immediately after item 13 clawed back 384 KB. A watchlist of 20–50
+items at a daily close for 90 days is ~4,500 entries and about 100 KB. Another reason E1 comes
+first.
 
 ---
 
