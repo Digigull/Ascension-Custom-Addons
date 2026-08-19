@@ -87,33 +87,42 @@ end
 
 -----------------------------------------
 
-function Atr_FindScanAndInit (itemName)
+-- `scanKey` is what gAllScans is keyed by; `itemName` is the item's real name
+-- and is what the scan reports to the UI and writes to the price database.
+-- They differ only for a same-name VARIANT bucket (BACKLOG item 12 part 1),
+-- where the key carries the quality and the name stays the item's own. Keeping
+-- them apart is what stops a bucket split from inventing database rows -- the
+-- old trailing-space hack made its second bucket by making a second NAME, which
+-- is how "Some Item " keys ended up on disk.
+function Atr_FindScanAndInit (scanKey, itemName)
 
-	return Atr_FindScan (itemName, true);
+	return Atr_FindScan (scanKey, true, itemName);
 end
 
 -----------------------------------------
 
-function Atr_FindScan (itemName, init)
+function Atr_FindScan (scanKey, init, itemName)
 
-	if (itemName == nil or itemName == "") then
-		itemName = "nil";
+	if (scanKey == nil or scanKey == "") then
+		scanKey = "nil";
 	end
 
-	local itemNameLC = string.lower (itemName);
+	itemName = itemName or scanKey;
 
-	if (gAllScans[itemNameLC] == nil) then
+	local scanKeyLC = string.lower (scanKey);
+
+	if (gAllScans[scanKeyLC] == nil) then
 
 		local scn = {};
 		setmetatable (scn, AtrScan);
 		scn:Init (itemName);
 
-		gAllScans[itemNameLC] = scn;
+		gAllScans[scanKeyLC] = scn;
 	elseif (init) then
-		gAllScans[itemNameLC]:Init (itemName);
+		gAllScans[scanKeyLC]:Init (itemName);
 	end
 	
-	return gAllScans[itemNameLC];
+	return gAllScans[scanKeyLC];
 end
 
 -----------------------------------------
@@ -134,8 +143,11 @@ end
 
 function AtrScan:Init (itemName)
 	self.itemName			= itemName;
+	self.variantQuality		= nil;		-- see the quality split in AtrSearch:ProcessBatch
 	self.itemLink			= nil;
-	self.texture            = nil;
+	self.texture            = nil;		-- vestigial: the texture-based variant split
+										-- that set it is gone (BACKLOG item 12
+										-- part 1) and nothing reads it
 	self.scanData			= {};
 	self.sortedData			= {};
 	self.whenScanned		= 0;
@@ -335,21 +347,54 @@ function AtrSearch:AnalyzeResultsPage()
 
 			if (exactMatch or not self.exact) then
 
-				if (self.items[name] == nil) then
-					self.items[name] = Atr_FindScanAndInit (name);
-                    self.items[name].texture = texture
-				end
-                if self.items[name].texture and texture ~= self.items[name].texture then
-                    name = name .. " "
-                    if (self.items[name] == nil) then
-                        self.items[name] = Atr_FindScanAndInit (name);
-                        self.items[name].texture = texture
-                    end
-                end
-                
-				local curpage = (tonumber(self.current_page)-1);
+				-- SAME-NAME VARIANTS (BACKLOG item 12 part 1).  This server ships
+				-- genuinely different items under one name -- a rare and an epic
+				-- Bloodforged Imperial Jewel -- and one bucket per name averages
+				-- them into a single misleading row.
+				--
+				-- Split on QUALITY.  It comes free from GetAuctionItemInfo above
+				-- and it separates the reported case.  Deliberately NOT on level:
+				-- Ascension scales gear per instance, so listings of one item
+				-- carry many required levels and a level split would shatter every
+				-- gear row into dozens of buckets.
+				--
+				-- This replaces a TEXTURE comparison that never fired where it
+				-- mattered -- variants share an icon.  Measured on a real database
+				-- 2026-08-19: 3 splits in 5267 entries, all recipes or a container,
+				-- none on gear.
+				--
+				-- Only the lookup KEY carries the quality.  scn.itemName stays the
+				-- item's real name, so the UI still shows a name and the finaliser
+				-- still writes one database row per name (two buckets both write
+				-- it, last one wins -- no worse than the single merged number this
+				-- wrote before, and the shape part 3 extends).
+				local baseName = name;
+				local scn      = self.items[baseName];
 
-				local scn = self.items[name];
+				if (scn == nil) then
+					scn = Atr_FindScanAndInit (baseName, baseName);
+					self.items[baseName] = scn;
+				end
+
+				-- adopt the first quality this search sees as the primary bucket's;
+				-- Init clears it, so a scan reused from an earlier search cannot
+				-- leak a stale value in here
+				if (scn.variantQuality == nil) then
+					scn.variantQuality = quality;
+				end
+
+				if (quality ~= nil and quality ~= scn.variantQuality) then
+					local vkey = baseName .. "#q" .. tostring (quality);
+					local vscn = self.items[vkey];
+					if (vscn == nil) then
+						vscn = Atr_FindScanAndInit (vkey, baseName);
+						vscn.variantQuality = quality;
+						self.items[vkey] = vscn;
+					end
+					scn = vscn;
+				end
+
+				local curpage = (tonumber(self.current_page)-1);
 
 				scn:AddScanItem (name, count, buyoutPrice, owner, 1, curpage);
 				

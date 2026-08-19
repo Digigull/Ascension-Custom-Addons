@@ -617,6 +617,57 @@ end
 
 -----------------------------------------
 
+-- Retire the old same-name-variant hack's rows (BACKLOG item 12 part 1).
+--
+-- The scan used to open a second bucket for a variant by appending a SPACE to
+-- the item's name, and the bucket key was also the database key -- so
+-- "Some Item " rows ended up on disk. Nothing ever reads them: every lookup
+-- asks for the real name, so a space-suffixed row answers nobody.
+--
+-- The split is now keyed separately from the database (AtrScan.baseName), so
+-- no new ones can appear. These clear out the ones already written.
+--
+-- Where the real name has no row, the value is ADOPTED rather than dropped: it
+-- is a real observed price for a real item, and the alternative is that item
+-- having no price at all. Where both exist the real name wins untouched -- it
+-- is the one that has been answering lookups all along.
+--
+-- Measured on the owner's database 2026-08-19: 3 rows in 5267, none with a
+-- real-name twin, so this adopts three prices and invents nothing. Cheap enough
+-- to just run at load rather than carry a migration flag; once the rows are
+-- gone it is one pass over the keys that finds nothing.
+function Atr_RetireVariantSpaceKeys ()
+
+	local dbs = { gAtr_ScanDB, gAtr_MeanDB };
+
+	local d;
+	for d = 1, #dbs do
+		local db = dbs[d];
+		if (type (db) == "table") then
+
+			-- collect first: adding keys during a pairs() traversal is undefined
+			local stale = {};
+			for k in pairs (db) do
+				if (type (k) == "string" and k:match ("%s$")) then
+					tinsert (stale, k);
+				end
+			end
+
+			local i;
+			for i = 1, #stale do
+				local k    = stale[i];
+				local real = (k:gsub ("%s+$", ""));
+				if (real ~= "" and db[real] == nil) then
+					db[real] = db[k];
+				end
+				db[k] = nil;
+			end
+		end
+	end
+end
+
+-----------------------------------------
+
 function Atr_InitScanDB()
 
 	local realm_Faction = GetRealmName().."_"..UnitFactionGroup ("player");
@@ -651,6 +702,8 @@ function Atr_InitScanDB()
 
 	gAtr_ScanDB = AUCTIONATOR_PRICE_DATABASE[realm_Faction];
     gAtr_MeanDB = AUCTIONATOR_MEAN_PRICE_DATABASE[realm_Faction];
+
+	Atr_RetireVariantSpaceKeys ();
 
 end
 
