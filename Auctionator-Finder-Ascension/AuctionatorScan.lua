@@ -739,11 +739,7 @@ function AtrSearch:Finish()
 				if (type (gAtr_MeanDB) == "table") then
 					local medsample = Atr_ScanListingsMedian (scn) or newprice;
 
-					local m = gAtr_MeanDB[scn.itemName];
-					if (type (m) ~= "table") then m = {}; gAtr_MeanDB[scn.itemName] = m; end
-					if (#m >= 15) then tremove (m, math.random (1, #m)); end
-					tinsert (m, medsample);
-					table.sort (m);
+					Atr_MeanAppend (gAtr_MeanDB, scn.itemName, medsample);		-- item 13: one-sample shape
 				end
 			end
 		end
@@ -1353,10 +1349,12 @@ function Atr_FullScanAnalyze()
 			
 			if (name ~= nil and buyoutPrice ~= nil) then
             
-                if gAtr_MeanDB[name] == nil then
-                    gAtr_MeanDB[name] = {};
-                end
-            	
+                -- Superseded (item 13): this used to pre-create an EMPTY table for
+                -- every name it saw, which is what made 64% of this database a
+                -- table wrapped around a single number.  Atr_MeanAppend now
+                -- creates the right shape on the first real sample instead, so
+                -- there is nothing to pre-create.
+
                 qualities[name] = quality;
 			
 				local itemPrice = math.floor (buyoutPrice / count);
@@ -1420,18 +1418,13 @@ function Atr_FullScanAnalyze()
                 local medsample = Atr_WeightedMedianPrice (alllistings[name] or {});
                 if (medsample <= 0) then medsample = newprice; end
 
-                if #gAtr_MeanDB[name] < 15 then
-                    table.insert(gAtr_MeanDB[name], medsample)
-                else
-                    table.remove(gAtr_MeanDB[name], math.random(1, #gAtr_MeanDB[name]))
-                    table.insert(gAtr_MeanDB[name], medsample)
-                end
+                Atr_MeanAppend (gAtr_MeanDB, name, medsample)        -- item 13: one-sample shape
 			end
 		end
 	end
     
     for name in pairs(gAtr_MeanDB) do
-        table.sort(gAtr_MeanDB[name])
+        if (type (gAtr_MeanDB[name]) == "table") then table.sort(gAtr_MeanDB[name]) end
     end
 
 	-- Scan rewrote the price DB: drop the suffix-variant estimate cache so base

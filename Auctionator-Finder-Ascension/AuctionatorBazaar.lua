@@ -3339,11 +3339,7 @@ function Atr_Bz_FeedPriceDB (itemID, copper)
 	else gAtr_ScanDB[name] = price; end
 
 	if (type (gAtr_MeanDB) == "table") then
-		local m = gAtr_MeanDB[name];
-		if (type (m) ~= "table") then m = {}; gAtr_MeanDB[name] = m; end
-		if (#m >= 15) then table.remove (m, math.random (1, #m)); end
-		tinsert (m, price);
-		table.sort (m);
+		Atr_MeanAppend (gAtr_MeanDB, name, price);		-- item 13: one-sample shape
 	end
 
 	return true;

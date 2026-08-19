@@ -1367,7 +1367,7 @@ the first two without needing to tell them apart up front.
 
 ---
 
-## 13. NEW — a third of the saved-variables file is redundant
+## 13. NEW — a third of the saved-variables file is redundant — DONE
 
 **Measured 2026-08-19** from the first real dump: `Auctionator-Finder-Ascension.lua`,
 **1,144,785 bytes**. Not a bug and not urgent — the client loads it fine — but the vendor-price
@@ -1435,9 +1435,55 @@ design has to be written to expect it.
 proportionate to what they hold. `AUCTIONATOR_SELL_IGNORE` and `AUCTIONATOR_NPC_PRICES` are
 empty — the second one is item 2's open check, not a size problem.
 
-**Worth doing when?** Neither trim changes behaviour, so this ranks below anything the user can
-see. It becomes worth doing if the file gets big enough to slow logout, or as tidy-up alongside
-item 12 part 3, which has to touch both databases' value shapes anyway.
+### Both trims shipped 2026-08-19, together with item 12 part 3b's decision
+
+**Trim 1 — the seed echo.** `Atr_VendorSeed_DropEchoes` runs at `PLAYER_LOGOUT` and
+`Atr_VendorSeed_Merge` puts them back at `PLAYER_LOGIN`. No new machinery was needed: the merge
+was already idempotent and already documented as safe to run every login, so this is simply its
+inverse.
+
+**The rule is "only what the seed will put back identically", checked against the seed's own value
+rather than trusted from the flag.** A seeded entry that has since been confirmed by a real sale
+is a field-tested fact, not an echo — `diff-vendor-seed.lua` reports those separately for exactly
+this reason — so an entry is dropped only when the shipped seed holds the same price and nothing
+has been learned on top. That makes the round trip provably lossless rather than probably.
+
+**Trim 2 — the one-sample shape.** A mean row holding a single sample is now a bare number and
+only becomes a table on the second. `Atr_MeanAppend` creates the right shape on first write,
+`Atr_MeanMedian` reads either, and `Atr_CompactMeanDB` folds what is already on disk at load.
+The full scan's habit of **pre-creating an empty table for every name it saw** was the source of
+most of them, and is gone.
+
+**Measured on the owner's real database:**
+
+| | before | after |
+|---|---:|---:|
+| vendor `obs` entries | 1437 | **99** |
+| vendor `base` entries | 518 | **78** |
+| mean rows that are tables | 5523 | **1967** |
+
+1778 vendor entries dropped and 3556 mean rows folded — about **384 KB of a 1.14 MB file, a third
+of it**, and the login merge restored `obs` and `base` to exactly 1437 and 518 with **zero prices
+changed**.
+
+**Verified** by replaying both round trips over the real saved variables: every median identical
+across compaction, a folded row promoting correctly on its next sample, and the vendor tables
+restored entry-for-entry and price-for-price by the merge as the addon actually runs it. **Not
+verified in game.**
+
+### Item 12 part 3b: the mean database is deliberately NOT variant-aware
+
+Part 3 left this as the remaining half, on the grounds that a variant-aware `Auction` line and a
+name-level `Auction median` can disagree. **The data says not to do it.**
+
+This database holds **1.97 samples per name**: 64% have exactly one and only 8.7% have five or
+more. Splitting that by variant leaves most variants with a single sample — a "median" of one
+number — so it buys no statistical accuracy at all, while turning one value into three shapes
+(number, sample array, variant map) and touching every reader again.
+
+The mild inconsistency between an exact `Auction` line and a name-level `Auction median` is the
+cheaper of the two wrongs. Recorded in `Atr_GetMeanPrice`'s own comment as well, so the next
+person to have this idea finds the measurement before the code.
 
 ---
 
