@@ -332,9 +332,13 @@ being testable — functions deliberately kept global, `addonTable` guarded so f
 the client, `CreateFrame` existence checks — and is the one addon that gets none of the
 benefit. Every change here is currently verified by reading plus an in-game test.
 
-Given the backlog is full of pure arithmetic — craft cost, yield division, profit, ledger
-totals — a small harness is the highest-leverage non-feature work available. Not proposed as
-part of the backlog; recorded because both the hooks and the precedent are already there.
+**This is a note, not a proposal.** The owner's standing preference is to ship a reasoned change
+and verify it in play, with tooling as a fallback rather than a frontline
+(`management/docs/CLAUDE.md`, Environment) — so this gap is not something to close pre-emptively,
+and a first run that fails is the accepted cost of moving quickly. It is recorded because when
+something here *does* need pinning down — a fix that failed once, or arithmetic that genuinely
+resists reasoning — both the hooks and the local precedent already exist, so the cheap route is
+a few assertions under `management/addons/auctionator/tools/`, not a new in-game command.
 
 ---
 

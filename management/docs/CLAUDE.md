@@ -49,11 +49,26 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   ```
 
   All three pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
-  put new tests there. Several source files are deliberately shaped to be testable this way —
-  helpers kept global, `rawget(_G, "CreateFrame")` guards — so **preserve that** and extend the
-  pattern rather than adding an in-game debug command for something arithmetic.
+  anything new belongs there, not in an addon folder. Several source files are deliberately
+  shaped to be testable this way — helpers kept global, `rawget(_G, "CreateFrame")` guards — so
+  **do not break that shape** when editing them. That is a preservation rule, not an
+  instruction to grow the tooling; see the next bullet.
 - The client itself cannot be run or screenshotted here. Beyond the checks above, verification
   is parsing and reading. Say plainly when a change is only reasoned, not verified.
+- **Ship the change; verify it later. Tooling is a fallback, not a frontline** (owner's standing
+  preference, 2026-08). A reasoned change goes out as it is. **A fix that fails on first run is
+  an accepted cost** — cheaper, in both wall-clock and context, than the apparatus that would
+  have caught it. Concretely:
+  - **Run an existing test when it covers what you touched.** A second of runtime is not what
+    is being discouraged.
+  - **Do not build new harnesses, stubs or client emulation by default**, and do not grow a
+    mock toward covering more of the WoW API. Write a new test only when the behaviour genuinely
+    cannot be reasoned about, or when something has already failed once and you need to pin it
+    so it stays fixed.
+  - **An in-game debug command is the last resort, not the first.** Add one only when no
+    offline route can answer the question, and say at the call site why that is.
+  - Match verification effort to the size of the change. A fixed ritual per edit — dozens of
+    checks for a small update — is the failure mode to avoid, in both directions.
 - **Do not re-raise the owner's parked in-game checks.** Where a doc lists something as
   "not verified in game", that is a record, not a request. The owner has the addons running and
   has decided (2026-08) that they behave correctly; anything that misbehaves will be reported
