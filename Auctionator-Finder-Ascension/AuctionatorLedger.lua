@@ -279,3 +279,268 @@ if (SlashCmdList) then
 		end
 	end
 end
+
+-- THE MAIL SIDE (stage 2) -------------------------------------------------
+--
+-- Sale, expiry, cancellation and the delivery of things you bought all arrive
+-- as mail, so this is where the ledger learns what came BACK.
+--
+-- DESIGNED AROUND A MASS-OPENER.  The owner opens mail with Postal's "Open All"
+-- (2026-08-19), and that rules out the obvious implementation:
+--
+--   * NEVER key on the inbox index.  Taking a mail re-indexes everything after
+--     it, so an index read one frame names a different mail the next, and 3.3.5
+--     gives a mail no stable id at all.
+--   * Identity therefore comes from CONTENT -- sender, subject, money, the
+--     attachment and its count -- and duplicates are real: one Open All in the
+--     owner's log shows three identical "Auction won: Linen Cloth" mails from
+--     one seller.  So identity alone cannot count; it has to be counted as a
+--     MULTISET.
+--   * MAIL_INBOX_UPDATE arrives in storms while Postal works, the same way
+--     MERCHANT_UPDATE and TRADE_SKILL_UPDATE do, so the sweep is debounced the
+--     way AuctionatorFinderMerchant.lua debounces its harvest.
+--   * A mail can vanish between being seen and being read, so every read is
+--     tolerant and a missing one is a no-op rather than a half-written row.
+--
+-- HOW COUNTING WORKS.  Each sweep builds the multiset of auction mails currently
+-- in the inbox.  A key seen MORE times than last sweep gained that many mails,
+-- and those become rows; a key seen fewer times lost mails to Postal, which is
+-- not an event at all.  The previous multiset is persisted, because an unread
+-- mail is still there after a relog and must not be counted twice.
+--
+-- It is kept PER CHARACTER inside the account-wide ledger, because an inbox is.
+--
+-- What this cannot see: a mail that arrives and is taken between two sweeps.
+-- The first sweep runs on the first MAIL_INBOX_UPDATE after the mailbox opens,
+-- before Postal's own timer starts taking, so the realistic gap is a mail that
+-- lands while you are standing at the box.
+
+local function Atr_Ledger_SubjectPattern (fmt, fallback)
+
+	local f = (type (fmt) == "string" and fmt ~= "") and fmt or fallback;
+	if (type (f) ~= "string" or f == "") then return nil; end
+
+	-- escape every magic character, then re-open the single %s the format carries
+	local pat = f:gsub ("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1");
+	pat = pat:gsub ("%%%%s", "(.+)");
+
+	return "^"..pat;
+end
+
+-- Read the client's own subject formats, exactly as the recipe filter reads
+-- ITEM_SPELL_KNOWN: a localised or re-worded client still matches, and the
+-- English literal is only the last resort.
+local gLedgerSubjects = nil;
+
+local function Atr_Ledger_Subjects ()
+
+	if (gLedgerSubjects) then return gLedgerSubjects; end
+
+	gLedgerSubjects = {
+		-- src        pattern built from the client global
+		{ src = "won",    pat = Atr_Ledger_SubjectPattern (_G["AUCTION_WON_MAIL_SUBJECT"],     "Auction won: %s") },
+		{ src = "sale",   pat = Atr_Ledger_SubjectPattern (_G["AUCTION_SOLD_MAIL_SUBJECT"],    "Auction successful: %s") },
+		{ src = "expire", pat = Atr_Ledger_SubjectPattern (_G["AUCTION_EXPIRED_MAIL_SUBJECT"], "Auction expired: %s") },
+		{ src = "cancel", pat = Atr_Ledger_SubjectPattern (_G["AUCTION_REMOVED_MAIL_SUBJECT"], "Auction cancelled: %s") },
+	};
+
+	return gLedgerSubjects;
+end
+
+-- Which kind of auction mail this is, and the item name in its subject.
+-- Returns nil for anything that is not auction mail -- including "Outbid on %s",
+-- which returns your own bid and is not a trade.
+function Atr_Ledger_ClassifySubject (subject)
+
+	if (type (subject) ~= "string" or subject == "") then return nil; end
+
+	local subs = Atr_Ledger_Subjects ();
+	local i;
+	for i = 1, #subs do
+		local e = subs[i];
+		if (e.pat) then
+			local name = subject:match (e.pat);
+			if (name) then return e.src, name; end
+		end
+	end
+
+	return nil;
+end
+
+local function Atr_Ledger_SeenDB ()
+
+	local db  = Atr_Ledger_DB ();
+	local who = (UnitName and UnitName ("player")) or "?";
+
+	if (type (db.seen) ~= "table") then db.seen = {}; end
+	if (type (db.seen[who]) ~= "table") then db.seen[who] = {}; end
+
+	return db.seen[who];
+end
+
+-- The multiset key. Money and the attachment's count are in it because they are
+-- what distinguishes two otherwise identical sales; the mail's own index and its
+-- remaining days deliberately are not, since both move on their own.
+local function Atr_Ledger_MailKey (sender, subject, money, itemName, itemCount)
+	return table.concat ({ tostring (sender or "?"), tostring (subject or "?"),
+						   tostring (money or 0), tostring (itemName or ""),
+						   tostring (itemCount or 0) }, "\1");
+end
+
+-- Walk the inbox once and turn anything newly arrived into rows.
+-- Returns the number of rows added.
+function Atr_Ledger_SweepInbox ()
+
+	if (type (GetInboxNumItems) ~= "function" or type (GetInboxHeaderInfo) ~= "function") then return 0; end
+
+	local n = GetInboxNumItems () or 0;
+
+	local cur, meta = {}, {};
+
+	local i;
+	for i = 1, n do
+
+		local ok, _, _, sender, subject, money, _, _, itemCount = pcall (GetInboxHeaderInfo, i);
+
+		if (ok and subject) then
+
+			local src, subjectItem = Atr_Ledger_ClassifySubject (subject);
+
+			if (src) then
+				-- The invoice is the exact record where one exists: it carries the
+				-- bid, the buyout, the deposit and the auction house's cut, which
+				-- the header's lump of money cannot be taken apart into.
+				local iType, iName, iPlayer, iBid, iBuyout, iDeposit, iCut;
+				if (type (GetInboxInvoiceInfo) == "function") then
+					local okI, a, b, c, d, e, f, g = pcall (GetInboxInvoiceInfo, i);
+					if (okI) then iType, iName, iPlayer, iBid, iBuyout, iDeposit, iCut = a, b, c, d, e, f, g; end
+				end
+
+				local link, aName, aCount;
+				if (type (GetInboxItemLink) == "function") then
+					local okL, l = pcall (GetInboxItemLink, i, 1);
+					if (okL) then link = l; end
+				end
+				if (type (GetInboxItem) == "function") then
+					local okA, nm, _, ct = pcall (GetInboxItem, i, 1);
+					if (okA) then aName, aCount = nm, ct; end
+				end
+
+				local key = Atr_Ledger_MailKey (sender, subject, money, aName or subjectItem, aCount or itemCount);
+
+				cur[key] = (cur[key] or 0) + 1;
+
+				if (meta[key] == nil) then
+					meta[key] = {
+						src		= src,
+						name	= aName or iName or subjectItem,
+						link	= link,
+						qty		= tonumber (aCount) or nil,
+						money	= tonumber (money) or 0,
+						who2	= iPlayer or sender,		-- the other party
+						bid		= tonumber (iBid) or nil,
+						buyout	= tonumber (iBuyout) or nil,
+						deposit	= tonumber (iDeposit) or nil,
+						cut		= tonumber (iCut) or nil,
+					};
+				end
+			end
+		end
+	end
+
+	-- Diff against the last sweep.  More of a key than last time means that many
+	-- new mails; fewer means Postal took some, which is not an event.
+	local seen  = Atr_Ledger_SeenDB ();
+	local added = 0;
+
+	local key, c;
+	for key, c in pairs (cur) do
+		local prev = tonumber (seen[key]) or 0;
+		if (c > prev) then
+			local m = meta[key];
+			local k;
+			for k = 1, (c - prev) do
+				Atr_Ledger_Add ({
+					src		= m.src,
+					name	= m.name,
+					link	= m.link,
+					qty		= m.qty,
+					-- A sale's money is the NET already: the header's money is what
+					-- actually lands in your bags. bid/buyout/deposit/cut keep the
+					-- parts so a later report does not have to guess at them.
+					unit	= (m.qty and m.qty > 0 and m.money > 0) and math.floor (m.money / m.qty) or nil,
+					money	= m.money,
+					bid		= m.bid,
+					buyout	= m.buyout,
+					deposit	= m.deposit,
+					cut		= m.cut,
+					party	= m.who2,
+				});
+				added = added + 1;
+			end
+		end
+	end
+
+	-- Replace wholesale: keys that vanished were taken, and must be countable
+	-- again if the same mail ever reappears.
+	local fresh = {};
+	for key, c in pairs (cur) do fresh[key] = c; end
+
+	local db  = Atr_Ledger_DB ();
+	local me  = (UnitName and UnitName ("player")) or "?";
+	db.seen[me] = fresh;
+
+	return added;
+end
+
+-- Own event frame, guarded so the file still loads under a bare interpreter.
+if (type (CreateFrame) == "function") then
+
+	local lf = CreateFrame ("Frame", "Atr_Ledger_MailWatch", UIParent);
+
+	lf:RegisterEvent ("MAIL_SHOW");
+	lf:RegisterEvent ("MAIL_INBOX_UPDATE");
+	lf:RegisterEvent ("MAIL_CLOSED");
+
+	local DELAY    = 0.3;      -- quiet before re-sweeping, as the merchant scan does
+	local elapsed  = 0;
+	local sweptYet = false;    -- the first update after opening is swept at once
+
+	lf:Hide ();                -- OnUpdate only ticks while shown
+
+	lf:SetScript ("OnEvent", function (self, event)
+
+		if (event == "MAIL_SHOW") then
+			sweptYet = false;
+			return;
+		end
+
+		if (event == "MAIL_CLOSED") then
+			self:Hide (); elapsed = 0; sweptYet = false;
+			return;
+		end
+
+		-- MAIL_INBOX_UPDATE.  Sweep the FIRST one immediately: Postal starts
+		-- taking on its own timer and a debounced first pass could miss whatever
+		-- it removes in the meantime.  Everything after that is debounced,
+		-- because the burst while it works is exactly the storm the merchant
+		-- scan's comment describes.
+		if (not sweptYet) then
+			sweptYet = true;
+			pcall (Atr_Ledger_SweepInbox);
+			return;
+		end
+
+		elapsed = 0;
+		self:Show ();
+	end);
+
+	lf:SetScript ("OnUpdate", function (self, dt)
+		elapsed = elapsed + (dt or 0);
+		if (elapsed >= DELAY) then
+			elapsed = 0;
+			self:Hide ();
+			pcall (Atr_Ledger_SweepInbox);
+		end
+	end);
+end
