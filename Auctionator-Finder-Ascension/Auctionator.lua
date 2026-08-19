@@ -2883,6 +2883,15 @@ function Atr_CreateAuction_OnClick ()
 	
 	Atr_Memorize_Stacking_If();
 
+	-- LEDGER (BACKLOG item 7): the deposit is only knowable while the item is
+	-- still in the sell slot -- CalculateAuctionDeposit reads that slot -- but
+	-- whether the auctions were really created is only known when the multi-sell
+	-- run reports its last stack.  So note it now and commit the row there; an
+	-- intent that never gets confirmed is simply overwritten by the next one.
+	if (type (Atr_Ledger_NotePostIntent) == "function") then
+		pcall (Atr_Ledger_NotePostIntent, duration);
+	end
+
 	StartAuction (stackStartingPrice, stackBuyoutPrice, duration, gJustPosted_StackSize, gJustPosted_NumStacks);
 
 	-- After creating auction(s), refresh the inventory.  The controls used to be
@@ -2927,6 +2936,13 @@ function Atr_OnAuctionMultiSellUpdate(...)
 	if (stacksSoFar == stacksTotal) then
 		Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, stacksTotal);
 		Atr_AddHistoricalPrice (gJustPosted_ItemName, gJustPosted_BuyoutPrice / gJustPosted_StackSize, gJustPosted_StackSize, gJustPosted_ItemLink);
+
+		-- LEDGER: the run finished, so this is what actually went up
+		if (type (Atr_Ledger_RecordPost) == "function") then
+			pcall (Atr_Ledger_RecordPost, gJustPosted_ItemName, gJustPosted_ItemLink,
+				   gJustPosted_StackSize, gJustPosted_BuyoutPrice, stacksTotal);
+		end
+
 		gAtr_SellTriggeredByAuctionator = false;     -- reset
 	end
 	
@@ -2946,6 +2962,13 @@ function Atr_OnAuctionMultiSellFailure()
 
 	Atr_LogMsg (gJustPosted_ItemLink, gJustPosted_StackSize, gJustPosted_BuyoutPrice, gMS_stacksPrev + 1);
 	Atr_AddHistoricalPrice (gJustPosted_ItemName, gJustPosted_BuyoutPrice / gJustPosted_StackSize, gJustPosted_StackSize, gJustPosted_ItemLink);
+
+	-- LEDGER: the run stopped early, so record the stacks that did go up rather
+	-- than the number that was asked for
+	if (type (Atr_Ledger_RecordPost) == "function") then
+		pcall (Atr_Ledger_RecordPost, gJustPosted_ItemName, gJustPosted_ItemLink,
+			   gJustPosted_StackSize, gJustPosted_BuyoutPrice, gMS_stacksPrev + 1);
+	end
 
 	gAtr_SellTriggeredByAuctionator = false;     -- reset
 	

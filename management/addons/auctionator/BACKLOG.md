@@ -552,7 +552,7 @@ recipes, not just stock ones, and `GetAuctionItemClasses` index 9 really is Reci
 
 ---
 
-## 7. NEW — Ledger: record all purchases and sales
+## 7. NEW — Ledger: record all purchases and sales — **stage 1 shipped**
 
 **Asked:** a new ledger recording all purchases and sales.
 
@@ -631,6 +631,58 @@ Two things that follow, and both are cheap now and expensive later:
   one that says "profit" is not.
 
 This item is the prerequisite for items 8 and 9. Build it first.
+
+### Stage 1 shipped 2026-08-19 — the record and two capture points
+
+`AuctionatorLedger.lua`, new file, plus `AUCTIONATOR_LEDGER` account-wide in the `.toc`.
+
+**Deliberately shipped before the UI**, because the two are not equally urgent: a row written
+under the wrong schema cannot be back-filled, and a row *not written at all* is simply gone. Rows
+accumulate from the moment this loads, so by the time the tab exists there is something in it.
+
+**Captured now:**
+
+| `src` | Where from | What it means |
+|---|---|---|
+| `buy` | the buy loop, at `PlaceAuctionBid` (`AuctionatorBuy.lua`) | the INTENDED purchase — the only moment the listing is addressable as `("list", i)` |
+| `post` | multi-sell confirmation, both the success and the early-stop path (`Auctionator.lua`) | what actually went up, with the deposit |
+
+**The post capture has to be two halves**, and this is the part that would be got wrong on a
+second attempt: `CalculateAuctionDeposit` reads the *sell slot*, so the deposit is only knowable
+at click time — but whether the auctions were really created is only known when the multi-sell run
+reports its last stack. So `Atr_Ledger_NotePostIntent` notes the deposit at the click and
+`Atr_Ledger_RecordPost` commits the row at the confirmation. An intent that never gets confirmed is
+overwritten by the next one, so a failed post leaves no row.
+
+**Row shape**, following the four rules this item settled before any code:
+`t` (raw `time()`), `src`, `who`, `name`/`link`/`id`, `qty`, `unit` (copper, per item — never a
+total), plus `deposit`/`stacks`/`stackSize` on a post. The delivered side stays **nil** on a buy:
+what arrives is item 9's question and a copy of the intended value would be a lie that looks like
+data.
+
+**Cap: 2000 rows, oldest first, and it says so once** in chat when it starts pruning. Not the mean
+database's random eviction. Roughly three months of heavy trading, ~240 KB serialised — real but
+bounded, and small beside what item 13 measures in the same file.
+
+**Reading it before the tab exists:** `/atrledger` prints totals and the last rows, `/atrledger 40`
+more of them, `/atrledger clear` empties it.
+
+**Verified** by `luac5.1 -p` and by an offline smoke test of the row shape under stubs — it checks
+that the unit price is derived from the stack total rather than the price sought, that the item ID
+resolves, that the delivered side stays nil, that a post's deposit is multiplied by the stacks
+that actually posted **and cannot leak into a later post that noted no intent**, and that the cap
+drops the oldest row while keeping the newest and warns exactly once. **Not verified in game.**
+
+### Still to come
+
+- **Stage 2 — the mail side.** Sale, expiry and cancellation all arrive as mail, which needs the
+  mailbox (`MAIL_INBOX_UPDATE`, `GetInboxHeaderInfo`) and its own subsystem. Until it lands the
+  ledger records what you spent and listed, never what came back — so it must not be presented as
+  profit. That is exactly the "absent, not zero" rule this item's scope note sets.
+- **Stage 3 — the tab.** Rename the existing Ledger sub-tab to **History** (it shows price
+  history, and `Atr_ShowHistory` already sets its column heading to `History`, so the label was
+  the odd one out), freeing the name, then build the Ledger view. `FRAMEWORK.md` §8 has the
+  sub-tab recipe and the 15-site main-tab census.
 
 ---
 
