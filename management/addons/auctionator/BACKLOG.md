@@ -552,7 +552,7 @@ recipes, not just stock ones, and `GetAuctionItemClasses` index 9 really is Reci
 
 ---
 
-## 7. NEW — Ledger: record all purchases and sales — **stage 1 shipped**
+## 7. NEW — Ledger: record all purchases and sales — **stages 1 and 2 shipped**
 
 **Asked:** a new ledger recording all purchases and sales.
 
@@ -675,33 +675,49 @@ drops the oldest row while keeping the newest and warns exactly once. **Not veri
 
 ### Still to come
 
-- **Stage 2 — the mail side.** Sale, expiry and cancellation all arrive as mail, which needs the
-  mailbox (`MAIL_INBOX_UPDATE`, `GetInboxHeaderInfo`) and its own subsystem. Until it lands the
-  ledger records what you spent and listed, never what came back — so it must not be presented as
-  profit. That is exactly the "absent, not zero" rule this item's scope note sets.
+### Stage 2 shipped 2026-08-19 — the mail side
 
-  **Design against Postal's "Open All" from the first line, not afterwards** (owner, 2026-08-19:
-  that is how their mail actually gets opened). Confirmed first: **this addon has no mail code at
-  all today** — no `MAIL_*` event is registered anywhere, so stage 2 starts from zero and has
-  nothing to conflict with. What a mass-opener changes about the design:
+The ledger now learns what came **back**: `Atr_Ledger_SweepInbox` plus its own debounced event
+frame in the same file.
 
-  - **Never key on the inbox INDEX.** Taking or deleting a mail re-indexes everything after it, so
-    an index captured one frame is a different mail the next. Identity has to come from content —
-    sender, subject, money, attachment, expiry — because 3.3.5 gives a mail no stable id.
-  - **That identity is also the DEDUP key**, and it has to survive a relog: the same unread mail is
-    seen again on every mailbox visit until it is taken, and each sighting must not add a row.
-    Record what has been counted, not just what has been seen.
-  - **`MAIL_INBOX_UPDATE` arrives in storms** while Postal works, exactly like `MERCHANT_UPDATE`
-    and `TRADE_SKILL_UPDATE` do. Both of those are already solved in this addon by the same
-    pattern — a dedicated frame, a short settle timer, and a session throttle keyed on a
-    fingerprint (`AuctionatorFinderMerchant.lua` is the cleaner of the two to copy).
-  - **A mail can vanish between being seen and being read.** Postal takes the money and the item
-    and then deletes it, so every read needs `pcall`-level tolerance and a missing mail must be a
-    no-op rather than a half-written row.
-  - **This is also where item 9's delivered side gets observed** — what actually arrived, against
-    what the buy loop intended. Which means the one moment that answers item 9 is the moment
-    Postal is racing through fastest. Worth building the capture to run *before* the take, on the
-    inbox listing, rather than trying to observe the take itself.
+| `src` | From |
+|---|---|
+| `won` | `Auction won: %s` — the item you bought actually arriving. **This is item 9's delivered side.** |
+| `sale` | `Auction successful: %s` — with the invoice's bid, buyout, deposit and auction-house cut kept apart, which the header's lump of money cannot be |
+| `expire` | `Auction expired: %s` |
+| `cancel` | `Auction cancelled: %s` |
+
+`Outbid on %s` is deliberately ignored — it returns your own bid and is not a trade. Subjects are
+matched from the client's own globals (`AUCTION_WON_MAIL_SUBJECT` and friends) exactly as item 6
+reads `ITEM_SPELL_KNOWN`, so a localised client still matches; the English literal is the last
+resort.
+
+**Counting is a multiset diff, and it has to be.** The owner's own Open All log shows **three
+identical `Auction won: Linen Cloth` mails from one seller**, so a content-derived identity cannot
+be a set — two real mails would collapse into one row. Each sweep builds the multiset of auction
+mails currently in the inbox; a key seen *more* times than last sweep gained that many mails and
+those become rows, a key seen *fewer* times lost mails to Postal, which is not an event. The
+previous multiset is persisted **per character** (an inbox is), because an unread mail is still
+sitting there after a relog and must not be counted twice.
+
+**The first `MAIL_INBOX_UPDATE` after the mailbox opens is swept immediately**, everything after
+it debounced at 0.3s the way `AuctionatorFinderMerchant.lua` debounces its harvest. That ordering
+is deliberate: Postal starts taking on its own timer, and a debounced first pass could miss
+whatever it removed in the meantime.
+
+**Known gap:** a mail that arrives *and* is taken between two sweeps is invisible. Realistically
+that is a mail landing while you stand at the box, not a mail from before you opened it.
+
+**Verified** by `luac5.1 -p` and an offline smoke test that replays the owner's actual case
+against a fake inbox: five `Auction won` mails with three from one sender produce five rows; three
+further sweeps with nothing taken produce none (the update storm); Postal taking them one at a
+time produces none; a later visit with the same unread mail still there produces none, while a
+genuinely new one produces exactly one; and a sale keeps its invoice parts. **Not verified in
+game**, and the event wiring specifically is not covered by that test — it was run with
+`CreateFrame` nil, so what is proven is the sweep and the counting, not the frame that calls them.
+
+### Still to come
+
 - **Stage 3 — the tab.** Rename the existing Ledger sub-tab to **History** (it shows price
   history, and `Atr_ShowHistory` already sets its column heading to `History`, so the label was
   the odd one out), freeing the name, then build the Ledger view. `FRAMEWORK.md` §8 has the
