@@ -52,35 +52,46 @@ Two things to be careful of:
 
 ---
 
-## 2. Enchanting profit is missing on the trade skill window
+## 2. Enchanting profit is missing on the trade skill window — DONE
 
 **Asked:** enchanting profit on the tradeskill window is not working.
 
-**Current behaviour.** The trade skill profit column comes from `Atr_ProfSort_RowProfit`
-(`AuctionatorFinderProfession.lua:376` (`Atr_ProfSort_RowProfit`)):
+**Cause, confirmed by the owner.** Enchanting is the one profession whose recipes produce no
+item. The trade skill row is named for the *enchant* ("Enchant Bracer - Superior Stamina") and
+`GetTradeSkillItemLink` returns an `|Henchant:` link, not an `|Hitem:` one. So the ID-keyed
+harvest skipped enchanting entirely, and the profit column looked the market price up under the
+enchant's name — which is never what is listed. Every enchanting row came back unpriced, which
+is why the symptom was a *blank* column rather than a wrong number.
+
+**The economics, per the owner.** An enchant is sold by applying it to an **Enchanting Vellum**,
+producing an ordinary item called "Scroll of Enchant Bracer - Superior Stamina". The vellum is
+vendor-bought at a fixed price (observed 2g40s, and subject to a reputation discount). So:
 
 ```
-sell = Atr_GetAuctionPrice(<recipe row name>)
-cost = Atr_ProfSort_RowCost(i)
-if sell is nil or <= 0 -> return nil   -- row shows nothing and sinks to the bottom
+cost  = reagents + one vellum
+sells = auction price of  "Scroll of " .. <row name>
 ```
 
-The lookup key is the **trade skill row's name**, which for enchanting is the *enchant*
-(`"Enchant Bracer - Superior Stamina"`). What is sold on the auction house is the *scroll*
-(`"Scroll of Enchant Bracer - Superior Stamina"`). The price DB is name-keyed, so the enchant
-name never matches a scroll listing and `sell` comes back nil for every enchanting row —
-which is exactly the reported symptom, and it would hit *all* enchants, not some.
+**Built.** All in `AuctionatorFinderProfession.lua`:
 
-Corroborating: `Auctionator.lua:6114` already knows the two names differ — it shortens
-`"Scroll of Enchant"` to `"SoE"` for display.
+- `Atr_Craft_IsEnchantLink` / `Atr_ProfSort_RowIsEnchant` — an enchant is identified by its
+  *link type*, so the rows in an enchanting window that do make real items (rods, shards) still
+  cost as ordinary crafts and get no vellum added. When the client returns no link at all, the
+  fallback asks whether a scroll by that name is a priced item — locale-proof, and it cannot
+  claim an enchant we could not have priced anyway.
+- `Atr_Craft_ScrollName` — the enchant-to-scroll name mapping, used by the profit lookup, the
+  harvest key, and the tooltip's reverse match.
+- `Atr_Craft_VellumCost` — the vellum priced through the shared cascade. **The vendor price is
+  learned, not hardcoded:** `AuctionatorFinderMerchant.lua` already records unlimited-stock,
+  gold-priced Trade Goods from any merchant window, so visiting an enchanting supplier prices
+  the vellum at what *that character* pays, reputation discount included.
+  `ATR_ENCHANT_VELLUM_COLD` (2g40s) is only the cold-start value before any such vendor is seen.
+- The harvest now stores enchant recipes keyed by scroll name with a `vellum` flag, so the Sell
+  tab's Crafted Goods Margin filter and the craft-cost tooltip cover scrolls too.
 
-Second, weaker suspicion, to confirm while fixing: enchanting rows have no produced *item*,
-so `GetTradeSkillItemLink(i)` returns an **enchant** link rather than an item link on a stock
-3.3.5 client. That does not affect `RowProfit` (which prices by name) but it does affect the
-background harvest `Atr_Craft_Harvest` (`AuctionatorFinderProfession.lua:39`), which requires
-an item ID from that link and silently skips the row when it can't get one. So enchanting is
-probably absent from `AUCTIONATOR_CRAFT_RECIPES` too, and the Sell tab's Crafted Goods Margin
-filter never sees it either.
+**Verified** against a mock trade skill window under bare `lua5.1`: cost, profit, the rod
+exclusion, the harvest key and flag, the tooltip's reverse lookup, and the ranking. **Not
+verified in-game.**
 
 **Confirmed by the owner's price database, 2026-08-19.** The dump settles both halves of the
 mapping, and corrects an assumption that would otherwise have shipped wrong:
@@ -109,6 +120,19 @@ scrolls too.
 have been opened so the NPC price learner records it. Until then the observed 2g40s stands as
 a cold-start constant.
 
+**What to check when testing.** `/atrprofsort <text>` prints, per matching row: whether the row
+is recognised as an enchant, which item name its market price came from, both returns of
+`GetTradeSkillNumMade`, and the cost/sell/profit derived. It also prints each vellum kind with
+the candidate name that priced it, or says the cold-start constant is in use. Two things to
+confirm there:
+
+1. That **both** vellum kinds price from a real name. `Enchanting Vellum - Armor` is confirmed
+   present; `Enchanting Vellum - Weapon` is inferred from the split and has not been seen. If
+   the weapon line reports the cold-start constant after visiting an enchanting supplier, the
+   weapon vellum has a different name and the candidate list wants that name adding.
+2. That the vellum prices come from a **vendor**, not the auction house. Opening any enchanting
+   supplier is what makes that happen.
+
 ---
 
 ## 3. Multi-output crafts price wrong (Distilled Flasks makes 3)
@@ -134,7 +158,9 @@ That is the thing to verify first, and it is cheap — add the yield to the `/at
 diagnostic output and read it off a live Alchemy window.
 
 **Decided (owner, 2026-08-19): add the diagnostic first, and do not build the manual box until
-it has been read in-game.** Three outcomes, and only one needs the box:
+it has been read in-game.** The diagnostic is now **built** — `/atrprofsort distilled` prints
+`NumMade: min=? max=?` for every matching row, plus the cost, sell price and profit it derived.
+Three outcomes, and only one needs the box:
 
 1. `GetTradeSkillNumMade` returns 3 → our maths is right and the error is elsewhere
    (most likely the reagent price, or the produced item's own auction price). Re-open.
@@ -142,11 +168,8 @@ it has been read in-game.** Three outcomes, and only one needs the box:
 3. It returns `1, 1` or nils → the client genuinely does not expose it. **Then** build the
    manual override.
 
-The diagnostic itself: `/atrprofsort` already exists
-(`AuctionatorFinderProfession.lua:735`) and already walks the open profession, so this is a
-few added `add(...)` lines, not a new command. Print both returns of `GetTradeSkillNumMade`
-per row, separately — the whole question is whether the second differs from the first, and
-today's code reads only the first — alongside the cost and sell price it derived.
+Both returns are printed separately because the cost maths reads only the first (`minMade`) and
+the whole question is whether the second differs.
 
 **If the manual override is built:** a small numeric box on the trade skill window, applying
 to the selected recipe, default 1, persisted per recipe (by produced item ID, falling back to
@@ -449,8 +472,9 @@ an Advisor would want, and is worth remembering when that item is scoped.
 ## Suggested order
 
 1. **Item 7 (Ledger)** — unblocks 8 and 9, and is the biggest new surface.
-2. **Item 3 diagnostic** — one line of `/atrprofsort` output answers whether item 3 is a
-   one-line fix or a UI feature. Cheap, and it changes the plan.
+2. **Item 3 diagnostic** — built alongside item 2: `/atrprofsort <name>` now prints both
+   returns of `GetTradeSkillNumMade` per row. Run `/atrprofsort distilled` against a live
+   Alchemy window; the answer decides whether item 3 is a one-line fix or a UI feature.
 3. **Items 1, 5** — small, self-contained UI changes.
 4. **Item 2 (enchanting)** — needs one in-game name check, then a helper.
 5. **Items 4, 6** — Finder work, independent of each other.
@@ -493,8 +517,9 @@ from the same account, which the supplied file did not include.
 
 ## Still open
 
-- **Item 2:** whether Ascension names enchanting scrolls the stock way
-  (`"Scroll of " .. enchantName`). One in-game check against a known enchant settles it.
+- **Item 2 (built, needs one in-game check):** whether the *weapon* vellum's name is in the
+  candidate list, and whether both vellums price from a vendor rather than the auction house.
+  `/atrprofsort stamina` answers both. Neither breaks the numbers if wrong — see item 2.
 - **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
   ("Already known") string.
 - **Item 8:** what `AUCTIONATOR_PRICE_DATABASE` actually retains — a current price, or a dated
