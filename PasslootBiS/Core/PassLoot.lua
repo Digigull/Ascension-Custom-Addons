@@ -80,7 +80,9 @@ local defaults = {
 		-- Empty until an import carries an mgr block.
 		["BiSManage"] = {},
 		-- BiS Manager window state (the custom floating frame in PassLoot.lua): the
-		-- chosen sort mode ("source"/"slot"/"score") and its saved screen position.
+		-- chosen sort mode ("source"/"slot"/"score"), its saved screen position, and
+		-- its saved size (w/h, written by the resize grip; absent until first resized,
+		-- in which case the window opens at MGR_WIN_WIDTH x MGR_WIN_HEIGHT).
 		["BiSManagerWindow"] = {
 			["sort"] = "source",
 			["shown"] = false,
@@ -1129,6 +1131,10 @@ end
 -- here and clicking Apply rebuilds the two match rules exactly as the old options
 -- page did — no matching/resolution change (invariants 1-3 untouched).
 --
+-- The window is movable AND resizable (drag anywhere to move, bottom-right grip to
+-- size, both saved per profile). All of its chrome is corner-anchored, so a resize
+-- only has to re-width the list rows — see mgrLayoutRows.
+--
 -- §8.6: a plain gameplay frame (not a StaticPopup), at a strata above the
 -- Interface Options window + SetToplevel, so it renders in front of the options
 -- panel it is launched from.
@@ -1136,7 +1142,20 @@ end
 
 local MGR_ROW_HEIGHT = 20
 local MGR_WIN_WIDTH = 380
+local MGR_WIN_HEIGHT = 460
+-- Fallback list width. Only used before the scroll frame has a width of its own --
+-- the first render runs in the same frame the window is created in, where GetWidth()
+-- can still read 0. After that mgrContentWidth() measures the scroll frame, so the
+-- rows follow the resize grip.
 local MGR_CONTENT_WIDTH = 336
+-- Resize bounds for the grip. The floor keeps the chrome usable: the header takes
+-- 70px and the footer 72px, so the minimum height still leaves ~120px of list, and
+-- the minimum width fits the sort row ("Sort by:" + three 70px buttons) with room to
+-- spare. Don't take the width floor much lower: a row label is a FontString pinned
+-- to both sides of a fixed MGR_ROW_HEIGHT row, so once it is too narrow for the name
+-- + tags the text wraps and the second line runs into the row below it.
+local MGR_MIN_WIDTH, MGR_MIN_HEIGHT = 340, 260
+local MGR_MAX_WIDTH, MGR_MAX_HEIGHT = 900, 1000
 local MGR_SORTS = { "source", "slot", "score" }
 
 -- Perf probe (opt-in via /plbismgr perf). debugprofilestop() is ms since login and
@@ -1316,12 +1335,34 @@ local function mgrBuildDisplayList(items, mode)
 	return entries
 end
 
+-- The width the list rows should take: the scroll frame's own width, so the rows
+-- track the window as the resize grip drags it. Falls back to MGR_CONTENT_WIDTH
+-- before the frame has been laid out (GetWidth() reads 0 on the creation frame).
+local function mgrContentWidth(f)
+	local w = f and f.scroll and f.scroll:GetWidth() or 0
+	if not w or w < 40 then
+		w = (f and f:GetWidth() or MGR_WIN_WIDTH) - 50
+	end
+	if w < 40 then w = MGR_CONTENT_WIDTH end
+	return w
+end
+
+-- Re-width the scroll child and every pooled row to the current window width.
+-- Cheap enough to run from OnSizeChanged during a live grip drag: it only touches
+-- widths, so the rows keep their vertical layout and nothing is rebuilt.
+local function mgrLayoutRows(f)
+	if not f or not f.content or not f.rows then return end
+	local w = mgrContentWidth(f)
+	f.content:SetWidth(w)
+	for _, row in ipairs(f.rows) do row:SetWidth(w) end
+end
+
 -- Acquire (or lazily create) pooled row `i` under the window's scroll content.
 local function mgrAcquireRow(f, i)
 	local row = f.rows[i]
 	if row then return row end
 	row = CreateFrame("Frame", nil, f.content)
-	row:SetWidth(MGR_CONTENT_WIDTH)
+	row:SetWidth(mgrContentWidth(f))
 	row:SetHeight(MGR_ROW_HEIGHT)
 	row:EnableMouse(true)
 
@@ -1454,8 +1495,14 @@ function PasslootBiS:CreateBiSManagerWindow()
 	if self.BiSManagerWindowFrame then return self.BiSManagerWindowFrame end
 
 	local f = CreateFrame("Frame", "PasslootBiS_BiSManagerWindow", UIParent)
-	f:SetWidth(MGR_WIN_WIDTH)
-	f:SetHeight(460)
+	-- Default footprint, overridden by a size the user dragged out with the grip
+	-- (saved per profile alongside the position, restored below).
+	local saved = self.db.profile.BiSManagerWindow
+	f:SetWidth((saved and saved.w) or MGR_WIN_WIDTH)
+	f:SetHeight((saved and saved.h) or MGR_WIN_HEIGHT)
+	f:SetResizable(true)
+	f:SetMinResize(MGR_MIN_WIDTH, MGR_MIN_HEIGHT)
+	f:SetMaxResize(MGR_MAX_WIDTH, MGR_MAX_HEIGHT)
 	-- FULLSCREEN_DIALOG already sits ABOVE the DIALOG-strata Interface Options
 	-- window (§8.6) by strata alone, so no SetToplevel is needed to render in
 	-- front. We deliberately do NOT call SetToplevel(true) here: it would auto-
@@ -1528,6 +1575,12 @@ function PasslootBiS:CreateBiSManagerWindow()
 	f.content = content
 	f.rows = {}
 
+	-- Re-width the rows live while the grip is dragged. Wired on the SCROLL frame
+	-- rather than the window: every piece of chrome is corner-anchored, so the only
+	-- thing a resize has to recompute is the list width, and the scroll frame is
+	-- what actually reports it.
+	scroll:SetScript("OnSizeChanged", function() mgrLayoutRows(f) end)
+
 	-- Apply / Reset / status.
 	local apply = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
 	apply:SetHeight(22)
@@ -1553,6 +1606,40 @@ function PasslootBiS:CreateBiSManagerWindow()
 	status:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -16, 44)
 	status:SetJustifyH("LEFT")
 	f.status = status
+
+	-- Bottom-right resize grip (standard 3.3.5 size-grabber texture), same wiring as
+	-- the Loot Window's. It sits to the right of the Apply/Reset row, which stops at
+	-- the window's left half, so the two never overlap at MGR_MIN_WIDTH.
+	--
+	-- StopMovingOrSizing is the counterpart to StartSizing exactly as it is to
+	-- StartMoving; nothing here raises or restacks anything, so this is unrelated to
+	-- the drag freeze the strata comments above are about.
+	--
+	-- Unlike OnDragStart this does NOT set BiSManagerDragging (the flag that makes
+	-- mgrRowTooltip skip a tooltip resolve mid-move), and that asymmetry is on
+	-- purpose. A grip OnMouseUp only fires if the button is still under the cursor,
+	-- which it need not be once the frame hits MGR_MAX_*/MGR_MIN_* and stops
+	-- following, so a flag raised here could stick on and kill row tooltips for the
+	-- rest of the session. There is little to suppress anyway: the cursor is parked
+	-- on the grip, and rows are top-anchored, so a resize does not sweep them under it.
+	local grip = CreateFrame("Button", nil, f)
+	grip:SetWidth(16)
+	grip:SetHeight(16)
+	grip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+	grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+	grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+	grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+	grip:SetScript("OnMouseDown", function()
+		GameTooltip:Hide()                  -- drop any hover tooltip for the resize
+		f:StartSizing("BOTTOMRIGHT")
+	end)
+	grip:SetScript("OnMouseUp", function()
+		f:StopMovingOrSizing()
+		local d = PasslootBiS.db.profile.BiSManagerWindow
+		d.w, d.h = f:GetWidth(), f:GetHeight()
+		mgrLayoutRows(f)
+	end)
+	f.grip = grip
 
 	self.BiSManagerWindowFrame = f
 
@@ -1635,7 +1722,9 @@ function PasslootBiS:BiSManagerWindow_Render()
 	for i = #entries + 1, #f.rows do f.rows[i]:Hide() end
 
 	f.content:SetHeight(y > 0 and y or 1)
-	f.content:SetWidth(MGR_CONTENT_WIDTH)
+	-- Width, not a constant: the window is resizable, so the child and its rows take
+	-- whatever the scroll frame currently measures (mgrLayoutRows sets both).
+	mgrLayoutRows(f)
 end
 
 -- show: true/false, or nil to toggle.
