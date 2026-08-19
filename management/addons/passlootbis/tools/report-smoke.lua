@@ -79,6 +79,24 @@ addon.API = {
   IsSourceEnabled = function(_, k) return true end,
 }
 
+-- The Usable filter, as the item dry run reaches it: GetModule by its localized
+-- name, then Widget:SetMatch, then read CurrentMatch. Stubbed to the UNUSABLE
+-- answer with a red line, because that is the branch the dry run exists for -- a
+-- usable item prints one word and proves nothing.
+local usableModule = { Widget = {} }
+function usableModule:GetUsableText(id) return id == 2 and "Usable" or "Unusable" end
+function usableModule.Widget:SetMatch(itemObj)
+  if not (itemObj and itemObj.link) then error("Usable SetMatch got no link") end
+  addon.TooltipCache = { link = itemObj.link, usable = false,
+    unusableLine = "L3 Requires Level 60" }
+  usableModule.CurrentMatch = 3
+end
+function addon:GetModule(name, silent)
+  if name == "Usable" then return usableModule end
+  if silent then return nil end
+  error("no such module: " .. tostring(name))
+end
+
 _G.LibStub = function(n) return {
   GetAddon = function() return addon end,
   GetLocale = function() return setmetatable({}, { __index = function(_, k) return k end }) end,
@@ -100,8 +118,11 @@ local ok2, r2 = pcall(addon.BuildDebugReport, addon, nil)
 if not ok2 then print("ERROR: " .. tostring(r2)); os.exit(1) end
 print(r2)
 
--- Degenerate: no scanner, no API, no lists. The report must still build.
+-- Degenerate: no scanner, no API, no lists, no Usable module. The report must
+-- still build -- every one of these is absent in some real install, and a nil-index
+-- here turns "tell me what went wrong" into a second thing that went wrong.
 addon.API = nil
+addon.GetModule = nil
 addon.EnumerateBiSLists = function() return {} end
 addon.CollectStaleBiSItems = function() return {} end
 addon.DebugVar = false
@@ -109,3 +130,10 @@ local ok3, r3 = pcall(addon.BuildDebugReport, addon, nil)
 if not ok3 then print("DEGENERATE ERROR: " .. tostring(r3)); os.exit(1) end
 print("\n================ degenerate (no scanner/API/lists) ================\n")
 print(r3)
+
+-- Degenerate WITH an item to test: the item section is the one that reaches for the
+-- Usable module, so the no-module fallback only gets exercised if a link is passed.
+local ok4, r4 = pcall(addon.BuildDebugReport, addon, LINK)
+if not ok4 then print("DEGENERATE ITEM ERROR: " .. tostring(r4)); os.exit(1) end
+print("\n================ degenerate + item test ================\n")
+print(r4)

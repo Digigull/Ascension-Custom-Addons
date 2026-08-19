@@ -282,6 +282,43 @@ end
 
 -- One item, dry-run through the live scoring path. The only way to exercise BiS
 -- Check without waiting for the right stale item to drop off the right boss.
+-- The "Not Usable" rule's verdict on one item, WITHOUT waiting for it to drop.
+--
+-- This is the half of the dry run that could not be exercised on demand. The
+-- scanner half below scores any link you shift-click, but the rule filters only
+-- ever ran inside a live START_LOOT_ROLL, so "why did this greed under Not Usable?"
+-- needed the right item to drop off the right boss -- a dungeon per attempt, and
+-- the drops are random (owner, 2026-08).
+--
+-- Routed through the module the rule itself uses rather than a copy of its logic:
+-- a dry run that quietly disagreed with the live filter would be worse than no dry
+-- run at all. SetMatch only reads itemObj.link, so a bare { link = link } is the
+-- whole item this needs.
+--
+-- Leaving module.CurrentMatch set behind us is safe: EvaluateItem (Core/PassLoot.lua)
+-- calls SetMatch on EVERY widget before it checks a single rule, so a real roll
+-- always overwrites this first.
+local function addUsableLine(out, link)
+	local ok, mod = pcall(PasslootBiS.GetModule, PasslootBiS, L["Usable"], true)
+	if not (ok and type(mod) == "table" and mod.Widget and mod.Widget.SetMatch) then
+		out[#out + 1] = "  usable: Modules/Usable.lua not loaded -- cannot dry-run the rule"
+		return
+	end
+	if not pcall(mod.Widget.SetMatch, mod.Widget, { link = link }, nil) then
+		out[#out + 1] = "  usable: check failed"
+		return
+	end
+	local match = mod.CurrentMatch
+	local cache = PasslootBiS.TooltipCache or {}
+	-- The red line is the evidence, not decoration: "unusable" is inferred from the
+	-- client painting a requirement red (Core/Cache.lua), so without it the verdict
+	-- cannot be checked -- which is exactly how a pair of plainly wearable leather
+	-- boots came to greed under Not Usable with nothing to say why.
+	out[#out + 1] = "  usable: " .. yn(match == 2) ..
+		"   (" .. tostring(match) .. " " .. tostring(mod:GetUsableText(match)) .. ")" ..
+		(cache.unusableLine and ("   red line: " .. tostring(cache.unusableLine)) or "")
+end
+
 local function addItemSection(out, link)
 	out[#out + 1] = "[Item test] " .. tostring(link)
 	local isBiS, list = PasslootBiS:IsBiSItem(GetItemInfoFromHyperlink(link), nil)
@@ -291,6 +328,7 @@ local function addItemSection(out, link)
 		if nm then isBiS, list = PasslootBiS:IsBiSItem(nil, nm) end
 	end
 	out[#out + 1] = "  on a rolling BiS list: " .. yn(isBiS) .. (list and ("  (" .. list .. ")") or "")
+	addUsableLine(out, link)
 
 	local scanner = scannerAPI()
 	if not (scanner and scanner.GetLinkVerdict) then
