@@ -175,11 +175,8 @@ function Fdr_PriceDB_Update (results, partial)
 					if (wm > 0) then medsample = wm; end
 				end
 
-				local m = gAtr_MeanDB[name];
-				if (type (m) ~= "table") then m = {}; gAtr_MeanDB[name] = m; end
-				if (#m >= 15) then table.remove (m, math.random (1, #m)); end
-				tinsert (m, medsample);
-				table.sort (m);
+				-- one call, so the one-sample shape is handled in one place (item 13)
+				Atr_MeanAppend (gAtr_MeanDB, name, medsample);
 			end
 		end
 	end
@@ -266,7 +263,7 @@ function Fdr_PriceDB_ResolveName (query)
 	local haveMean = (type (gAtr_MeanDB) == "table");
 
 	if ((haveScan and gAtr_ScanDB[name] ~= nil)
-		or (haveMean and type (gAtr_MeanDB[name]) == "table")) then
+		or (haveMean and gAtr_MeanDB[name] ~= nil)) then		-- item 13: one sample is a number, not a table
 		return name;
 	end
 
@@ -325,6 +322,7 @@ function Fdr_PriceDB_Inspect (query)
 			auc and Fdr_MoneyString (auc) or "|cff888888(not stored)|r"));
 
 	local m = (type (gAtr_MeanDB) == "table") and gAtr_MeanDB[name] or nil;
+	if (type (m) == "number") then m = { m }; end		-- item 13: the one-sample shape
 	if (type (m) == "table" and #m > 0) then
 		local n = #m;
 		local lo, hi = m[1], m[1];
@@ -388,7 +386,7 @@ function Fdr_PriceDB_Reset (query)
 			-- filter would have skipped every item this database knows best
 			local price = (type (Atr_PriceValue) == "function") and Atr_PriceValue (value) or value;
 			if (type (price) == "number" and price > 0) then
-				gAtr_MeanDB[name] = { price };
+				gAtr_MeanDB[name] = price;		-- item 13: one sample, stored bare
 				n = n + 1;
 			end
 		end
@@ -411,7 +409,7 @@ function Fdr_PriceDB_Reset (query)
 	end
 
 	local before = (Atr_GetMeanPrice) and Atr_GetMeanPrice (name) or nil;
-	gAtr_MeanDB[name] = { price };
+	gAtr_MeanDB[name] = price;		-- item 13: one sample, stored bare
 	say (string.format ("Price DB reset: |cffffd100%s|r  median %s -> %s  (reseeded from current auction)",
 			name,
 			before and Fdr_MoneyString (before) or "|cff888888--|r",

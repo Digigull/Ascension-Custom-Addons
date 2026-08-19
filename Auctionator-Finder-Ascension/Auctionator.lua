@@ -670,6 +670,32 @@ end
 
 -----------------------------------------
 
+-- Fold the mean database's existing one-sample ARRAYS down to bare numbers
+-- (BACKLOG item 13).  New rows are written in the right shape by Atr_MeanAppend;
+-- this is only for what is already on disk, which on a real dump was 64% of the
+-- table -- 3556 rows of 5523, about 232 KB of wrapper around one number.
+--
+-- Lossless by construction: a one-element array and the number it holds mean
+-- exactly the same thing to Atr_MeanMedian.  Run at load like the space-key
+-- retirement beside it; once folded it is one pass that finds nothing.
+function Atr_CompactMeanDB ()
+
+	if (type (gAtr_MeanDB) ~= "table") then return 0; end
+
+	local n = 0;
+	local name, v;
+	for name, v in pairs (gAtr_MeanDB) do
+		if (type (v) == "table" and #v == 1 and type (v[1]) == "number") then
+			gAtr_MeanDB[name] = v[1];
+			n = n + 1;
+		end
+	end
+
+	return n;
+end
+
+-----------------------------------------
+
 function Atr_InitScanDB()
 
 	local realm_Faction = GetRealmName().."_"..UnitFactionGroup ("player");
@@ -706,6 +732,7 @@ function Atr_InitScanDB()
     gAtr_MeanDB = AUCTIONATOR_MEAN_PRICE_DATABASE[realm_Faction];
 
 	Atr_RetireVariantSpaceKeys ();
+	Atr_CompactMeanDB ();
 
 end
 

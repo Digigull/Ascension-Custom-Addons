@@ -443,6 +443,71 @@ end
 
 -----------------------------------------
 
+-- THE MEAN DATABASE'S SHAPE (BACKLOG item 13) ----------------------------
+--
+-- A sample set of ONE is stored as a bare number, and only becomes a table on
+-- the second sample.  Measured on a real 5523-name database: **64% of names hold
+-- exactly one sample** and 1737 of those are byte-identical to that name's price
+-- row -- ~232 KB, a fifth of the whole saved-variables file, spent on table
+-- wrappers around a single number that is often written down twice.
+--
+-- Legacy arrays keep working untouched, the same way the price database's legacy
+-- numbers do, and Atr_CompactMeanDB folds the existing ones down at load.
+--
+-- DELIBERATELY NOT VARIANT-AWARE, which is where this parts company with the
+-- price database (BACKLOG item 12 part 3b).  The plan was to give it the same
+-- per-variant slots so the tooltip's two price lines could not disagree.  The
+-- data says not to: this database averages **1.97 samples per name**, 64% have
+-- one and only 8.7% have five or more.  Splitting that by variant would leave
+-- most variants with a single sample -- a "median" of one number -- so it would
+-- buy no statistical accuracy at all while turning one value into three shapes
+-- (number, sample array, variant map).  The mild inconsistency between an
+-- exact `Auction` line and a name-level `Auction median` is the cheaper of the
+-- two wrongs, and it is stated here rather than left for someone to rediscover.
+ATR_MEAN_CAP = 15;
+
+-- The median of a stored value, whatever shape it is in.
+function Atr_MeanMedian (v)
+
+	if (type (v) == "number") then return v; end				-- the one-sample shape
+	if (type (v) ~= "table" or #v == 0) then return nil; end
+
+	local n = #v;
+	if (n % 2 == 0) then return math.floor ((v[n/2] + v[n/2 + 1]) / 2); end
+	return math.floor (v[math.ceil (n/2)]);
+end
+
+-- Append one sample, promoting the shape as it goes.  Keeps the existing cap and
+-- eviction behaviour exactly: sorted, and at the cap one is dropped at random.
+-- Random eviction is what FRAMEWORK.md §5 criticises, and it is preserved here
+-- on purpose -- the array is sorted anyway, so the ordering it would protect was
+-- already gone, and changing it is a behaviour change that does not belong in a
+-- size fix.
+function Atr_MeanAppend (db, name, sample)
+
+	if (type (db) ~= "table" or name == nil or type (sample) ~= "number" or sample <= 0) then return; end
+
+	local cur = db[name];
+
+	if (cur == nil) then
+		db[name] = sample;					-- first sample: no table at all
+		return;
+	end
+
+	if (type (cur) == "number") then
+		db[name] = { cur, sample };			-- second sample: promote
+		cur = db[name];
+	elseif (type (cur) == "table") then
+		tinsert (cur, sample);
+	else
+		db[name] = sample;
+		return;
+	end
+
+	if (#cur > ATR_MEAN_CAP) then tremove (cur, math.random (1, #cur)); end
+	table.sort (cur);
+end
+
 function Atr_GetMeanPrice (item)  -- itemName or itemID
 
 	local itemName;
@@ -457,10 +522,8 @@ function Atr_GetMeanPrice (item)  -- itemName or itemID
 		return nil;
 	end
 
-	if (gAtr_MeanDB and gAtr_MeanDB[itemName] and #gAtr_MeanDB[itemName] > 0) then
-        local median = nil
-        if #gAtr_MeanDB[itemName] %2 == 0 then median = (gAtr_MeanDB[itemName][#gAtr_MeanDB[itemName]/2] + gAtr_MeanDB[itemName][#gAtr_MeanDB[itemName]/2+1]) / 2 else median = gAtr_MeanDB[itemName][math.ceil(#gAtr_MeanDB[itemName]/2)] end
-        return math.floor(median)
+	if (gAtr_MeanDB) then
+		return Atr_MeanMedian (gAtr_MeanDB[itemName]);
 	end
 	
 	return nil;
@@ -1665,8 +1728,65 @@ local function Atr_VendorSeed_Merge ()
 	db.seedver = ver;
 end
 
+-- The inverse of the merge above (BACKLOG item 13).  Measured on a real dump:
+-- 1338 of 1437 `obs` entries and 449 of 518 `base` entries are seed echoes --
+-- about 152 KB of a 1.14 MB saved-variables file spent on a private copy of a
+-- table that already ships inside the addon, in AuctionatorVendorSeed.lua.
+--
+-- So drop them at logout and let the merge put them back at login.  The merge is
+-- already idempotent and already documented as safe to run every login, so this
+-- needs no new machinery -- only a rule for what may be dropped.
+--
+-- THE RULE IS "ONLY WHAT THE SEED WILL PUT BACK IDENTICALLY", and it is checked
+-- against the seed value rather than trusted from the flag.  A seeded entry that
+-- has since been CONFIRMED by a real sale is a field-tested fact, not an echo,
+-- and diff-vendor-seed.lua reports those separately for exactly this reason. So
+-- an entry is only dropped when the shipped seed holds the same price for it and
+-- nothing has been learned on top: that makes the round trip provably lossless
+-- rather than merely probably.
+--
+-- If the addon is ever run without its seed file the merge returns early and
+-- these do not come back -- but a table whose only source is the addon itself is
+-- not data the addon can lose independently of being installed.
+local function Atr_VendorSeed_DropEchoes ()
+
+	if (type (ATR_VENDOR_SEED) ~= "table") then return 0; end
+	if (type (AUCTIONATOR_VENDOR_LEARNED) ~= "table") then return 0; end
+
+	local db = AUCTIONATOR_VENDOR_LEARNED;
+	local n  = 0;
+
+	if (type (db.obs) == "table" and type (ATR_VENDOR_SEED.obs) == "table") then
+		local k, rec;
+		for k, rec in pairs (db.obs) do
+			local seeded = ATR_VENDOR_SEED.obs[k];
+			if (type (rec) == "table" and rec.seed and (rec.n or 0) == 0
+				and type (seeded) == "number" and rec.p == seeded) then
+				db.obs[k] = nil;
+				n = n + 1;
+			end
+		end
+	end
+
+	if (type (db.base) == "table" and type (ATR_VENDOR_SEED.base) == "table") then
+		local id, b;
+		for id, b in pairs (db.base) do
+			local r = ATR_VENDOR_SEED.base[id];
+			if (type (b) == "table" and b.seed and (b.n or 0) <= 1 and (b.x or 0) == 0
+				and type (r) == "table" and b.p == r.p
+				and (b.il or 0) == (r.il or 0) and (b.rq or 0) == (r.rq or 0)) then
+				db.base[id] = nil;
+				n = n + 1;
+			end
+		end
+	end
+
+	return n;
+end
+
 local function Atr_VendorLearn_OnEvent (self, event)
 	if (event == "PLAYER_LOGIN") then Atr_SaleMsg_Init(); Atr_VendorSeed_Merge(); return; end;
+	if (event == "PLAYER_LOGOUT") then Atr_VendorSeed_DropEchoes(); return; end;
 	if (event == "MERCHANT_CLOSED") then gVendorPendingSales = {}; return; end;
 	local q = gVendorPendingSales;
 	if (#q == 0) then return; end;
@@ -1707,6 +1827,7 @@ end
 
 local gVendorLearnFrame = CreateFrame ("Frame");
 gVendorLearnFrame:RegisterEvent ("PLAYER_LOGIN");
+gVendorLearnFrame:RegisterEvent ("PLAYER_LOGOUT");		-- item 13: shed the seed echoes on the way out
 gVendorLearnFrame:RegisterEvent ("MERCHANT_UPDATE");
 gVendorLearnFrame:RegisterEvent ("PLAYER_MONEY");
 gVendorLearnFrame:RegisterEvent ("MERCHANT_CLOSED");
