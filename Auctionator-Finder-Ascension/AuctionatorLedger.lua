@@ -544,3 +544,226 @@ if (type (CreateFrame) == "function") then
 		end
 	end);
 end
+
+-- THE TAB (stage 3) -------------------------------------------------------
+--
+-- Own panel on its own main tab, the way the Finder and the Bazaar do it
+-- (FRAMEWORK.md §4, "World 2"): the shared Auctionator panel is built around one
+-- scanned ITEM, and a ledger is not about an item -- it is about you. The 15
+-- wiring sites in Auctionator.lua are tagged `-- LEDGER_TAB`, the same census the
+-- Bazaar left behind.
+--
+-- The name was taken. Tab 2 of the Current/Ledger strip was called "Ledger" but
+-- shows the price HISTORY of the scanned item, which is what Atr_ShowHistory
+-- already titles its own column -- the label was the odd one out. Renamed to
+-- History (Auctionator.xml), which frees the name for the thing that is actually
+-- a ledger.
+
+local LDG_NUM_ROWS = 16;
+local LDG_ROW_H    = 20;
+
+-- What each src reads as, and the colour it carries. Money OUT is what you
+-- spent, money IN is what came back; expiry and cancellation move no money at
+-- all and must not be coloured as though they did.
+local LDG_SRC = {
+	buy		= { text = "Bought",	colour = "|cffff8080" },
+	post	= { text = "Listed",	colour = "|cffcccccc" },
+	won		= { text = "Received",	colour = "|cff80c0ff" },
+	sale	= { text = "Sold",		colour = "|cff80ff80" },
+	expire	= { text = "Expired",	colour = "|cff888888" },
+	cancel	= { text = "Cancelled",	colour = "|cff888888" },
+};
+
+local function Ldg_Money (c)
+	if (c == nil or c == 0) then return "|cff666666--|r"; end
+	if (zc and zc.priceToMoneyString) then return zc.priceToMoneyString (c); end
+	return tostring (c);
+end
+
+-- Newest first: a ledger is read from the end.
+local function Ldg_Rows ()
+	local db = Atr_Ledger_DB ();
+	return db.rows or {};
+end
+
+function Atr_Ledger_Redisplay ()
+
+	if (not Atr_Ledger_Panel or not Atr_Ledger_Panel:IsShown()) then return; end
+
+	local rows = Ldg_Rows ();
+	local n    = #rows;
+
+	if (FauxScrollFrame_Update) then
+		FauxScrollFrame_Update (Atr_Ledger_ScrollFrame, n, LDG_NUM_ROWS, LDG_ROW_H);
+	end
+
+	local offset = (FauxScrollFrame_GetOffset and FauxScrollFrame_GetOffset (Atr_Ledger_ScrollFrame)) or 0;
+
+	local i;
+	for i = 1, LDG_NUM_ROWS do
+
+		local line = _G["Atr_Ledger_Row"..i];
+		if (line) then
+
+			-- rows are stored oldest-first and read newest-first
+			local r = rows[n - (offset + i - 1)];
+
+			if (r == nil) then
+				line:Hide();
+			else
+				local kind = LDG_SRC[r.src] or { text = tostring (r.src), colour = "|cffffffff" };
+
+				line.when:SetText ((date and r.t) and date ("%m-%d %H:%M", r.t) or "");
+				line.what:SetText (kind.colour..LZT(kind.text).."|r");
+				line.item:SetText (r.link or r.name or "?");
+				line.qty:SetText  (r.qty and ("x"..r.qty) or "");
+
+				-- One money column, and it says which DIRECTION the money went,
+				-- because a ledger that shows a sale and a purchase in the same
+				-- colour is worse than one that shows neither.
+				if (r.src == "sale") then
+					line.money:SetText ("|cff80ff80+"..Ldg_Money (r.money).."|r");
+				elseif (r.src == "buy") then
+					line.money:SetText ("|cffff8080-"..Ldg_Money ((r.unit or 0) * (r.qty or 0)).."|r");
+				elseif (r.src == "post") then
+					line.money:SetText (Ldg_Money ((r.unit or 0) * (r.qty or 0)));
+				else
+					line.money:SetText (Ldg_Money (nil));
+				end
+
+				line.rec = r;
+				line:Show();
+			end
+		end
+	end
+
+	-- The totals line, and the honesty rule this whole item turns on: v1 covers
+	-- AUCTION HOUSE activity only, so vendor sales are ABSENT, not zero. It says
+	-- "auction house" rather than "profit" for exactly that reason -- see the
+	-- scope note on BACKLOG item 7.
+	local spent, back, deposits = 0, 0, 0;
+	for i = 1, n do
+		local r = rows[i];
+		if (r.src == "buy")  then spent = spent + ((r.unit or 0) * (r.qty or 0)); end
+		if (r.src == "sale") then back  = back  + (r.money or 0); end
+		if (r.src == "post") then deposits = deposits + (r.deposit or 0); end
+	end
+
+	if (Atr_Ledger_Totals) then
+		Atr_Ledger_Totals:SetText (string.format (
+			LZT("%d rows   |   auction house: out %s, in %s, deposits %s"),
+			n, Ldg_Money (spent), Ldg_Money (back), Ldg_Money (deposits)));
+	end
+end
+
+function Atr_Ledger_OnTabClick (index)
+
+	if (Atr_Ledger_Panel == nil) then return; end
+
+	if (ATR_LEDGER_TAB and Atr_FindTabIndex and index == Atr_FindTabIndex (ATR_LEDGER_TAB)) then
+		Atr_Ledger_Panel:Show();
+		Atr_Ledger_Redisplay ();
+	else
+		Atr_Ledger_Panel:Hide();
+	end
+end
+
+function Atr_Ledger_Init ()
+
+	if (Atr_Ledger_Panel or type (CreateFrame) ~= "function") then return; end
+
+	local panel = CreateFrame ("Frame", "Atr_Ledger_Panel", AuctionFrame);
+	panel:SetSize (738, 447);
+	panel:SetPoint ("TOPLEFT", 10, 0);
+	panel:Hide();
+
+	local bg = panel:CreateTexture (nil, "BACKGROUND");
+	bg:SetTexture (0, 0, 0, 0.85);
+	bg:SetPoint ("TOPLEFT", 14, -70);
+	bg:SetPoint ("BOTTOMRIGHT", AuctionFrame, "BOTTOMRIGHT", -12, 28);
+
+	local title = panel:CreateFontString (nil, "BACKGROUND", "GameFontNormal");
+	title:SetPoint ("TOP", -10, -18);
+	title:SetText ("Auctionator - "..LZT("Ledger"));
+
+	local note = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+	note:SetPoint ("TOPLEFT", 20, -44);
+	note:SetText (LZT("Auction house activity. Vendor sales are not recorded yet."));
+
+	-- column headings, matched to the row layout below
+	local function head (text, x)
+		local fs = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+		fs:SetPoint ("TOPLEFT", x, -74);
+		fs:SetText (text);
+		return fs;
+	end
+
+	head (LZT("When"),  20);
+	head (LZT("What"),  110);
+	head (LZT("Item"),  200);
+	head (LZT("Qty"),   500);
+	head (LZT("Money"), 590);
+
+	-- Created BEFORE the rows on purpose: sibling frames draw in creation order,
+	-- so building the scroll first leaves the rows on top of it.  The other way
+	-- round the scrollbar covers the money column and the rows stop taking mouse.
+	local scroll = CreateFrame ("ScrollFrame", "Atr_Ledger_ScrollFrame", panel, "FauxScrollFrameTemplate");
+	scroll:SetPoint ("TOPLEFT", 14, -92);
+	scroll:SetSize (690, LDG_NUM_ROWS * LDG_ROW_H);
+	scroll:SetScript ("OnVerticalScroll", function (self, offset)
+		if (FauxScrollFrame_OnVerticalScroll) then
+			FauxScrollFrame_OnVerticalScroll (self, offset, LDG_ROW_H, Atr_Ledger_Redisplay);
+		end
+	end);
+
+	local rowsHolder = CreateFrame ("Frame", nil, panel);
+	rowsHolder:SetPoint ("TOPLEFT", 14, -92);
+	rowsHolder:SetSize (700, LDG_NUM_ROWS * LDG_ROW_H);
+
+	local i;
+	for i = 1, LDG_NUM_ROWS do
+
+		local line = CreateFrame ("Button", "Atr_Ledger_Row"..i, rowsHolder);
+		line:SetSize (660, LDG_ROW_H);
+		line:SetPoint ("TOPLEFT", 0, -(i - 1) * LDG_ROW_H);
+
+		local function col (x, w, justify)
+			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+			fs:SetPoint ("LEFT", x, 0);
+			fs:SetWidth (w);
+			fs:SetJustifyH (justify or "LEFT");
+			return fs;
+		end
+
+		line.when	= col (6,   88);
+		line.what	= col (96,  86);
+		line.item	= col (186, 300);
+		line.qty	= col (486, 44);
+		line.money	= col (534, 120, "RIGHT");		-- ends at 654; the bar owns 664+
+
+		-- the row's item tooltip, when the row still carries a link
+		line:SetScript ("OnEnter", function (self)
+			if (self.rec and self.rec.link and GameTooltip) then
+				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+				GameTooltip:SetHyperlink (self.rec.link);
+				GameTooltip:Show();
+			end
+		end);
+		line:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+		line:Hide();
+	end
+
+	local totals = panel:CreateFontString ("Atr_Ledger_Totals", "ARTWORK", "GameFontNormalSmall");
+	totals:SetPoint ("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 34);
+	totals:SetText ("");
+
+	local clear = CreateFrame ("Button", "Atr_Ledger_ClearButton", panel, "UIPanelButtonTemplate");
+	clear:SetSize (70, 22);
+	clear:SetPoint ("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -22, 30);
+	clear:SetText (LZT("Clear"));
+	clear:SetScript ("OnClick", function ()
+		Atr_Ledger_Clear ();
+		Atr_Ledger_Redisplay ();
+	end);
+end
