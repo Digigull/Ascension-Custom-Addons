@@ -31,16 +31,49 @@ a per-addon doc; link it from the table below in one line rather than summarisin
 
 - **There is no Lua toolchain by default.** Install one before editing Lua:
   `apt-get install -y lua5.1`. Use **5.1 specifically** — that is what the 3.3.5 client runs.
-- **Syntax-check every Lua edit:** `luac5.1 -p <files>`. Cheap, and the only automated check
-  available; there is no test suite.
+- **Syntax-check every Lua edit:** `luac5.1 -p <files>`. Cheap, and the baseline check.
 - **Validate XML edits** with `python3 -c "import xml.etree.ElementTree as ET; ET.parse('f.xml')"`.
   Several addons build frames in XML, where a typo silently breaks the whole file in-game.
 - **Three files fail `luac5.1` on a UTF-8 BOM and are fine as they are** — the client's loader
   tolerates BOMs: `PasslootBiS/Core/Cache.lua`, `Auctionator-Finder-Ascension/Locales/esES.lua`,
   `Auctionator-Finder-Ascension/Locales/deDE.lua`. Do not "fix" them; just expect the noise when
   checking the whole repo.
-- Nothing here can be run or screenshotted — verification is parsing, reading, and the owner's
-  in-game test. Say plainly when a change is only reasoned, not verified.
+- **There is no test suite, but there ARE offline tests — run the ones that cover what you
+  touched.** They stub the client and run under bare `lua5.1` from the repo root, in about a
+  second each:
+
+  ```
+  lua5.1 management/addons/passlootbis/tools/contract-check.lua    # 20 assertions
+  lua5.1 management/addons/passlootbis/tools/usable-smoke.lua      # 14 assertions
+  lua5.1 management/addons/passlootbis/tools/report-smoke.lua      # 3 passes, non-zero on a crash
+  ```
+
+  All three pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
+  anything new belongs there, not in an addon folder. Several source files are deliberately
+  shaped to be testable this way — helpers kept global, `rawget(_G, "CreateFrame")` guards — so
+  **do not break that shape** when editing them. That is a preservation rule, not an
+  instruction to grow the tooling; see the next bullet.
+- The client itself cannot be run or screenshotted here. Beyond the checks above, verification
+  is parsing and reading. Say plainly when a change is only reasoned, not verified.
+- **Ship the change; verify it later. Tooling is a fallback, not a frontline** (owner's standing
+  preference, 2026-08). A reasoned change goes out as it is. **A fix that fails on first run is
+  an accepted cost** — cheaper, in both wall-clock and context, than the apparatus that would
+  have caught it. Concretely:
+  - **Run an existing test when it covers what you touched.** A second of runtime is not what
+    is being discouraged.
+  - **Do not build new harnesses, stubs or client emulation by default**, and do not grow a
+    mock toward covering more of the WoW API. Write a new test only when the behaviour genuinely
+    cannot be reasoned about, or when something has already failed once and you need to pin it
+    so it stays fixed.
+  - **An in-game debug command is the last resort, not the first.** Add one only when no
+    offline route can answer the question, and say at the call site why that is.
+  - Match verification effort to the size of the change. A fixed ritual per edit — dozens of
+    checks for a small update — is the failure mode to avoid, in both directions.
+- **Do not re-raise the owner's parked in-game checks.** Where a doc lists something as
+  "not verified in game", that is a record, not a request. The owner has the addons running and
+  has decided (2026-08) that they behave correctly; anything that misbehaves will be reported
+  when it does. Mention such an item only if the change in front of you actually touches it —
+  never as a standing caveat on unrelated work.
 
 ## The drag freeze — the one domain rule that matters
 
@@ -143,7 +176,7 @@ a 1px `WHITE8X8` border, `SetBackdropColor(0.05, 0.05, 0.07, 0.95)`,
 |---|---|---|
 | `!ClientPerfProbe` | 4 spaces | The measurement addon. `darkBackdrop()` in `UI.lua` is its house helper. |
 | `AscensionHonorTracker` | 4 spaces | Small. Panel attaches to the character panel; strata matches it. |
-| `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. Vendor pricing: `management/addons/auctionator/VENDOR-PRICE-RESEARCH.md` — read before touching the price estimator or the shipped seed. |
+| `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. Vendor pricing: `management/addons/auctionator/VENDOR-PRICE-RESEARCH.md` — read before touching the price estimator or the shipped seed. How the addon is put together — upstream vs. local, the two UI worlds, the saved-variable map, and the recipes for adding a tab or a subsystem: `management/addons/auctionator/FRAMEWORK.md` — read before adding anything new. Open request queue (owner's backlog, with what each item means against the current code): `management/addons/auctionator/BACKLOG.md`. |
 | `PasslootBiS` | tabs | Ace3. Load order in `Core/Core.xml`; `PassLoot.lua` loads first, so shared helpers go there. BiS Check (the downgrade veto + the run's win ledger) spans both PassLoot addons: `management/addons/passlootbis/BIS-CHECK.md` — read before touching the roll gate or the verdict shape. The three bind-confirmation popups (and why a correct per-rule filter never fired): `management/addons/passlootbis/BIND-CONFIRMS.md`. How the "Not Usable" rule decides usability from tooltip *colour* — and the blank-red-line bug that made it swallow wearable gear: `management/addons/passlootbis/USABLE-SCAN.md` — read before touching `Core/Cache.lua`'s colour test or `Modules/Usable.lua`. In-game test plan for all of the above, incl. every debug command: `management/addons/passlootbis/TESTING.md`. |
 | `PassLootBiS_Scanner` | tabs | Load order in the `.toc`; `Core/UI.lua` loads before its consumers. Files guard on `rawget(_G, "CreateFrame")` so they stay loadable under bare lua5.1 — **preserve that**, it is what makes helpers testable offline. |
 

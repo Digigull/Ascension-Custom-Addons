@@ -215,6 +215,11 @@ wrong" into a second thing that went wrong.
 
 ## Not verified in game
 
+> **PARKED — owner's decision, 2026-08-19.** The addons are in use and behaving correctly, so
+> nothing below is an outstanding request. It is kept as a record of what was reasoned rather
+> than observed, so that *if* one of these ever misbehaves the diagnosis is already written.
+> Do not raise these as caveats on unrelated work; see `management/docs/CLAUDE.md`.
+
 Everything here is reasoned, syntax-checked (`luac5.1`) and covered by the offline
 tests (`WONLEDGER_SELFTEST`, `ROLLADVISOR_SELFTEST`, the contract check). Nothing in
 this repo can run the client. The parts most worth watching on a first real run:
