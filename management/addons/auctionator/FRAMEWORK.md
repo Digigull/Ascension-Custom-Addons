@@ -12,7 +12,8 @@ Everything here is read from source. Nothing is verified in-game.
 
 **Baseline at the time of writing:** `luac5.1 -p` passes on every file except
 `Locales/deDE.lua` and `Locales/esES.lua`, which fail on a UTF-8 BOM and are expected to —
-see the repo `CLAUDE.md`. There is no test suite.
+see the repo `CLAUDE.md`. This addon has no offline tests of its own; §9 covers what that
+means, and where the repo's existing ones live.
 
 ---
 
@@ -307,19 +308,34 @@ already declared.
 
 ## 9. What is missing
 
-**A mock-WoW test harness.** Ten comments across four files say a function is "global for the
-harness" or "so the mock-WoW harness can unit-test the maths without a real window"
-(`AuctionatorFinderProfession.lua:343`, `:375`, `:396`, `:435`, `AuctionatorFinder.lua:23`,
-`:82`, `AuctionatorFinderScanThrottle.lua:46`, and others). **No harness exists in the repo.**
+**A mock-WoW test harness — for *this* addon.** Ten comments across four files say a function
+is "global for the harness" or "so the mock-WoW harness can unit-test the maths without a real
+window" (`AuctionatorFinderProfession.lua:343`, `:375`, `:396`, `:435`,
+`AuctionatorFinder.lua:23`, `:82`, `AuctionatorFinderScanThrottle.lua:46`, and others).
+**No such harness is in the repo for Auctionator.**
 
-That is worth flagging plainly: the code has already paid the design cost of being testable —
-functions deliberately kept global, `addonTable` guarded so files load outside the client,
-`CreateFrame` existence checks — and gets none of the benefit. Nothing in this repo can be run,
-so every change is currently verified by reading plus an in-game test.
+**But the repo is not without one — PassLootBiS has three, and they pass.** Run from the repo
+root under bare `lua5.1`, no client:
+
+```
+management/addons/passlootbis/tools/contract-check.lua     20 assertions
+management/addons/passlootbis/tools/usable-smoke.lua       14 assertions
+management/addons/passlootbis/tools/report-smoke.lua       3 passes, exits non-zero on a crash
+```
+
+Plus in-game `*_SELFTEST` hooks in seven source files across both PassLoot addons. So the
+pattern, the location convention (`management/addons/<addon>/tools/`, not shipped) and the
+"stub the client, exercise the maths" technique are all established here already — an
+Auctionator harness would be following a local precedent, not inventing one.
+
+That makes the gap sharper rather than softer: this addon has already paid the design cost of
+being testable — functions deliberately kept global, `addonTable` guarded so files load outside
+the client, `CreateFrame` existence checks — and is the one addon that gets none of the
+benefit. Every change here is currently verified by reading plus an in-game test.
 
 Given the backlog is full of pure arithmetic — craft cost, yield division, profit, ledger
 totals — a small harness is the highest-leverage non-feature work available. Not proposed as
-part of the backlog; recorded because the hooks are already there.
+part of the backlog; recorded because both the hooks and the precedent are already there.
 
 ---
 
