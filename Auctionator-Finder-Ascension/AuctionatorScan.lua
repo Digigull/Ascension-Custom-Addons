@@ -710,7 +710,16 @@ function AtrSearch:Finish()
 		
 		if (newprice > 0) then
 			if (scn.itemQuality + 1 >= AUCTIONATOR_SCAN_MINLEVEL) then
-				gAtr_ScanDB[scn.itemName] = newprice;
+				-- The one writer that KNOWS its variant: after the quality split
+				-- (part 1) each bucket carries its own listing's link, so the price
+				-- lands in that variant's slot instead of overwriting the name.
+				-- Without a link it stores as before, against the name's default.
+				if (type (Atr_PriceStore) == "function") then
+					local vkey = (type (Atr_VariantKey) == "function") and Atr_VariantKey (scn.itemLink) or nil;
+					Atr_PriceStore (gAtr_ScanDB, scn.itemName, newprice, vkey);
+				else
+					gAtr_ScanDB[scn.itemName] = newprice;
+				end
 
 				-- Keep the median sample set in step with the auction price.  A
 				-- targeted search used to write gAtr_ScanDB alone, so its auction
@@ -1399,7 +1408,10 @@ function Atr_FullScanAnalyze()
 					gNumUpdated = gNumUpdated + 1;
 				end
 
-				gAtr_ScanDB[name] = newprice;
+				-- full scan: aggregated by name with no per-variant link, so this
+				-- updates the name's default and leaves any variants alone
+				if (type (Atr_PriceStore) == "function") then Atr_PriceStore (gAtr_ScanDB, name, newprice);
+				else gAtr_ScanDB[name] = newprice; end
 
                 -- Sample the quantity-weighted median of this scan's listings,
                 -- not its lowest price, so the median reflects the whole book

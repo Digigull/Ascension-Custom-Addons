@@ -2935,7 +2935,10 @@ function Atr_Bz_MarketPrice (rec)
 
 	if (rec.name == nil or gAtr_ScanDB == nil) then return nil; end
 
-	local p = gAtr_ScanDB[rec.name];
+	-- variant-aware read (BACKGROUND: BACKLOG item 12 part 3).  No link here, so
+	-- this asks for the name's default, which is the lowest known variant --
+	-- exactly the number this line showed before variants existed.
+	local p = (type (Atr_PriceValue) == "function") and Atr_PriceValue (gAtr_ScanDB[rec.name]) or gAtr_ScanDB[rec.name];
 	if (type (p) ~= "number" or p <= 0) then return nil; end
 
 	return p;
@@ -3330,7 +3333,10 @@ function Atr_Bz_FeedPriceDB (itemID, copper)
 
 	local price = Atr_Bz_Round (c);
 
-	gAtr_ScanDB[name] = price;
+	-- through the store, so a Bazaar write cannot flatten a variant table the
+	-- auction scan has already built for this name (BACKLOG item 12 part 3)
+	if (type (Atr_PriceStore) == "function") then Atr_PriceStore (gAtr_ScanDB, name, price);
+	else gAtr_ScanDB[name] = price; end
 
 	if (type (gAtr_MeanDB) == "table") then
 		local m = gAtr_MeanDB[name];

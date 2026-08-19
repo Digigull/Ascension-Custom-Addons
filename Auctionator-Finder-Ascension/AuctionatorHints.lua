@@ -55,7 +55,7 @@ function Atr_BuildHints (itemName)
 	-- Auctionator Full Scan
 	
 	if (itemName ~= nil and gAtr_ScanDB[itemName] ~= nil) then
-		Atr_AppendHint (results, gAtr_ScanDB[itemName], ZT("Auctionator scan data"));
+		Atr_AppendHint (results, Atr_PriceValue (gAtr_ScanDB[itemName]), ZT("Auctionator scan data"));
 	end
 
 	-- most recent historical price
@@ -233,6 +233,126 @@ function Atr_AH_InvalidateVariantCache ()
 	gAHVariantEstCache = {};
 end
 
+-- SAME-NAME VARIANTS IN THE PRICE DATABASE (BACKLOG item 12 part 3) -------
+--
+-- This server ships genuinely different items under one name -- a rare and an
+-- epic Bloodforged Imperial Jewel -- and the price database is keyed by name,
+-- so one number was standing in for both.
+--
+-- The value carries the variants; the KEY stays the name.  Re-keying the
+-- database to item id was the obvious move and is the wrong one: a dozen callers
+-- have a name and nothing else and always will (Atr_GetDEitemName turns an id
+-- into a name and looks the name up; the profession code prices reagents and
+-- scrolls by name; the Bazaar prices rec.name; Atr_GetAuctionBuyout is a public
+-- API taking either).  Under id-keying every one of those becomes unanswerable
+-- and the fix is a name->ids index with a policy for picking among them -- which
+-- is this design, arrived at by the expensive route and bolted on the side.
+--
+--   gAtr_ScanDB[name] = 123456                       -- legacy: one price
+--   gAtr_ScanDB[name] = { ["52510:0"] = 97500,       -- itemId:suffixId
+--                         ["52511:0"] = 1233375,
+--                         ["?"]       = 97500,       -- price for the name, variant unknown
+--                         dflt        = 97500 }      -- derived: the lowest of them
+--
+-- MIGRATION IS FREE, which is the other reason for this shape.  A legacy number
+-- simply IS "one variant, unknown id", so a type check handles every pre-existing
+-- row forever: no __dbversion bump, no rewrite pass, no risk of eating someone's
+-- database.  gAtr_MeanDB already does exactly this trick at AuctionatorScan.lua.
+--
+-- `dflt` IS THE LOWEST KNOWN VARIANT, deliberately.  The database's meaning is
+-- "lowest per-unit buyout", and before this change a merged bucket took the
+-- minimum across every listing regardless of variant.  Defaulting to the lowest
+-- therefore answers a name-only lookup with exactly the number it would have got
+-- before -- the one property that matters, because a price silently RISING is
+-- the worst thing this addon could do to someone pricing their goods.
+--
+-- The key is itemId:suffixId and not a bare id: random-suffix gear is the OTHER
+-- variant axis and the two must not be conflated (see Atr_GetAHVariantEstimate
+-- just below, which handles that one and is unrelated to this).  The format is
+-- already in this addon -- AUCTIONATOR_PRICING_HISTORY stores
+-- itemId:suffixId:uniqueId -- minus uniqueId, which is per-instance and would
+-- shatter the table.
+
+-- The variant key for an item link, or nil when there is no link to read.
+-- 3.3.5 item strings are item:id:enchant:gem1:gem2:gem3:gem4:suffixId:uniqueId:level
+function Atr_VariantKey (link)
+
+	if (type (link) ~= "string") then return nil; end
+
+	local itemId, suffixId = link:match ("item:(%d+):%-?%d*:%-?%d*:%-?%d*:%-?%d*:%-?%d*:(%-?%d+)");
+
+	if (itemId == nil) then
+		itemId = link:match ("item:(%d+)");
+		if (itemId == nil) then return nil; end
+		suffixId = "0";
+	end
+
+	return itemId..":"..(suffixId or "0");
+end
+
+-- Read one stored value.  Takes what is IN the table, not the table, so every
+-- caller that already has the value can resolve it without a second lookup.
+function Atr_PriceValue (v, variantKey)
+
+	if (type (v) == "number") then return v; end		-- legacy row: one price, unknown variant
+	if (type (v) ~= "table")  then return nil; end
+
+	if (variantKey and type (v[variantKey]) == "number") then return v[variantKey]; end
+
+	return v.dflt;
+end
+
+-- Write one price.  With no variant key this behaves exactly as the old
+-- assignment did, except that it will not flatten a variant table another
+-- writer has already built.
+--
+-- `dflt` is DERIVED, never assigned: it is the minimum across every slot, and it
+-- is what a name-only lookup answers.  Two things follow, and the second one is
+-- the one that bit on the first attempt:
+--
+--   * A price the addon knew BEFORE it knew about variants is not thrown away
+--     when the first variant arrives.  It moves into the reserved slot ATR_PV_ANY
+--     ("this name, variant unknown"), so promoting a row cannot make its
+--     name-only price jump to whatever variant happened to be scanned first.
+--     Written naively -- legacy value into dflt, then dflt recomputed from the
+--     variant slots alone -- a single dear variant RAISED the answer for the
+--     whole name, which is the one thing this database must never do quietly.
+--     Caught by running this over a real 5471-row database rather than reasoning
+--     about it.
+--   * ATR_PV_ANY is not a stale ghost: the variant-less writers (the full scan,
+--     the Finder feed, the Bazaar) all keep writing to it, so it stays the
+--     name-level price it has always been and is refreshed on every full scan.
+ATR_PV_ANY = "?";		-- reserved slot: a price for the name, variant unknown
+
+function Atr_PriceStore (db, name, price, variantKey)
+
+	if (type (db) ~= "table" or name == nil or type (price) ~= "number") then return; end
+
+	local cur = db[name];
+
+	-- a name-level write on a row that has no variants stays a bare number,
+	-- exactly as before -- most of the database never becomes a table at all
+	if (variantKey == nil and type (cur) ~= "table") then
+		db[name] = price;
+		return;
+	end
+
+	if (type (cur) ~= "table") then
+		cur = {};
+		if (type (db[name]) == "number") then cur[ATR_PV_ANY] = db[name]; end
+		db[name] = cur;
+	end
+
+	cur[variantKey or ATR_PV_ANY] = price;
+
+	local lo = nil;
+	local k, pr;
+	for k, pr in pairs (cur) do
+		if (k ~= "dflt" and type (pr) == "number" and (lo == nil or pr < lo)) then lo = pr; end
+	end
+	cur.dflt = lo;
+end
+
 -- Returns estimatedPrice, variantCount for a base item name, or nil when the
 -- scan DB holds no "<name> of ..." variants to estimate from.
 function Atr_GetAHVariantEstimate (itemName)
@@ -247,8 +367,12 @@ function Atr_GetAHVariantEstimate (itemName)
 	local prefix = itemName .. " of ";		-- random-suffix delimiter (enUS: "of the Owl", "of Intellect", ...)
 	local plen   = #prefix;
 	local prices = {};
-	for name, price in pairs (gAtr_ScanDB) do
-		if (type (price) == "number" and price > 0 and #name > plen and string.sub (name, 1, plen) == prefix) then
+	for name, value in pairs (gAtr_ScanDB) do
+		-- Atr_PriceValue, not a type check: a variant row is a TABLE now, and the
+		-- old `type(price) == "number"` filter would have silently dropped exactly
+		-- the rows this database learned the most about.
+		local price = Atr_PriceValue (value);
+		if (price and price > 0 and #name > plen and string.sub (name, 1, plen) == prefix) then
 			table.insert (prices, price);
 		end
 	end
@@ -270,7 +394,10 @@ end
 
 -----------------------------------------
 
-function Atr_GetAuctionPrice (item)  -- itemName or itemID
+-- `variantKey` is optional (Atr_VariantKey of the item's link).  Without one the
+-- answer is the name's default, which is what every existing caller gets and is
+-- the same number they got before variants existed.
+function Atr_GetAuctionPrice (item, variantKey)  -- itemName or itemID
 
 	local itemName;
 
@@ -285,7 +412,8 @@ function Atr_GetAuctionPrice (item)  -- itemName or itemID
 	end
 
 	if (gAtr_ScanDB and gAtr_ScanDB[itemName]) then
-		return gAtr_ScanDB[itemName];
+		local p = Atr_PriceValue (gAtr_ScanDB[itemName], variantKey);
+		if (p) then return p; end
 	end
 
 	local recent = Atr_GetMostRecentSale (itemName);
