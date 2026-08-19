@@ -1360,8 +1360,14 @@ end
 -- MEDIUM, not LOW: LOW is where Blizzard's action bars and unit frames live, and
 -- they are toplevel, so clicking one restacks LOW and lifts it over anything of ours
 -- sitting there. MEDIUM clears them and still leaves the window UNDER the Blizzard
--- panels on HIGH and above (bags, character sheet, world map), which is the layering
--- custom UI is expected to take.
+-- panels on HIGH and above (bags, world map), which is the layering custom UI is
+-- expected to take.
+--
+-- The catch, found in the field 2026-08: the character sheet and the auction house
+-- are NOT on HIGH. They take the default MEDIUM and they only raise within it when
+-- you CLICK them, so a panel opened by keybind or by an NPC sits at its default low
+-- level and this window's 100 covers it. A window you want under those panels needs
+-- WINDOW_STRATA_UNDER_PANELS below, not a lower level here.
 --
 -- The level matters as much as the strata: bar addons (Bartender among them) default
 -- to MEDIUM too, and within one strata the higher frame level wins. Blizzard's frames
@@ -1381,9 +1387,29 @@ end
 PasslootBiS.WINDOW_STRATA = "MEDIUM"
 PasslootBiS.WINDOW_LEVEL = 100
 
-function PasslootBiS:ApplyWindowChrome(frame)
+-- One step down, for a window that must never cover a Blizzard panel you are
+-- interacting with. Owner's call 2026-08, on the Loot Rolls window specifically: it
+-- was drawing over the character sheet and the auction house, both of which sit on
+-- MEDIUM at a low level (see above), and a log you leave open all session has no
+-- business in front of a panel you are actively using.
+--
+-- The frame level stays 100, and that is the half that was missing the last time this
+-- window lived on LOW. LOW at a default level put it under Blizzard's bars and unit
+-- frames outright; at 100 it clears their resting levels.
+--
+-- The residual cost, stated because it is the reason this is not the house default:
+-- Blizzard's bars and unit frames are `toplevel` on LOW, and a toplevel raise beats
+-- any fixed level, so CLICKING one where it overlaps this window will lift it in
+-- front until something restacks. That is a narrower failure than covering the
+-- character sheet, but it is not nothing — if it bites, moving a window back is one
+-- argument at its ApplyWindowChrome call.
+PasslootBiS.WINDOW_STRATA_UNDER_PANELS = "LOW"
+
+-- `strata` overrides WINDOW_STRATA for one window (pass WINDOW_STRATA_UNDER_PANELS);
+-- the level is shared, since it means the same thing on either strata.
+function PasslootBiS:ApplyWindowChrome(frame, strata)
 	if not frame or type(frame.SetFrameStrata) ~= "function" then return frame end
-	frame:SetFrameStrata(self.WINDOW_STRATA)
+	frame:SetFrameStrata(strata or self.WINDOW_STRATA)
 	if type(frame.SetFrameLevel) == "function" then
 		frame:SetFrameLevel(self.WINDOW_LEVEL)
 	end

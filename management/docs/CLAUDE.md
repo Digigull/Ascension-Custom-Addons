@@ -74,27 +74,42 @@ performance one. Current decisions:
 
 | Use | Strata | Examples |
 |---|---|---|
-| Persistent window left open while playing | `MEDIUM` + frame level 100 | cpp meter, PassLootBiS Loot Window, BiS Scanner options/filter |
+| Persistent window left open while playing | `LOW` + frame level 100 | cpp meter, PassLootBiS Loot Rolls window |
+| Window you open, use and close | `MEDIUM` + frame level 100 | BiS Scanner options/filter, PassLootBiS BiS cleanup |
 | Deliberately opened; copy/paste popups | `FULLSCREEN_DIALOG` | cpp export/detail/glossary, BiS Scanner debug box |
 | Opened from *inside* the Interface Options panel | `FULLSCREEN_DIALOG` | PassLootBiS BiS Manager |
 | Attached to a Blizzard panel | match that panel | Honor Tracker panel (`HIGH`) |
 
 Rules behind the table:
 
-- Custom UI should generally render **under** the default Blizzard panels (bags, character
-  sheet, world map — `HIGH` and above) but **over** the action bars and unit frames. That is
-  `MEDIUM` + frame level 100, the house default for anything you leave open while playing.
-- **`LOW` is not that default, however low it sounds.** Blizzard's bars and unit frames are on
-  `LOW` themselves (and they are `toplevel`, so clicking one restacks `LOW` and lifts it over
-  your window) — every window in this repo that started on `LOW` was being drawn through by
-  health bars and action buttons. The level is the other half of the fix: bar addons such as
-  Bartender default to `MEDIUM` too, and within one strata the higher frame level wins. Blizzard
-  frames and the bar addons sit in the low single digits there, so 100 clears them with room for
-  a window's own children, which take 101 upwards.
+- Custom UI should generally render **under** whatever the user is interacting with, but
+  **over** the action bars and unit frames. `MEDIUM` + frame level 100 is the house default;
+  `LOW` + the same level is for a window parked on screen all session (see the next two
+  bullets for why the pair matters on either).
+- **"The Blizzard panels" are not one layer, and this is the thing that keeps being got
+  wrong.** Bags are `HIGH` and the Interface Options window is `DIALOG`, so `MEDIUM` clears
+  them — but the **character sheet and the auction house sit on `MEDIUM` at its default
+  level** and only raise within it when you *click* them. A `MEDIUM` + level 100 window
+  therefore covers a character sheet opened by keybind or an auction house opened from an
+  NPC (owner's report, 2026-08). A window that must never do that goes on `LOW`.
+- **`LOW` needs the frame level, and never worked without it.** Blizzard's bars and unit
+  frames are on `LOW` themselves — every window in this repo that started on `LOW` *at a
+  default level* was drawn through by health bars and action buttons, which is what sent
+  them all to `MEDIUM` in the first place. At level 100 they clear those frames' resting
+  levels: bar addons such as Bartender default to `MEDIUM` too, and within one strata the
+  higher frame level wins, with Blizzard frames and the bar addons in the low single digits.
+  100 leaves room for a window's own children, which take 101 upwards.
+- **What a level cannot beat is a `toplevel` raise.** Blizzard's bars and unit frames are
+  toplevel, so *clicking* one that overlaps a `LOW` window still lifts it in front. That is
+  the accepted residual cost of the `LOW` placement, and the reason it is not the default
+  for everything.
 - **Don't hand-roll the pair — each addon has a helper:** `ns.UI.applyWindowChrome()`
   (`PassLootBiS_Scanner/Core/UI.lua`), `PasslootBiS:ApplyWindowChrome()`
   (`PasslootBiS/Core/PassLoot.lua`), and a file-local `applyWindowChrome()` in
-  `!ClientPerfProbe/UI.lua`. All three are `MEDIUM` + level 100, and each carries the reasoning.
+  `!ClientPerfProbe/UI.lua`. Each carries the reasoning. All three park a window at level 100;
+  the strata is `MEDIUM` by default, and the two that need `LOW` say so at the call site —
+  PassLootBiS passes `WINDOW_STRATA_UNDER_PANELS`, and the cpp meter's file-local constant is
+  `LOW` outright, since the meter is the only window that helper serves.
 - **Nothing on `MEDIUM` or above may call `Raise()`.** The raise is the drag-freeze restack;
   it is only cheap on a sparse strata. Use a fixed high frame level for front-on-open instead —
   that is what the three helpers do when a show path calls them again. `Raise()` on open is

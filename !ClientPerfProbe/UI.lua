@@ -53,29 +53,36 @@ end
 -- playing. (The export/detail/glossary popups and the menus set FULLSCREEN_DIALOG
 -- themselves: you open those to read, so they float over everything.)
 --
--- MEDIUM, not LOW: LOW is where Blizzard's action bars and unit frames live, and they
--- are toplevel, so clicking one restacks LOW and lifts it over anything of ours
--- sitting there — the meter was being drawn through by health bars and action
--- buttons. MEDIUM clears them and still leaves the window UNDER the interaction
--- panels on HIGH and above (character panel, bags, world map), which is the whole
--- point of not putting a meter up high.
+-- LOW + a high frame level, and the pair is the point — neither half works alone.
 --
--- The level matters as much as the strata: bar addons (Bartender among them) default
--- to MEDIUM too, and within one strata the higher frame level wins. Blizzard's frames
--- and the bar addons sit in the low single digits there, so 100 clears them with room
--- for the window's own children, which take 101 upwards.
+-- History, because both halves have been wrong before. The meter started on LOW at a
+-- default level and Blizzard's action bars and unit frames drew straight through it:
+-- they share LOW and they are toplevel, so they outrank anything sitting there at
+-- rest. Moving to MEDIUM fixed that and introduced a worse one — the character panel
+-- and the auction house are NOT on HIGH as the old comment here claimed, they take
+-- MEDIUM's default level and only raise within it when you CLICK them, so a meter at
+-- level 100 covered a panel opened by keybind or by an NPC. Owner's report 2026-08:
+-- that is the standout, and a meter belongs behind anything you are interacting with.
+--
+-- So: back to LOW, but this time keeping the level. Blizzard's frames and the bar
+-- addons sit in the low single digits, so 100 clears their resting levels with room
+-- for the window's own children, which take 101 upwards. What a level cannot beat is
+-- a toplevel RAISE, so clicking a bar or unit frame that overlaps the meter can still
+-- lift it in front. That is the accepted residual cost of not covering the panels;
+-- one word here moves the meter back if it proves worse in practice.
 --
 -- It also replaces the Raise() this window used to do on open. Raise() reorders a
 -- frame against every sibling in its strata — the exact operation the drag-freeze is
--- made of (variant A, management/docs/DRAG-FREEZE.md): cheap on a sparse strata like
--- the old LOW, but the ~0.6-2.6s engine pass on a populated one, and MEDIUM is
--- populated. Setting one frame's level reorders nothing, so UI.Show() calls this
--- again instead of Raise(). Like Raise() it cannot cross strata, so the meter still
--- stays under the panels.
+-- made of (variant A, management/docs/DRAG-FREEZE.md): cheap on a sparse strata,
+-- the ~0.6-2.6s engine pass on a populated one. Setting one frame's level reorders
+-- nothing, so UI.Show() calls this again instead of Raise() — and that stays true
+-- whichever strata this lands on, so it is not something to relax now that LOW is
+-- back. Like Raise() it cannot cross strata, so the meter still stays under the
+-- panels.
 --
 -- Never pair this (or any strata) with SetToplevel(true): that is variant A, one
 -- restack per click/drag. This addon measured the freeze; it should not ship it.
-local WINDOW_STRATA = "MEDIUM"
+local WINDOW_STRATA = "LOW"
 local WINDOW_LEVEL = 100
 
 local function applyWindowChrome(f)
@@ -1023,10 +1030,10 @@ local function build()
         frame:SetPoint(db.ui.point, UIParent, db.ui.relPoint or db.ui.point, db.ui.x or 0, db.ui.y or 0)
     end
     -- Strata + level so the meter sits BEHIND the interaction panels (character
-    -- panel, world map, bags) but IN FRONT of the action bars and unit frames —
-    -- read applyWindowChrome() above before changing either half; LOW alone put the
-    -- meter under the bars, and the level is what settles a tie with a bar addon on
-    -- the same strata.
+    -- panel, auction house, world map, bags) and, at rest, IN FRONT of the action
+    -- bars and unit frames — read applyWindowChrome() above before changing either
+    -- half. LOW alone put the meter under the bars; MEDIUM put it over the character
+    -- panel and the auction house. LOW + level 100 is the pair that does neither.
     -- No SetToplevel: that + a populated strata is the confirmed drag-freeze
     -- (variant A, management/docs/DRAG-FREEZE.md); without it any strata is spike-free
     -- (variant B).
@@ -1181,9 +1188,9 @@ end
 function UI.Show()
     if not frame then build() end
     frame:Show()
-    -- Front-of-strata on open without a restack. Deliberately NOT frame:Raise() — on
-    -- MEDIUM that is the drag-freeze pass itself; re-asserting this window's own
-    -- strata + level reorders nothing (see applyWindowChrome above).
+    -- Front-of-strata on open without a restack. Deliberately NOT frame:Raise() —
+    -- that is the drag-freeze pass itself; re-asserting this window's own strata +
+    -- level reorders nothing (see applyWindowChrome above).
     applyWindowChrome(frame)
     saveShown(true)
     render()
