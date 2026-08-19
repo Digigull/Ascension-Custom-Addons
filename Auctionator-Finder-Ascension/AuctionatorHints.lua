@@ -1876,13 +1876,21 @@ end
 --   rest of the tip is showing per-stack prices we scale both figures by the
 --   stack too, so the craft lines never disagree with the Auction line above.
 --
---   MULTI-OUTPUT RECIPES get both scales, each labelled.  Distilled Flask of
---   the Unyielding makes 3, so "what does it cost" has two honest answers --
---   one flask, or one press of Create -- and an unlabelled figure sitting under
---   a per-item Auction price is read as whichever the reader was expecting.
---   The per-item pair comes first (that is the scale the Auction line above is
---   on) and the per-craft pair follows it, tagged with the yield.
-function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xstring)
+--   MULTI-OUTPUT RECIPES are shown PER CRAFT, tagged with the yield.  Distilled
+--   Flask of the Unyielding makes 3, so "what does it cost" has two honest
+--   answers -- one flask, or one press of Create -- and an unlabelled figure
+--   sitting under a per-item Auction price is read as whichever the reader was
+--   expecting.  One craft is the answer worth the tooltip room: it is what a
+--   press of Create actually costs and earns, and it is what the profit sort
+--   ranks on (Atr_ProfSort_BuildOrder), so the two agree by construction.  The
+--   tag is what keeps it honest against the per-item Auction line above --
+--   these lines say "x3" where that one says nothing.  Showing both scales was
+--   the first shape of this; it was correct and it was clutter (owner,
+--   2026-08-19).
+--
+--   skillIndex, when the caller has it, is the trade skill row this tooltip is
+--   for.  See the first source below -- it is worth more than it looks.
+function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xstring, skillIndex)
 
 	if (tip == nil or link == nil) then return; end
 	if (AUCTIONATOR_A_TIPS ~= 1) then return; end			-- crafting economics are auction info
@@ -1890,7 +1898,34 @@ function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xst
 
 	xstring = xstring or "";
 
-	local craftCost, madeCount = Atr_Craft_GetCraftCost (link, itemName);	-- per item, from the background-harvested recipe DB
+	local craftCost, madeCount;
+	local isCraftable = false;
+
+	-- FIRST: the row this tooltip is actually for, when the caller knows it.
+	--
+	-- Both sources below have to FIND the recipe that makes this item, and both
+	-- match on the produced item's ID or on the row's NAME.  That match fails
+	-- outright for a row named after its action rather than its product --
+	-- "Transmute: Arcanite" makes "Arcanite Bar" -- and it fails again for any
+	-- row this client hands back no item link for (the quirk the
+	-- SetTradeSkillItem hook already works around by reading the link back off
+	-- the rendered tooltip).  Transmutes hit both at once, which is why they
+	-- showed no craft lines at all rather than a wrong number.
+	--
+	-- The index needs no match, cannot be wrong, and is cheaper than the scan it
+	-- replaces.  It also proves the recipe EXISTS even when a reagent cannot be
+	-- priced, so an unpriced transmute now says "cost unknown" instead of
+	-- staying silent.
+	if (skillIndex and type(Atr_ProfSort_RowCost) == "function") then
+		isCraftable = true;
+		craftCost, madeCount = Atr_ProfSort_RowCost (skillIndex);
+	end
+
+	-- Then the background-harvested recipe DB, which is the only source with the
+	-- profession window closed (a bag or auction house tooltip).
+	if (craftCost == nil or craftCost <= 0) then
+		craftCost, madeCount = Atr_Craft_GetCraftCost (link, itemName);		-- per item
+	end
 
 	-- Fall back to a LIVE read of the open profession window.  On the Ascension
 	-- client the harvest into the recipe DB can miss recipes (reagent item links
@@ -1898,7 +1933,6 @@ function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xst
 	-- window is open in front of you -- but the live window has the data.  This
 	-- also tells us the recipe EXISTS (isCraftable) even when a reagent can't be
 	-- priced, so we can say "cost unknown" instead of nothing.
-	local isCraftable = false;
 	if ((craftCost == nil or craftCost <= 0) and type(Atr_Craft_LiveCostForItem) == "function") then
 		local liveCost, found, liveMade = Atr_Craft_LiveCostForItem (link, itemName);
 		if (liveCost and liveCost > 0) then craftCost = liveCost; madeCount = liveMade; end
@@ -1933,35 +1967,30 @@ function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xst
 	-- Does this recipe make more than one?  Under the Shift stack multiplier
 	-- every line on the tooltip is already scaled by the hovered stack and says
 	-- so through xstring; a second multiplier there would be two scales arguing
-	-- on one tooltip, so the per-craft pair stands down and these lines read
-	-- exactly as they always did.
+	-- on one tooltip, so we leave those lines per item, exactly as they always
+	-- were, and let xstring speak.
 	madeCount = tonumber (madeCount) or 1;
 	if (madeCount < 1) then madeCount = 1; end
-	local showPerCraft = (madeCount > 1) and not (num and showStackPrices);
-	local eachTag      = showPerCraft and "|cFFAAAAFF (each)|r" or "";
-	local craftTag     = "|cFFAAAAFF x"..madeCount.."|r";
+	local perCraft = (madeCount > 1) and not (num and showStackPrices);
 
-	-- One place writes a profit/loss/unknown line, so the per-item and
-	-- per-craft pairs cannot end up phrased or coloured differently.
-	local function profitLine (label, sell, cost)
-		if (sell == nil or sell <= 0) then			-- cost known, market price not
-			tip:AddDoubleLine (ZT("Craft profit")..label, "|cFFAAAAAA"..ZT("unknown").."|r");
-			return;
-		end
-		local margin = sell - cost;
-		if (margin >= 0) then
-			tip:AddDoubleLine (ZT("Craft profit")..label, "|cFF44FF44"..zc.priceToMoneyString (margin).."|r");
-		else
-			tip:AddDoubleLine (ZT("Craft loss")..label, "|cFFFF4444-"..zc.priceToMoneyString (-margin).."|r");
-		end
+	if (perCraft) then
+		craftCost = craftCost * madeCount;
+		if (sellPrice) then sellPrice = sellPrice * madeCount; end
+		xstring = xstring.."|cFFAAAAFF x"..madeCount.."|r";
 	end
 
-	tip:AddDoubleLine (ZT("Craft cost")..xstring..eachTag, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost));
-	profitLine (xstring..eachTag, sellPrice, craftCost);
+	tip:AddDoubleLine (ZT("Craft cost")..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost));
 
-	if (showPerCraft) then
-		tip:AddDoubleLine (ZT("Craft cost")..craftTag, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost * madeCount));
-		profitLine (craftTag, sellPrice and (sellPrice * madeCount) or nil, craftCost * madeCount);
+	if (sellPrice == nil or sellPrice <= 0) then			-- cost known, market price not
+		tip:AddDoubleLine (ZT("Craft profit")..xstring, "|cFFAAAAAA"..ZT("unknown").."|r");
+		return;
+	end
+
+	local margin = sellPrice - craftCost;
+	if (margin >= 0) then
+		tip:AddDoubleLine (ZT("Craft profit")..xstring, "|cFF44FF44"..zc.priceToMoneyString (margin).."|r");
+	else
+		tip:AddDoubleLine (ZT("Craft loss")..xstring, "|cFFFF4444-"..zc.priceToMoneyString (-margin).."|r");
 	end
 end
 -- FINDER_TAB end: crafted-goods profitability -----------------------------
@@ -2004,7 +2033,7 @@ function Atr_AddEnchantTradeSkillTip (tip, skillIndex)
 		return true;
 	end
 
-	local scroll = Atr_Craft_ScrollName (rowName) or rowName;
+	local scroll = Atr_ProfSort_RowSellName (skillIndex) or rowName;	-- the scroll, for an enchant row
 	local sell   = Atr_GetAuctionPrice   and tonumber (Atr_GetAuctionPrice (scroll)) or nil;
 	local median = Atr_GetMeanPrice      and tonumber (Atr_GetMeanPrice (scroll))    or nil;
 	local cost   = Atr_ProfSort_RowCost  and Atr_ProfSort_RowCost (skillIndex)       or nil;
@@ -2049,7 +2078,11 @@ function Atr_AddEnchantTradeSkillTip (tip, skillIndex)
 end
 -- FINDER_TAB end: enchanting rows -----------------------------------------
 
-local function ShowTipWithPricing (tip, link, num)
+-- skillIndex is passed only by the trade skill hook, and only for the RECIPE
+-- hover: it is the row the tooltip is for, which spares the craft-cost lines a
+-- search that cannot always succeed (see Atr_AddCraftProfitToTip).  Every other
+-- caller leaves it nil and nothing changes for them.
+local function ShowTipWithPricing (tip, link, num, skillIndex)
 
 	if (link == nil) then
 		return;
@@ -2321,7 +2354,7 @@ local function ShowTipWithPricing (tip, link, num)
 	-- comparison needs the auction price; only appears for craftable items
 	-- whose reagents we can fully price, so normal tooltips stay untouched.
 	if (revealExtra) then
-		Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xstring);
+		Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xstring, skillIndex);
 	end
 
 	-- FINDER_TAB: while the extra lines are hidden behind ALT, leave a faint
@@ -2471,7 +2504,10 @@ hooksecurefunc (GameTooltip, "SetTradeSkillItem",
 			if (ok and handled) then return; end
 		end
 
-		ShowTipWithPricing (tip, link, num);
+		-- Hand the row index down for a RECIPE hover only.  A reagent hover is an
+		-- ordinary item that may itself be craftable by some other row, so it
+		-- must go through the normal item-to-recipe lookup, not this row.
+		ShowTipWithPricing (tip, link, num, (id == nil) and skill or nil);
 	end
 );
 
