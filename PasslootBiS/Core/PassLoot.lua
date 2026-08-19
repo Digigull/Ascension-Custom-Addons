@@ -31,6 +31,10 @@ local defaults = {
 	["profile"] = {
 		["Quiet"] = false,
 		["AllowMultipleConfirmPopups"] = false,
+		-- Auto-answer the client's "this item will bind to you" warning when you take
+		-- a BoP item out of a loot window (Core/PassLoot.lua, LOOT_BIND_CONFIRM).
+		-- OFF by default: confirming binds the item for good, so it is the user's call.
+		["AutoConfirmBindOnPickup"] = false,
 		["Rules"] = {},
 		-- Flipped by SeedDefaultRules() the first time a profile is loaded, so the
 		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
@@ -314,6 +318,14 @@ PasslootBiS.OptionsTable = {
 					end,
 					["width"] = "full",
 					["disabled"] = function(info, value) return not StaticPopupDialogs.CONFIRM_LOOT_ROLL end, -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
+				},
+				["AutoConfirmBindOnPickup"] = {
+					["name"] = L["Auto-Confirm Bind on Pickup"],
+					["desc"] = L["AutoConfirmBindOnPickup_Desc"],
+					["type"] = "toggle",
+					["order"] = 21,
+					["arg"] = { "AutoConfirmBindOnPickup" },
+					["width"] = "full",
 				},
 				["ShowMinimapButton"] = {
 					["name"] = L["Show Minimap Button"],
@@ -1612,6 +1624,9 @@ function PasslootBiS:OnEnable()
 	BUCKET_PLAYER_LEVEL_UP = self:RegisterBucketEvent("PLAYER_LEVEL_UP", 1, "ClearItemCache")
 	-- events that only fire occassionally
 	self:RegisterEvent("START_LOOT_ROLL")
+	-- Always registered; the handler no-ops unless the profile toggle is on, so
+	-- flipping the option takes effect immediately with no re-registration dance.
+	self:RegisterEvent("LOOT_BIND_CONFIRM")
 	self:RegisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
 	self:RegisterEvent("PLAYER_ENTERING_WORLD", "ClearItemCache")
 	-- events that require the event details and also fire with BAG_UPDATE
@@ -1637,6 +1652,7 @@ function PasslootBiS:OnDisable()
 	self:UnregisterBucket(BUCKET_PLAYER_LEVEL_UP)
 	-- events that only fire occassionally
 	self:UnregisterEvent("START_LOOT_ROLL")
+	self:UnregisterEvent("LOOT_BIND_CONFIRM")
 	self:UnregisterEvent("ASCENSION_STORE_COLLECTION_ITEM_LEARNED")
 	self:UnregisterEvent("PLAYER_ENTERING_WORLD")
 	-- events that require the event details and also fire a BAG_UPDATE
@@ -1771,6 +1787,48 @@ function PasslootBiS:AddLastRoll(RollMethod, itemObj, RuleID)
 		table.remove(self.LastRolls, 1)
 	end
 	table.insert(self.LastRolls, TextLine)
+end
+
+-- Bind-on-pickup auto-confirm: LOOT_BIND_CONFIRM -> ConfirmLootSlot(slot).
+--
+-- This is the OTHER BoP prompt, and it is not the one the ConfirmBoP/ConfirmDE
+-- modules answer. Those two answer the *roll* confirmation (CONFIRM_LOOT_ROLL /
+-- CONFIRM_DISENCHANT_ROLL) and are per-rule filters, because a roll has a RollID
+-- and a matched rule behind it. This one fires when you take a BoP item straight
+-- out of a loot window -- a master-loot award, personal loot, or whatever is left
+-- in the corpse once the rolls are done. It carries only a loot slot: no RollID,
+-- no rule, nothing to hang a per-rule filter off. So it is a single profile-wide
+-- toggle (Options > Auto-Confirm Bind on Pickup), OFF by default, because saying
+-- yes binds the item for good and that is the user's call to make, not ours.
+--
+-- Why this is more than a convenience. The client has a small fixed pool of
+-- StaticPopup frames, and CONFIRM_LOOT_ROLL ships with the `exclusive` bit set
+-- (SetExclusiveConfirmPopupBit above, and the "Allow Multiple Confirm Popups"
+-- option that clears it), so only one of them shows at a time. A boss that drops
+-- several BoP items at once leaves a stack of unanswered LOOT_BIND popups sitting
+-- in that pool -- exactly the thing that can crowd out the roll-confirm popup our
+-- own BoP rolls have to go through. Answering these as they arrive keeps the
+-- queue empty and the roll path clear.
+--
+-- Dispatch order: the client's own LootFrame listens for this same event and
+-- raises the popup itself, and whether its handler runs before or after ours is
+-- undefined. So we hide the dialog twice -- once now (it went first) and once on
+-- the next tick (it went second, and the popup appeared after our first hide).
+-- Both hides are keyed to this slot, which is what the client stores as the
+-- dialog's `data`, so a popup for some other slot is never touched.
+function PasslootBiS:LOOT_BIND_CONFIRM(Event, Slot)
+	if (not self.db.profile.AutoConfirmBindOnPickup) then
+		return
+	end
+	if (type(Slot) ~= "number") then
+		return
+	end
+	self:Debug("LOOT_BIND_CONFIRM: auto-confirming loot slot " .. Slot)
+	ConfirmLootSlot(Slot)
+	StaticPopup_Hide("LOOT_BIND", Slot)
+	self:ScheduleTimer(function()
+		StaticPopup_Hide("LOOT_BIND", Slot)
+	end, 0.05)
 end
 
 -- Texture, Name, Count, Quality, BindOnPickup, CanNeed, CanGreed, CanDisenchant = GetLootRollItemInfo(rollID)

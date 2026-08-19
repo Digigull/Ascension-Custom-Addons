@@ -7,6 +7,18 @@ L["Add"] = true
 L["Add a new rule."] = true
 L["Add this filter."] = true
 L["Allow Multiple Confirm Popups"] = true
+-- General options: the bind-on-pickup auto-confirm (Core/PassLoot.lua,
+-- LOOT_BIND_CONFIRM). Worth spelling out in the tooltip that this is the LOOTING
+-- prompt, not the rolling one -- the per-rule "Confirm BoP" filter covers that,
+-- and the two are easy to mistake for each other.
+L["Auto-Confirm Bind on Pickup"] = true
+L["AutoConfirmBindOnPickup_Desc"] = [=[Automatically answer Accept on the "this item will bind to you" warning that appears when you take a bind-on-pickup item out of a loot window.
+
+Handy when a boss drops several BoP items at once: those unanswered popups pile up and can crowd out the roll confirmation popup, which is one way an auto-roll appears to be skipped.
+
+This does NOT affect rolling -- use the per-rule Confirm BoP filter for that.
+
+Careful: accepting binds the item to you permanently.]=]
 L["Available Filters"] = true
 L["Available Filters_Desc"] = [=[Select a filter to use.
 (Each filter must have at least one match)]=]
