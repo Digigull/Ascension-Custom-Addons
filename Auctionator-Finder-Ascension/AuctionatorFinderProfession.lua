@@ -253,6 +253,119 @@ local function Atr_Craft_IDForName(name)
     return tonumber((zc.ItemIDfromLink(link)));   -- extra parens: returns 3 values
 end
 
+-- RECIPE: "ALREADY KNOWN" -----------------------------------------------------
+--
+-- The Finder can hide recipes this character has already learned.  There is no
+-- API on 3.3.5 that answers "have I learned recipe item X"; the only signal is
+-- the red ITEM_SPELL_KNOWN line the client itself adds to a recipe's tooltip.
+-- So we read that line off a hidden tooltip, exactly the way the Finder already
+-- reads a listing's true item level.
+--
+-- Deliberately a TEXT test, not the colour test USABLE-SCAN.md documents for
+-- PassLootBiS.  Colour cannot work here: on a recipe tooltip the same unmet-
+-- requirement red also paints "Requires Enchanting (300)" and a too-high
+-- required level, so a recipe you cannot learn would read as one you already
+-- know -- the exact opposite of the truth, and it would hide it.
+--
+-- The knowledge is PER CHARACTER, unlike almost everything else this addon
+-- persists, so the cache is a SavedVariablesPerCharacter table.  An alt has not
+-- learned your main's recipes.
+--
+-- Only "known" is ever cached, never "not known", and that is what makes a
+-- persisted cache safe: learning a recipe only ever moves unknown -> known, and
+-- nothing in the game moves it back, so a stored `true` cannot go stale.  A
+-- missing entry just means "scan the tooltip again".
+--
+-- When in doubt we do NOT hide.  An item the client has never cached renders a
+-- stub tooltip with no known-line, which reads as "not known" and leaves the row
+-- on screen.  Showing a recipe you own is a mild annoyance; hiding one you want
+-- is a lost purchase.
+function Atr_Craft_KnownDB()
+    if (type(AUCTIONATOR_KNOWN_RECIPES) ~= "table") then AUCTIONATOR_KNOWN_RECIPES = {}; end
+    return AUCTIONATOR_KNOWN_RECIPES;
+end
+
+-- Forget this character's learned-recipe cache.  Global so it is macro-able;
+-- the cache is self-repairing, so this only ever costs a re-scan.
+function Atr_Craft_ForgetKnownRecipes()
+    AUCTIONATOR_KNOWN_RECIPES = {};
+end
+
+local gAtr_KnownTip = nil;
+
+local function Atr_Craft_KnownTip()
+    if (gAtr_KnownTip) then return gAtr_KnownTip; end
+    if (type(CreateFrame) ~= "function") then return nil; end
+    gAtr_KnownTip = CreateFrame("GameTooltip", "Atr_Craft_KnownTT", UIParent, "GameTooltipTemplate");
+    return gAtr_KnownTip;
+end
+
+-- The client's own wording, so a localised or re-worded client still matches.
+-- The literal is only the last resort for a client that does not define it.
+local function Atr_Craft_KnownLineText()
+    local s = _G["ITEM_SPELL_KNOWN"];
+    if (type(s) == "string" and s ~= "") then return s; end
+    return "Already known";
+end
+
+-- The item ID behind an item LINK.  Available at all only because this file now
+-- captures zc (see the header); before that every ID lookup here returned nil.
+local function Atr_Craft_IDFromLink(link)
+    if (type(link) ~= "string" or zc == nil or zc.ItemIDfromLink == nil) then return nil; end
+    return tonumber((zc.ItemIDfromLink(link)));   -- extra parens: returns 3 values
+end
+
+-- Has THIS character already learned the recipe item behind `link`?
+function Atr_Craft_IsRecipeKnown(link)
+    if (type(link) ~= "string" or link == "") then return false; end
+
+    local itemID = Atr_Craft_IDFromLink(link);
+    local db     = Atr_Craft_KnownDB();
+    if (itemID and db[itemID]) then return true; end
+
+    local tip = Atr_Craft_KnownTip();
+    if (tip == nil or tip.SetHyperlink == nil or tip.NumLines == nil) then return false; end
+
+    tip:SetOwner(UIParent, "ANCHOR_NONE");
+    tip:ClearLines();
+    if (not pcall(tip.SetHyperlink, tip, link)) then return false; end
+
+    local tipName = tip:GetName();
+    local want    = Atr_Craft_KnownLineText():lower();
+    local lines   = (tip:NumLines()) or 0;
+    local known   = false;
+
+    local i;
+    for i = 2, lines do   -- line 1 is the item name; the known-line never is
+        local fs  = tipName and _G[tipName .. "TextLeft" .. i] or nil;
+        local txt = fs and fs.GetText and fs:GetText() or nil;
+        -- Only a line with TEXT can state anything.  GameTooltip reuses its
+        -- FontStrings and ClearLines only hides them, which is the trap
+        -- USABLE-SCAN.md documents -- there it was a stale colour, here it
+        -- would be stale text.
+        if (txt and txt ~= "") then
+            local t = (txt:lower():gsub("^%s+", ""));
+            t = (t:gsub("%s+$", ""));
+            if (t == want or t:find("already known", 1, true)) then
+                known = true;
+                break;
+            end
+        end
+    end
+
+    tip:Hide();
+
+    if (known and itemID) then db[itemID] = true; end
+    return known;
+end
+
+-- Whether the Finder should hide already-learned recipes.  The PREFERENCE is
+-- account-wide (it is a habit, not a property of a character) even though the
+-- knowledge it acts on is per character.
+function Fdr_HideKnownRecipes_Enabled()
+    return (AUCTIONATOR_FINDER_SETTINGS and AUCTIONATOR_FINDER_SETTINGS.hideKnownRecipes) and true or false;
+end
+
 -- What one vellum of the given kind costs, in copper.  Each candidate name goes
 -- through the shared cascade, so a learned NPC price beats whatever someone is
 -- relisting vellums for; the cold constant is only reached when none of the
@@ -463,12 +576,19 @@ function Atr_Craft_HarvestRecipeTooltip(tip, itemName)
     if (getName == nil) then return; end
     local n = (tip.NumLines and tip:NumLines()) or 0;
 
-    local reagents;
+    local reagents, known;
+    local want = Atr_Craft_KnownLineText():lower();
     for i = 2, n do
         local fs = _G[getName .. "TextLeft" .. i];
         local txt = fs and fs.GetText and fs:GetText() or nil;
         local parsed = Atr_Craft_ParseReagentLine(txt);
         if (parsed) then reagents = parsed; end   -- keep the last match (reagents sit at the bottom)
+
+        if (txt and txt ~= "") then               -- a blank line states nothing
+            local t = (txt:lower():gsub("^%s+", ""));
+            t = (t:gsub("%s+$", ""));
+            if (t == want or t:find("already known", 1, true)) then known = true; end
+        end
     end
 
     if (reagents) then
@@ -476,6 +596,16 @@ function Atr_Craft_HarvestRecipeTooltip(tip, itemName)
         -- Don't shadow a precise profession-window entry: only the name key is
         -- written here, and the cost lookup prefers the ID key.
         db[created] = { made = 1, reagents = reagents, byTooltip = true };
+    end
+
+    -- Free ride for the Finder's "hide known recipes" filter: this tooltip is
+    -- already rendered and already the right item, so read the known-line out of
+    -- the same pass rather than scanning a second one later.  Only ever records
+    -- a positive, same as Atr_Craft_IsRecipeKnown -- and it needs the ID, which
+    -- an on-screen tooltip guarantees is cached.
+    if (known) then
+        local id = Atr_Craft_IDForName(itemName);
+        if (id) then Atr_Craft_KnownDB()[id] = true; end
     end
 end
 

@@ -104,6 +104,12 @@ function Fdr_Options_Ensure ()
 		{ FT("Picking a weapon or a piece of armor on the Buy tab searches it here instead. The Buy tab groups a scan by item name and shows one cached version for all of it, which on this realm can be a different item than the one you buy; this tab reads each listing's own required level and verifies its real item level. Everything that is not gear still opens on the Buy tab. Searching the same item a second time stays there."),
 		  FT("In game use /atrgear.") });
 
+	gFdr_OptRows.knownrecipes = row ("Atr_Finder_Opt_KnownRecipes_CB", -186,
+		FT("Hide recipes you have already learned"),
+		FT("Hide known recipes"),
+		{ FT("Removes recipe listings this character has already learned from Finder results. Decided from the recipe's own tooltip, the same 'Already known' line the client shows you, so it costs nothing until a search actually returns recipes."),
+		  FT("Knowing is per character; the preference is shared. When a recipe's item data has not been cached yet the row is kept rather than hidden, so nothing you might want disappears.") });
+
 	return gFdr_OptRows;
 end
 
@@ -117,6 +123,8 @@ function Fdr_Options_Sync ()
 
 	r.prices:SetChecked (Fdr_PriceDB_Enabled () and true or nil);
 	r.gearjump:SetChecked (Fdr_BuyRedirect_Enabled () and true or nil);
+	r.knownrecipes:SetChecked ((type (Fdr_HideKnownRecipes_Enabled) == "function")
+							   and Fdr_HideKnownRecipes_Enabled () and true or nil);
 end
 
 
@@ -129,6 +137,13 @@ function Fdr_Options_Apply ()
 	AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
 	AUCTIONATOR_FINDER_SETTINGS.feedPriceDB   = gFdr_OptRows.prices:GetChecked() and true or false;
 	AUCTIONATOR_FINDER_SETTINGS.gearToFinder  = gFdr_OptRows.gearjump:GetChecked() and true or false;
+	AUCTIONATOR_FINDER_SETTINGS.hideKnownRecipes = gFdr_OptRows.knownrecipes:GetChecked() and true or false;
+
+	-- the filter only reads its setting at rebuild, so a toggle has to ask for one
+	if (type (Atr_Finder_RebuildDisplay) == "function" and Atr_Finder_Panel) then
+		Atr_Finder_RebuildDisplay ();
+		if (type (Atr_Finder_Redisplay) == "function") then Atr_Finder_Redisplay (); end
+	end
 end
 
 
