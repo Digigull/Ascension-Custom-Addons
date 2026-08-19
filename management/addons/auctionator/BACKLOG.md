@@ -529,15 +529,27 @@ an Advisor would want, and is worth remembering when that item is scoped.
 
 ## Suggested order
 
-1. **Item 7 (Ledger)** — unblocks 8 and 9, and is the biggest new surface.
-2. **Item 3 diagnostic** — built alongside item 2: `/atrprofsort <name>` now prints both
-   returns of `GetTradeSkillNumMade` per row. Run `/atrprofsort distilled` against a live
-   Alchemy window; the answer decides whether item 3 is a one-line fix or a UI feature.
-3. **Items 1, 5** — small, self-contained UI changes.
-4. **Item 2 (enchanting)** — needs one in-game name check, then a helper.
-5. **Items 4, 6** — Finder work, independent of each other.
-6. **Item 8 (Advisor)** — scope after the Ledger.
-7. **Item 9** — investigate with ledger data in hand.
+Items 2 and 3 are **done** and out of this list (2026-08-19). What is left, in order:
+
+0. **Item 10's one question, before anything price-dependent.** It is not a build — it is
+   asking which addons are installed and getting `Auctionator-Finder-Ascension.lua` itself. If
+   the foreign price-DB shape is real, every price feature on the affected realms is silently
+   dead, including what items 2 and 3 just shipped. Costs nothing; the downside if skipped is
+   everything.
+1. **Items 5, 1** — the last of the fully-decided, self-contained UI changes, and small enough
+   to land together. Item 5 has one thing to get right (the persisted `reqOnly` has to be
+   honoured from the user's own click once the auto-tick block stops writing it); item 1 has
+   three (the hidden icon must survive `recommendElements` re-showing the block, the tooltip
+   owner must move off the hidden frame, and the new hover target must be re-sized whenever the
+   name changes).
+2. **Item 4** — Finder stats dropdown. Decided in full ("learn, don't seed"), no open
+   questions, and a real ordering fix for the user: pick the stat, *then* search.
+3. **Item 6** — Finder recipe filter, once someone has confirmed in game whether Ascension's
+   recipe tooltips carry the stock `ITEM_SPELL_KNOWN` string. Blocked on that, not on code.
+4. **Item 7 (Ledger)** — the biggest new surface, and it unblocks 8 and 9.
+5. **Item 8 (Advisor)** — scope after the Ledger, and only once the price-series question
+   under "Still open" is answered.
+6. **Item 9** — investigate with ledger data in hand.
 
 ## What a SavedVariables dump answers
 
@@ -575,6 +587,9 @@ from the same account, which the supplied file did not include.
 
 ## Still open
 
+- **Item 3:** whether 30g51s99c per flask is *right* — i.e. whether the reagent prices behind
+  it are. The maths and the display are settled; nothing shipped tests the inputs. The
+  `Craft cost x3` line makes it a glance: 91g55s97c of reagents against a 127g80s stack of 3.
 - **Item 2 (built, needs one in-game check):** whether the *weapon* vellum's name is in the
   candidate list, and whether both vellums price from a vendor rather than the auction house.
   `/atrprofsort stamina` answers both. Neither breaks the numbers if wrong — see item 2.
