@@ -1059,8 +1059,8 @@ this case (epic vs rare); the item's real link is available too, via the bag slo
    "Part 1 as built" below.
 2. ~~**Give the Sell tab the item it was actually handed**~~ — **DONE 2026-08-19, and the
    mechanism was not the one written here.** See "Part 2 as built" below.
-3. **Teach the price database about variants.** The real one. See the recommended shape below
-   — the summary is that it should *not* be a re-key.
+3. ~~**Teach the price database about variants.**~~ — **DONE 2026-08-19 for the auction price
+   database.** See "Part 3 as built" below. The MEAN database is the remaining half.
 
 ### Part 2 as built (2026-08-19)
 
@@ -1203,6 +1203,66 @@ one row for that name.
 **Deferred to part 3, deliberately:** recording each row's link in `AddScanItem`. It costs a
 `GetAuctionItemLink` per listing across a full scan and nothing reads it until the database can
 store a variant.
+
+### Part 3 as built (2026-08-19)
+
+Built to the recommended shape below, unchanged: the key stays the **name**, the **value** carries
+the variants, and a legacy number simply *is* "one variant, unknown id" — so there is no
+`__dbversion` bump, no rewrite pass and no risk of eating anyone's database.
+
+```
+gAtr_ScanDB[name] = 123456                       -- legacy: one price, untouched
+gAtr_ScanDB[name] = { ["52510:0"] = 97500,       -- itemId:suffixId
+                      ["52511:0"] = 1233375,
+                      ["?"]       = 97500,       -- price for the name, variant unknown
+                      dflt        = 97500 }      -- derived: the lowest of them
+```
+
+Three functions in `AuctionatorHints.lua`, beside the pricing cascade that owns this:
+`Atr_VariantKey(link)`, `Atr_PriceValue(value, variantKey)`, `Atr_PriceStore(db, name, price,
+variantKey)`.
+
+**Every reader and writer now goes through them** — 16 sites audited, in `AuctionatorHints.lua`,
+`AuctionatorScan.lua` (both the targeted finaliser and the full scan), `AuctionatorFinderPriceDB.lua`
+and `AuctionatorBazaar.lua`. The **walkers were the ones that mattered** and the item said so in
+advance: `Atr_GetAHVariantEstimate` and `/atrprices` reset both filtered on
+`type(price) == "number"`, which after this change would have **silently skipped exactly the rows
+the database knows most about**. Both now resolve the value instead.
+
+**Only one writer knows its variant, and that is enough.** After part 1 the targeted scan's buckets
+each carry their own listing's link, so that finaliser writes the variant slot. The full scan, the
+Finder feed and the Bazaar aggregate by name with no per-variant link, so they write the
+name-level slot exactly as they always did.
+
+#### The bug the test caught, which is the part worth remembering
+
+`dflt` is **derived, never assigned**: the minimum across every slot. Written the obvious way —
+legacy value into `dflt`, then `dflt` recomputed from the variant slots alone — the first variant
+written to a legacy row **threw the old price away**, and a name-only lookup jumped to whatever
+variant happened to be scanned first. On `Bloodforged Imperial Jewel` that was 97500 → 1490000.
+
+**A price rising quietly is the worst thing this database can do to someone pricing their goods**,
+and it is exactly the failure that ruled out option A in part 1. The fix is the reserved slot
+`ATR_PV_ANY` (`"?"`) — a price for the name with the variant unknown — which the variant-less
+writers keep refreshing, so it is a live value rather than a ghost.
+
+That bug was **not caught by reasoning about it**; it was caught by running the shipped functions
+over the owner's real 5471-row database. Worth doing again for anything that touches this table.
+
+**Verified** against that database: all 5523 rows read back identically through `Atr_PriceValue`;
+variant keys parse off real links including a random-suffix one (`7909:1614`); a dearer variant
+added to **every row in the database** raised the name-only price on **none** of them; an unknown
+variant key falls back to the default; and the walker still resolves every row after promotion.
+**Not verified in game.**
+
+#### Remaining: the mean database
+
+`gAtr_MeanDB` is still name-keyed and merged, so on a name with two variants the tooltip's
+`Auction` line is now variant-aware while `Auction median` is not — the two can disagree, which
+this item predicted. It is a bigger change than it looks, because a mean row is an *array of
+samples* rather than a number, so the same trick needs a shape that nests one. Deliberately left
+for its own pass rather than doubling this one's blast radius; **fold item 13's single-sample
+change into it**, since both rewrite that value's shape.
 
 ### Recommended shape for part 3 (2026-08-19)
 

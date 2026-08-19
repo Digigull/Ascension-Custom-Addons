@@ -162,7 +162,10 @@ function Fdr_PriceDB_Update (results, partial)
 				price = nil;									-- keep the completed scan's value
 			else
 				if (known) then updated = updated + 1; else added = added + 1; end
-				gAtr_ScanDB[name] = price;					-- rule 1: assign, never nil out
+				-- rule 1: assign, never nil out -- and through the store so this feed
+				-- cannot flatten a variant table (BACKLOG item 12 part 3)
+				if (type (Atr_PriceStore) == "function") then Atr_PriceStore (gAtr_ScanDB, name, price);
+				else gAtr_ScanDB[name] = price; end
 			end
 
 			if (price and type (gAtr_MeanDB) == "table") then
@@ -317,7 +320,7 @@ function Fdr_PriceDB_Inspect (query)
 
 	say (string.format ("Price DB inspect: |cffffd100%s|r", name));
 
-	local auc = gAtr_ScanDB[name];
+	local auc = (type (Atr_PriceValue) == "function") and Atr_PriceValue (gAtr_ScanDB[name]) or gAtr_ScanDB[name];
 	say (string.format ("  auction (gAtr_ScanDB): %s",
 			auc and Fdr_MoneyString (auc) or "|cff888888(not stored)|r"));
 
@@ -380,7 +383,10 @@ function Fdr_PriceDB_Reset (query)
 	if (query:lower() == "all") then
 		local n = 0;
 		local name, price;
-		for name, price in pairs (gAtr_ScanDB) do
+		for name, value in pairs (gAtr_ScanDB) do
+			-- resolve rather than type-test: a variant row is a table, and the old
+			-- filter would have skipped every item this database knows best
+			local price = (type (Atr_PriceValue) == "function") and Atr_PriceValue (value) or value;
 			if (type (price) == "number" and price > 0) then
 				gAtr_MeanDB[name] = { price };
 				n = n + 1;
@@ -398,7 +404,7 @@ function Fdr_PriceDB_Reset (query)
 	end
 
 	local name = Fdr_PriceDB_ResolveName (query);
-	local price = gAtr_ScanDB[name];
+	local price = (type (Atr_PriceValue) == "function") and Atr_PriceValue (gAtr_ScanDB[name]) or gAtr_ScanDB[name];
 	if (type (price) ~= "number" or price <= 0) then
 		say (string.format ("Price DB reset: |cffffd100%s|r has no stored auction price to reseed from - search or scan it first.", name));
 		return;
