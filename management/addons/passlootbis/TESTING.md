@@ -18,6 +18,7 @@ of it is shaped the way it is.
 | G. Preview | **not run** |
 | H. Usable dry run (round 3) | **PASS** — wearable downgrade → `usable: yes`; unwearable Mail → `usable: no`, `red line: R4 Mail` |
 | H. Usable dry run (round 4) | **BUG FOUND** — a Bloodforged variant reported `red line: R4 ` with empty text: a blank line left red by an earlier item. Fixed; see §4 |
+| H. Usable dry run (round 5) | **PASS** — same Bloodforged item after the fix: `usable: yes   (2 Usable)`, no red lines. Forge labels do not trip the colour test |
 
 Two changes came out of that round, so steps below are written against them:
 
@@ -246,6 +247,16 @@ What round 1 did not reach, highest-risk first:
 - **`LOOT_BIND` / `CONFIRM_LOOT_ROLL` popup hiding** — the confirm is event-driven
   and solid; the *hide* assumes the client stores the slot/rollID as the dialog's
   `data`.
+- **A Bloodforged variant scored identically to its base item.** `Shadefiend Boots`
+  (round 3) and `Bloodforged Shadefiend Boots` (round 5) both scored **23.5** against
+  the same equipped feet. Bloodforged is described as trading PvE power for PvP power,
+  which should make the forged one score *lower* under a PvE weight set, not equal.
+  Two innocent explanations — the trade is purely additive (PvP stats added, PvE stats
+  untouched), or the two listings happened to roll the same stats — and one that is
+  not: the scan is reading the base item rather than the forged instance, which is the
+  scaled-stat failure mode this addon exists to avoid. Cheap check: hover both and
+  compare the stat lines by eye. If the tooltips differ and the scores do not, it is
+  the third one.
 - **`LOOT_ITEM_*` chat patterns** feeding the ledger, if Ascension reworded loot
   messages. Round 1 is *not* evidence against them: the one item won that run was
   `Jasper Link of the Arcane`, an intellect ring worth 0 to a Brigand, and
@@ -270,16 +281,15 @@ What round 1 did not reach, highest-risk first:
   Impact was invisible from the outside, which is why it lasted: `Not Usable` and
   `Catch All` both greed, so the wrong rule still reached the right roll. It would
   have mattered the moment those two rules diverged.
-- **NEXT, from the same item: does `Bloodforged` itself render red?** The round-4
-  item was a *Bloodforged* Shadefiend Boots — on Ascension a PvP variant that trades
-  PvE power for PvP power — and the owner reports its **visible** tooltip carries red
-  text reading "heroic bloodforged". If that label is red at exactly 255,32,32 in our
-  hidden tooltip too, then the blank-line fix uncovers a second misfire and every
-  forged item reads unusable, wearable or not. Re-run the same dry run to find out:
-  the capture now reports **all** red lines, not just the first, so one report
-  answers it. `usable: yes` means the blank line was the whole story;
-  `red lines: L2 Bloodforged` (or similar) means the colour test needs to exclude
-  forge labels. Do not guess which — the report says.
+- **CLOSED: `Bloodforged` does not trip the colour test.** The worry was that the
+  round-4 item's visible tooltip carries red "heroic bloodforged" text, so the
+  blank-line fix might uncover a second misfire making every forged item read
+  unusable. Round 5 re-ran the same dry run on the same
+  `[Bloodforged Shadefiend Boots]` and got `usable: yes   (2 Usable)` with no red
+  lines at all. The blank line was the whole story. Whatever paints that label red on
+  screen is not the client's 255,32,32 in our hidden tooltip — most likely an inline
+  `|cff` escape, which `GetTextColor()` cannot see, exactly like the BiS Scanner's own
+  annotation.
   - **Ruled out: the BiS Scanner's own tooltip line.** The obvious suspect is the
     red downgrade text the scanner adds on hover, but it cannot reach this test
     twice over. `PassLootBiS_Scanner/Core/Tooltip.lua` hooks `GameTooltip` and
