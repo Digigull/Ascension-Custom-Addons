@@ -40,12 +40,26 @@ converter's `weights.json`. The spec is **user-selected, not auto-detected**:
 Ascension is classless and the CoA weights use BisBeard's own taxonomy, so
 there's no clean talent-to-spec identity to read in-game.
 
+The shipped numbers are a default, not a law. The **Weights** button beside the
+class/spec dropdowns opens an editor with a box per stat: type your own number to
+override one, empty the box (or type the shipped value back) to restore it. Edited
+stats show gold, and the button reads `Weights *` while the current spec has any.
+A key the spec doesn't ship starts at `0`, so this is also how you make a spec
+score a stat it ignores. Overrides are **account-wide, keyed by class and spec** —
+two alts on the same spec share your tuning, two specs never do.
+
+Only the ratios between weights matter (the score is a dot product), and CoA Power
+stays on the **Score CoA Power** dropdown rather than appearing in the editor —
+that setting is applied last, so a second box for it would be overwritten.
+
 ### Other surfaces
 
 - **Tooltip annotation** — hover any piece of gear to see its score, plus an
   up/down arrow versus the item it would replace.
 - **Options window** — class/spec dropdowns and a control for every setting that
   also has a slash toggle. Reached from the minimap button or `/plbs options`.
+- **Weights editor** — override any stat weight for the selected spec, from the
+  options window or `/plbs weights`.
 - **Per-character filter** — turn off armour materials and weapon types your
   character doesn't care about, so a rogue isn't scored on Plate and Bows. An
   absent entry means included; only an explicit exclusion filters. Anything not
@@ -75,6 +89,7 @@ global checks — neither is required.
 | `/plbs` or `/plbs status` | Current state: on/off, spec, threshold |
 | `/plbs options` | Open the settings window |
 | `/plbs filter` | Open the per-character armour/weapon picker |
+| `/plbs weights` | Open the stat-weight editor for the selected spec |
 | `/plbs on` / `off` / `toggle` | Enable or disable scanning |
 | `/plbs threshold <n>` | Minimum percent delta to call something an upgrade (default 3) |
 | `/plbs spec` | List every class and spec |
@@ -98,12 +113,13 @@ on this client, so use the Test button to confirm.
 ## Saved variables
 
 - `PassLootBiS_ScannerDB` — account-wide settings (threshold, output surfaces,
-  gold threshold, minimap position)
+  gold threshold, minimap position, per-spec weight overrides)
 - `PassLootBiS_ScannerCharDB` — per-character class/spec and gear filter
 
 ## Notes
 
-- Alpha. The scoring cores (`Score`, `Slots`, `SpecWeights`, `Filter`, `Verdict`)
+- Alpha. The scoring cores (`Score`, `Slots`, `SpecWeights`, `CustomWeights`,
+  `Filter`, `Verdict`)
   are pure Lua and load/self-test under bare lua5.1 with no client present; every
   WoW-API touch is guarded.
 - Scores match the converter's `score_item` exactly — a dot product over the

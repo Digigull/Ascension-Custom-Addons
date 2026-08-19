@@ -102,6 +102,12 @@ end
 -- whether enchants are being scored -- and rebuild the equipped-score cache only
 -- when it changes.
 --
+-- The per-spec weight OVERRIDES belong here for the same reason as the spec itself,
+-- and they are the one input that cannot be signed by name: editing a weight changes
+-- no class, spec or flag, so without folding the override table in, retuning a weight
+-- left every equipped score in this cache at its old value until the next gear swap.
+-- CustomWeights.signature sorts, so it is stable across pairs order.
+--
 -- ignoreEnchants belongs here even though it is not a weight: it changes what an
 -- equipped item SCORES, which is the only thing this cache holds. Leaving it out
 -- was a real bug, and a confusing one -- the equipped cache is wiped on gear change
@@ -116,6 +122,8 @@ function Tooltip.weightsSignature(chardb, db)
 		tostring(db and db.powerMode),
 		tostring(db and db.powerWeight),
 		tostring(db and db.ignoreEnchants),
+		ns.CustomWeights and ns.CustomWeights.signature(
+			db and db.customWeights, chardb and chardb.class, chardb and chardb.spec) or "",
 	}, "\1")
 end
 
