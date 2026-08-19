@@ -1246,6 +1246,22 @@ and it is exactly the failure that ruled out option A in part 1. The fix is the 
 `ATR_PV_ANY` (`"?"`) — a price for the name with the variant unknown — which the variant-less
 writers keep refreshing, so it is a live value rather than a ghost.
 
+**And the rule it settled on was wrong too, caught the same way.** `dflt` was the minimum across
+every slot, which reads well and mixes eras: a variant slot is only refreshed when that exact name
+is targeted-scanned, while `ATR_PV_ANY` is refreshed by every full scan and by the Finder feed. So
+one stale cheap variant would pin a name's answer below the market indefinitely with nothing to
+lift it back.
+
+The owner's first post-change dump had a live example before it could do any harm —
+`Large Fang = { ["5637:0"] = 9900, ["?"] = 11000 }`, where the minimum rule answered 9900 for the
+name while the current name-level price was 11000. **`dflt` is now `ATR_PV_ANY` when it is set,
+and only falls back to the lowest variant when it is not**, which also makes a name-only lookup
+behave exactly as it did before variants existed, since that slot is written by precisely the
+writers that used to write the bare number.
+
+Two shape bugs in one small function, both found by running it over a real database and neither
+by reading it. That is the lesson worth keeping from this item.
+
 That bug was **not caught by reasoning about it**; it was caught by running the shipped functions
 over the owner's real 5471-row database. Worth doing again for anything that touches this table.
 
@@ -1468,8 +1484,24 @@ changed**.
 
 **Verified** by replaying both round trips over the real saved variables: every median identical
 across compaction, a folded row promoting correctly on its next sample, and the vendor tables
-restored entry-for-entry and price-for-price by the merge as the addon actually runs it. **Not
-verified in game.**
+restored entry-for-entry and price-for-price by the merge as the addon actually runs it.
+
+**Verified in game 2026-08-19**, on the first dump taken after the migrations ran:
+
+| | expected | actual |
+|---|---|---|
+| vendor `obs` / `base` after the logout trim | 99 / 78 | **99 / 78** |
+| mean rows still holding a single-element table | 0 | **0** |
+| trailing-space price keys | 0 | 0 |
+
+All 2462 single-sample mean rows are bare numbers and every remaining table holds two or more.
+The file itself grew — 1.14 MB to 1.30 MB — because that session scanned a great deal more
+(5523 → 5771 names, 10882 → 13656 samples, plus the ledger); without the two trims the same
+content would have been roughly 1.6 MB.
+
+The same dump carried the **first variant rows written in game**, which is item 12 parts 1 and 3
+working end to end: `Wool Cloth` and `Large Fang` both hold a variant slot beside their
+name-level one.
 
 ### Item 12 part 3b: the mean database is deliberately NOT variant-aware
 

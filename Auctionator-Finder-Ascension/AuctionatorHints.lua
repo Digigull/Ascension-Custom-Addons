@@ -252,7 +252,7 @@ end
 --   gAtr_ScanDB[name] = { ["52510:0"] = 97500,       -- itemId:suffixId
 --                         ["52511:0"] = 1233375,
 --                         ["?"]       = 97500,       -- price for the name, variant unknown
---                         dflt        = 97500 }      -- derived: the lowest of them
+--                         dflt        = 97500 }      -- derived: "?" when set, else the lowest
 --
 -- MIGRATION IS FREE, which is the other reason for this shape.  A legacy number
 -- simply IS "one variant, unknown id", so a type check handles every pre-existing
@@ -345,12 +345,34 @@ function Atr_PriceStore (db, name, price, variantKey)
 
 	cur[variantKey or ATR_PV_ANY] = price;
 
-	local lo = nil;
-	local k, pr;
-	for k, pr in pairs (cur) do
-		if (k ~= "dflt" and type (pr) == "number" and (lo == nil or pr < lo)) then lo = pr; end
+	-- `dflt` is the NAME-LEVEL slot when there is one, and only falls back to the
+	-- lowest variant when there is not.
+	--
+	-- It was the minimum across every slot at first, which read well and is
+	-- wrong: the slots are written at different TIMES by different writers, so a
+	-- minimum mixes eras.  A variant slot is only refreshed when that exact name
+	-- is targeted-scanned, while ATR_PV_ANY is refreshed by every full scan and
+	-- by the Finder feed -- so one stale cheap variant would pin a name's answer
+	-- below the market indefinitely, and nothing would lift it back.
+	--
+	-- Seen in the owner's live data before it could do any harm: `Large Fang`
+	-- came back as `{ ["5637:0"] = 9900, ["?"] = 11000 }`, and the minimum rule
+	-- answered 9900 for the name while the current name-level price was 11000.
+	--
+	-- Preferring ATR_PV_ANY also makes a name-only lookup behave EXACTLY as it
+	-- did before variants existed, because that slot is written by precisely the
+	-- writers that used to write the bare number.  Callers that want a specific
+	-- variant ask for it by key and are unaffected.
+	if (type (cur[ATR_PV_ANY]) == "number") then
+		cur.dflt = cur[ATR_PV_ANY];
+	else
+		local lo = nil;
+		local k, pr;
+		for k, pr in pairs (cur) do
+			if (k ~= "dflt" and type (pr) == "number" and (lo == nil or pr < lo)) then lo = pr; end
+		end
+		cur.dflt = lo;
 	end
-	cur.dflt = lo;
 end
 
 -- Returns estimatedPrice, variantCount for a base item name, or nil when the
