@@ -162,7 +162,7 @@ upstream tabs and need no save/restore dance.
 | `AUCTIONATOR_CRAFT_RECIPES` | `[itemID or name] = { made, reagents }` | profession windows + recipe tooltips |
 | `AUCTIONATOR_NPC_PRICES` | vendor prices | merchant scan |
 | `AUCTIONATOR_VENDOR_LEARNED` | `obs` / `base` / `cb` / `log` | vendor sales — see `VENDOR-PRICE-RESEARCH.md` |
-| `AUCTIONATOR_FINDER_SETTINGS` | Finder options | Finder + options panel |
+| `AUCTIONATOR_FINDER_SETTINGS` | Finder options, plus `statKeys` = set of every stat key ever seen on gear | Finder + options panel |
 | `AUCTIONATOR_ITEM_LOCATIONS` | who owns what, where | `FinderItemCount` |
 
 ### The finding that matters most: there is no market price series
@@ -382,7 +382,7 @@ a namespace, or touching upstream files that no backlog item needs.
 | 1 | SELL header icon → title hover | `Auctionator.lua:2335-2600`, `Auctionator.xml:768` | **1** | Only World 1 item. Easier after extraction #3 above. |
 | 2 | Enchanting profit | `AuctionatorFinderProfession.lua` | — | Touches the duplicated cascade. |
 | 3 | Multi-output yield | `AuctionatorFinderProfession.lua` | — | Diagnostic extends `/atrprofsort` (`:735`). Same cascade. |
-| 4 | Stats dropdown learns keys | `AuctionatorFinder.lua:2607`, `:2694`, `:3808` | 2 | Storage into existing `AUCTIONATOR_FINDER_SETTINGS`. |
+| 4 | Stats dropdown learns keys — **DONE** | `AuctionatorFinder.lua` `Fdr_LearnStatKeys`, `Fdr_StatDD_Initialize` | 2 | Shipped: `statKeys` in the existing `AUCTIONATOR_FINDER_SETTINGS`, no `.toc` change. |
 | 5 | `My Lvl` off by default | `AuctionatorFinder.lua:3558` | 2 | Smallest item in the list. |
 | 6 | Recipe "already learned" filter | `AuctionatorFinder.lua` + `...Profession.lua:198` | 2 | Per-character cache — the exception to account-wide. |
 | 7 | **Ledger** | **new file** + 15 tab sites, or a sub-tab | 2 | Own panel, own file, `F` surface. Rename existing tab to History (§8 sub-tab recipe). |

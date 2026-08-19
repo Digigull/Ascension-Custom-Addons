@@ -291,67 +291,65 @@ stack of 3 on the AH.
 
 ---
 
-## 4. Finder — stats dropdown usable before a search has run
+## 4. Finder — stats dropdown usable before a search has run — DONE
 
 **Asked:** on the Finder page have the stats dropdown available before seeing them in results.
 
-**Current behaviour.** `gFdr_StatKeys` (`AuctionatorFinder.lua:114`) is rebuilt from the
-*results* of the last scan (`:2693`) — the keys are whatever `GetItemStats` reported on the
-gear that came back, minus any stat present with an identical value on every single result
-(the `ubiquitousConstant` filter, `:2695`). `Fdr_StatDD_Initialize` (`:3808`) lists exactly
-that table, so before the first search the dropdown is `(clear all)` and nothing else.
-
-This is a real ordering problem for the user: the stats are a *filter*
-(`Fdr_PassesStatFilter`, `:741` — a selected stat that a row lacks removes the row), so the
-natural flow is pick the stat, then search. Today you must search, then pick, then look again.
+**What it was.** `gFdr_StatKeys` was rebuilt from the *results* of the last scan, so before the
+first search the dropdown read `(clear all)` and nothing else. That is the wrong way round: the
+stats are a **filter** (`Fdr_PassesStatFilter` — a selected stat a row lacks removes the row),
+so the natural flow is pick the stat, then search.
 
 **Decided (owner, 2026-08-19): learn, don't seed.** No static `ITEM_MOD_*` list. The addon
-remembers every stat key it has ever seen on gear and offers the accumulated set in the
-dropdown from then on, so the list is empty on a fresh install and fills in as you search. That
-sidesteps the two problems a static seed had — a long list of stock keys that may not apply on
-this server, and Ascension's custom stats, which no stock constant covers and which a static
-list would have had to fall back to discovery for anyway.
+remembers every stat key it has ever seen on gear and offers the accumulated set from then on:
+empty on a fresh install, filling in as you search. That sidesteps both problems a static seed
+had — stock keys that may not apply on this server, and Ascension's custom stats, which no
+constant covers and which a seed would have had to fall back to discovery for anyway.
 
-**Learn from the RAW discoveries, not from `gFdr_StatKeys`.** This is the part that is easy to
-get wrong. `statSeen` (`AuctionatorFinder.lua:2607`) accumulates every stat key on every
-equippable result. `gFdr_StatKeys` is what survives *two* filters applied to it (`:2694`):
+### What shipped
 
-- `FDR_DPS_KEY` is dropped because DPS has its own dedicated column.
-- `ubiquitousConstant` drops a stat that appears on **every** result with an **identical**
-  value, on the grounds that it cannot discriminate between them.
+All of it in `AuctionatorFinder.lua`.
 
-The second is a judgement about *this result set only*. A search narrow enough that every hit
-carries the same +10 Stamina drops Stamina — and Stamina is obviously worth remembering.
-Persisting the post-filter list would make what gets learned depend on the shape of your past
-searches, and a stat could end up harder to learn precisely because you once searched for it
-too precisely. So: **learn from `statSeen`'s keys, and keep `ubiquitousConstant` as a display
-rule for the current results only.** `FDR_DPS_KEY` should stay out of the learned set too, for
-the same reason it is excluded now.
+- **`Fdr_LearnedStats()` / `Fdr_LearnStatKeys(seen)`** (next to `Fdr_StatDisplayName`). The set
+  lives at `AUCTIONATOR_FINDER_SETTINGS.statKeys` as `key -> true`. That variable is already an
+  account-wide SavedVariable, so **no `.toc` change**; account-wide is right, because stats are
+  a property of the server's items, not of a character.
+- **Learning reads the RAW discoveries.** `Fdr_LearnStatKeys` is called from
+  `Fdr_AnalyzeResults` on `statSeen`, *before* the `ubiquitousConstant` filter that produces
+  `gFdr_StatKeys`. This is the part that was easy to get wrong: `ubiquitousConstant` is a
+  judgement about one result set (a search narrow enough that every hit carries the same
+  +10 Stamina drops Stamina), so persisting the filtered list would make what gets learned
+  depend on the shape of past searches. It stays a display rule for the current results only.
+  `FDR_DPS_KEY` is excluded from the learned set, for the same reason it is excluded from
+  `gFdr_StatKeys` — DPS has its own column.
+- **`FDR_STAT_LEARN_CAP = 400`, and it complains rather than truncating.** The set is bounded
+  by the number of distinct stat keys that exist, so the cap is insurance against a malformed
+  key written in a loop, not a real limit. On hitting it the addon says so in chat once per
+  session and names the escape hatch: **`Atr_Finder_ForgetStats()`**, a global that empties the
+  set (`/run Atr_Finder_ForgetStats()`). That function is the only way to clear junk.
+- **`Fdr_StatDD_Initialize` lists two groups**: the stats in the current results first (still
+  `gFdr_StatKeys`, so still `ubiquitousConstant`-filtered), then the rest of the learned set.
+  Before a search there is only the second group, which is the point of the item.
+- **The second group is dimmed** (`|cff808080`) when the entry is not in the current results,
+  because selecting it there *will* empty the list — `Fdr_PassesStatFilter` removes any row
+  missing a selected stat. Dimming makes that predictable rather than surprising.
+- **Dimming tests against `gFdr_StatSeenKeys`, not `gFdr_StatKeys`.** A stat dropped by
+  `ubiquitousConstant` is still present on every result, so selecting it empties nothing and it
+  must not be dimmed as though it would. `gFdr_StatSeenKeys` is the raw per-scan key set, kept
+  for exactly this. With no results at all nothing is dimmed — there is nothing to warn about.
 
-**Storage.** `AUCTIONATOR_FINDER_SETTINGS` is already an account-wide SavedVariable (declared
-in the `.toc`), so a `statKeys` sub-table lands there with no `.toc` change. Account-wide is
-right — stats are a property of the server's items, not of a character. The set is bounded by
-the number of distinct stat keys that exist, so no pruning rule is needed; a sanity cap that
-complains rather than silently truncating is cheap insurance against a malformed key being
-written in a loop.
+Nothing else needed plumbing: `Fdr_StatDisplayName` already de-tokenises unknown keys, so a
+learned custom stat gets a readable label; the dropdown rebuilds through
+`UIDropDownMenu_Initialize` on every open, so a grown set appears with no refresh; and a
+selection already survives its stat vanishing from results, so pre-selecting before a scan
+persists with no extra work.
 
-**Display.** `Fdr_StatDisplayName` (`:178`) already handles unknown keys — it reads `_G[key]`
-and falls back to de-tokenising the key itself — so a learned custom stat gets a readable label
-with no extra mapping.
-
-Two ordering choices worth making deliberately:
-
-- List the stats present in the current results first, then the rest of the learned set. Before
-  a search there is only the learned set, which is the whole point of the item.
-- Dim the learned-but-not-in-these-results entries. Selecting one *is* meaningful before a
-  search, but after a search it will empty the list — `Fdr_PassesStatFilter` (`:741`) removes
-  any row missing a selected stat. Dimming makes that predictable rather than surprising.
-
-The selection already survives a stat vanishing from results — the comment at `:2704` says so
-deliberately — so pre-selecting before a scan needs nothing extra to persist.
-
-The dropdown rebuilds through `UIDropDownMenu_Initialize` every time it opens, so it picks up a
-grown set with no refresh plumbing.
+**Verified** by `luac5.1 -p` and by reading the call order (both new entry points run long after
+SavedVariables load — `Fdr_AnalyzeResults` post-scan, the dropdown on user click). **Not
+verified in-game.** The thing to look at first is **menu height**: the list can now hold every
+stat the account has ever seen (realistically 30–50 entries) where it used to hold one scan's
+worth, and 3.3.5's `UIDropDownMenu` has no scrollbar — it can only flip above the button. If it
+runs off screen, that is the follow-up, and paging is the fix, not a smaller learned set.
 
 ---
 
