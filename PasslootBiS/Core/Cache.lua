@@ -19,12 +19,34 @@ local function ColorCheck(Red, Green, Blue, Alpha)
 	return (Red == 255 and Green == 32 and Blue == 32 and Alpha == 255)
 end
 
-local function getLine(Line)
+-- `where` is the line's position as "L3"/"R1" -- left or right column, 1-based --
+-- and is only used to label a red line for the trace (see below).
+local function getLine(Line, where)
 	if Line then
 		local text = Line:GetText()
 		local Red, Green, Blue, Alpha = Line:GetTextColor()
 		if ColorCheck(Red, Green, Blue, Alpha) then
-			PasslootBiS.TooltipCache.usable = false
+			local cache = PasslootBiS.TooltipCache
+			cache.usable = false
+			-- Keep the FIRST red line, with its position, for the trace. "Unusable" here
+			-- is an inference from a colour, so a trace that prints only the verdict cannot
+			-- be checked: a Dire Maul run (2026-08) ruled a pair of leather boots unusable
+			-- on a leather-wearing character and left nothing to say which requirement the
+			-- client had painted red. Modules/Usable.lua appends this to its trace line.
+			--
+			-- The position is what tells the two candidate culprits apart, and it is the
+			-- reason this is not just the text. A requirement the CLIENT refuses sits in
+			-- the left column near the top ("L3", "L4"); anything an addon bolts on lands
+			-- at the bottom or in the right column. This tooltip is our own hidden
+			-- PasslootBiSTT (Libs/Libs.xml) and nothing else hooks it, so an addon line
+			-- SHOULD be impossible -- which is exactly the assumption worth printing
+			-- rather than trusting.
+			--
+			-- First red line rather than last, because later reds are usually knock-on: a
+			-- missing profession reddens the "Requires" line and the recipe's spell line.
+			if not cache.unusableLine then
+				cache.unusableLine = (where and (where .. " ") or "") .. (text or "")
+			end
 		end
 		return text and text or ""
 	else
@@ -40,13 +62,14 @@ function PasslootBiS:BuildTooltipCache(item)
 	cache.Left, cache.Right = {}, {}
 	cache.link = item.link
 	cache.usable = true
+	cache.unusableLine = nil
 
 	PasslootBiSTT:ClearLines()
 	PasslootBiSTT:SetHyperlink(item.link)
 	local ttName = PasslootBiSTT:GetName()
 	for Index = 1, PasslootBiSTT:NumLines() do
-		cache.Left[Index]  = getLine(_G[ttName .. "TextLeft" .. Index])
-		cache.Right[Index] = getLine(_G[ttName .. "TextRight" .. Index])
+		cache.Left[Index]  = getLine(_G[ttName .. "TextLeft" .. Index], "L" .. Index)
+		cache.Right[Index] = getLine(_G[ttName .. "TextRight" .. Index], "R" .. Index)
 	end
 end
 
