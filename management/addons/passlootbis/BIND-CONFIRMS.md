@@ -8,9 +8,9 @@ counter-intuitive and cost a round of in-game testing to find: a feature that
 
 | When | Event | Confirm with | Answered by |
 |---|---|---|---|
-| The addon rolls Need/Greed on a BoP item | `CONFIRM_LOOT_ROLL` | `ConfirmLootRoll(id, type)` | `AutoConfirmBindOnRoll` (profile-wide, **on**) + the per-rule `Confirm BoP` filter |
+| The addon rolls Need/Greed on a BoP item | `CONFIRM_LOOT_ROLL` | `ConfirmLootRoll(id, type)` | `AutoConfirmBinds` (profile-wide, **on**) + the per-rule `Confirm BoP` filter |
 | The addon rolls Disenchant on a BoP item | `CONFIRM_DISENCHANT_ROLL` | `ConfirmLootRoll(id, type)` | the per-rule `Confirm DE` filter **only** — deliberately |
-| You take a BoP item out of a loot window | `LOOT_BIND_CONFIRM` | `ConfirmLootSlot(slot)` | `AutoConfirmBindOnPickup` (profile-wide, **off**) |
+| You take a BoP item out of a loot window | `LOOT_BIND_CONFIRM` | `ConfirmLootSlot(slot)` | `AutoConfirmBinds` — the same setting |
 
 All three are answered from the **event**, never by clicking the popup frame. That
 matters: the client caps how many static popups can be on screen, and
@@ -57,8 +57,33 @@ indistinguishable from a feature that does not exist.
   roll here that can genuinely annoy a group, which is why `Modules/ConfirmDE.lua`
   makes you confirm the *filter* before it will auto-confirm the *roll*. That opt-in
   stands.
-- **Pickup confirms default OFF.** Confirming binds an item permanently, on an
-  action the addon did not initiate.
+- **One setting, not three.** Roll confirms, pickup confirms and the popup-queue
+  bit shipped as three separate boxes (`AutoConfirmBindOnRoll`,
+  `AutoConfirmBindOnPickup`, `AllowMultipleConfirmPopups`). Owner's call after the
+  first in-game round: fold them into one, **`AutoConfirmBinds`**, default on.
+  They are three halves of one behaviour — "does PassLoot answer bind prompts for
+  me" — and three boxes only meant three ways to have it half-work.
+  - The pickup box previously defaulted **off**, on the argument that confirming
+    binds an item permanently on an action the addon did not initiate. Superseded:
+    the prompt only appears because you chose to take that item, so "yes" is the
+    answer in every case that has come up. **Consequence to know: turning the one
+    setting on does mean BoP pickups stop asking.**
+  - The queue bit is not an independent decision either. It only changes what
+    happens to prompts this setting is already answering, so it follows it:
+    auto-confirm on clears `exclusive` (anything we deliberately do *not* answer —
+    a hand-cast roll, a disenchant — shows straight away instead of queueing behind
+    a popup that is about to be hidden); auto-confirm off puts the client's own
+    behaviour back.
+  - `PasslootBiS:MigrateBindConfirmOptions` folds an existing profile in, at load
+    and on every profile switch. The old *roll* box decides the new value (it was
+    the one that was on by default and the one that makes auto-rolling work at all),
+    then all three old keys are cleared. **The trigger is the old key being present,
+    not the new one being absent** — AceDB `copyDefaults` rawsets scalar defaults
+    into the profile table, so `AutoConfirmBinds` is physically there and `true` on a
+    profile that has never seen it, and "is it missing" can never answer yes. It
+    works out exactly right anyway: `removeDefaults` strips values equal to the
+    default on save, so only a user who turned the roll box *off* has a stored key,
+    and everyone else lands on the new default of on — the same answer.
 - **One shared once-guard**, `PasslootBiS:ConfirmRollOnce`. The profile-wide setting
   and the per-rule filter both answer the same event, so on a ticked rule both fire
   for one roll; the second becomes a no-op. It also owns the popup-hide, done twice
@@ -71,8 +96,13 @@ indistinguishable from a feature that does not exist.
 settles a confirm question is `not our roll, leaving the popup`: it means a prompt
 you had to click by hand was a *manual* roll, not a missed auto-confirm.
 
-## Not verified in game
+## Verification status
 
-The roll-confirm scoping and the `/plbisdebug` toggle are reasoned and
-syntax-checked only. The pickup path is likewise still unconfirmed — no BoP pickup
-prompt has been observed answered yet.
+First in-game round (2026-08, owner): the addons load clean, `/plbisdebug` reports,
+and `[Contract self-test]` is all `PASS`. **Neither confirm path has been observed
+firing yet** — the boss-drop run (roll confirm) and the corpse-loot run (pickup
+confirm) are still outstanding, and until one of them produces
+`CONFIRM_LOOT_ROLL: auto-confirming roll N` or `LOOT_BIND_CONFIRM: auto-confirming
+loot slot N` in the trace, the root cause above is a diagnosis and not a result.
+
+The single-setting merge itself is reasoned and syntax-checked only.

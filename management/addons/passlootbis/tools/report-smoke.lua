@@ -34,7 +34,7 @@ addon.db = { profile = { Rules = {
   { Desc = "Ranger P0 (Suffix)", Loot = {"need"}, BeforeAdvisor = true, Items = {{"Kyrstel Mantle","Exact",false}} },
   { Desc = "Not Usable", Loot = {"greed"} },
   { Desc = "Catch All",  Loot = {"greed"}, Disabled = true },
-}, AutoConfirmBindOnRoll = true, AutoConfirmBindOnPickup = false, AllowMultipleConfirmPopups = false } }
+}, AutoConfirmBinds = true } }
 function addon:EnumerateBiSLists() return { "Ranger P0" } end
 function addon:CollectBiSListItems() return { {kind="id",key="412491",rolls=true}, {kind="id",key="999",rolls=false} } end
 function addon:CollectStaleBiSItems()

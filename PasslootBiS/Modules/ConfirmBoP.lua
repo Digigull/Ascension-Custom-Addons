@@ -118,7 +118,7 @@ function module:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
 	-- self:Debug("Checking items awaiting confirmation")
 	if (self.ItemsAwaitingConfirmation[RollID] and ItemLink == self.ItemsAwaitingConfirmation[RollID][1]) then
 		-- Routed through the shared once-guard (PasslootBiS:ConfirmRollOnce): the
-		-- profile-wide AutoConfirmBindOnRoll answers this same event, so on a rule
+		-- profile-wide AutoConfirmBinds answers this same event, so on a rule
 		-- that HAS this filter ticked both handlers fire for one roll. The guard makes
 		-- whichever runs second a no-op, and owns the popup-hide (twice, for the
 		-- dispatch-order reason documented there) instead of the single hide this

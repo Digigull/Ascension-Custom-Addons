@@ -108,7 +108,7 @@ function module:CONFIRM_DISENCHANT_ROLL(Event, RollID, RollMethod)
 		-- CONFIRM_LOOT_ROLL as well as CONFIRM_DISENCHANT_ROLL, so the same roll can
 		-- reach a confirm twice; the guard makes the second a no-op.
 		--
-		-- Note the profile-wide AutoConfirmBindOnRoll deliberately SKIPS rollType 3,
+		-- Note the profile-wide AutoConfirmBinds deliberately SKIPS rollType 3,
 		-- so disenchant still only ever auto-confirms through this per-rule filter and
 		-- its "are you sure?" opt-in. Do not fold DE into that setting.
 		PasslootBiS:ConfirmRollOnce(RollID, RollMethod)

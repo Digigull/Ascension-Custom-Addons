@@ -55,18 +55,17 @@ end
 local defaults = {
 	["profile"] = {
 		["Quiet"] = false,
-		["AllowMultipleConfirmPopups"] = false,
-		-- Auto-answer the client's "this item will bind to you" warning when you take
-		-- a BoP item out of a loot window (Core/PassLoot.lua, LOOT_BIND_CONFIRM).
-		-- OFF by default: confirming binds the item for good, so it is the user's call.
-		["AutoConfirmBindOnPickup"] = false,
-		-- Auto-answer the "this item will bind to you" warning raised by a ROLL the
-		-- addon itself cast (CONFIRM_LOOT_ROLL). ON by default, unlike the pickup one
-		-- above: your rules already decided to roll, and the client is only asking you
-		-- to reconfirm that decision. With it off, auto-rolling silently does not work
-		-- on BoP loot -- which is most of what a boss drops.
+		-- ONE switch for every "this item will bind to you" prompt this addon is
+		-- willing to answer (Core/PassLoot.lua, CONFIRM_LOOT_ROLL + LOOT_BIND_CONFIRM,
+		-- and the popup-queue bit in SetExclusiveConfirmPopupBit). It replaces the
+		-- three separate boxes this shipped with -- AutoConfirmBindOnRoll,
+		-- AutoConfirmBindOnPickup and AllowMultipleConfirmPopups -- which asked the
+		-- user to reason about three halves of one behaviour; see
+		-- management/addons/passlootbis/BIND-CONFIRMS.md.
+		-- ON by default: with it off, auto-rolling silently does not work on BoP loot,
+		-- which is most of what a boss drops.
 		-- Need/Greed only; disenchant keeps its own opt-in filter (Modules/ConfirmDE).
-		["AutoConfirmBindOnRoll"] = true,
+		["AutoConfirmBinds"] = true,
 		["Rules"] = {},
 		-- Flipped by SeedDefaultRules() the first time a profile is loaded, so the
 		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
@@ -337,34 +336,19 @@ PasslootBiS.OptionsTable = {
 						},
 					},
 				},
-				["AllowMultipleConfirmPopups"] = {
-					["name"] = L["Allow Multiple Confirm Popups"],
-					["desc"] = L
-						["Checking this will disable the exclusive bit to allow multiple confirmation of loot roll popups"],
+				-- One box, not three. The popup-queue bit is not a separate decision
+				-- from the confirms: it only matters for prompts this setting is
+				-- already answering, so it follows the same switch.
+				["AutoConfirmBinds"] = {
+					["name"] = L["Auto-Confirm Bind Popups"],
+					["desc"] = L["AutoConfirmBinds_Desc"],
 					["type"] = "toggle",
 					["order"] = 20,
-					["arg"] = { "AllowMultipleConfirmPopups" },
+					["arg"] = { "AutoConfirmBinds" },
 					["set"] = function(info, value)
 						PasslootBiS:OptionsSet(info, value)
 						PasslootBiS:SetExclusiveConfirmPopupBit()
 					end,
-					["width"] = "full",
-					["disabled"] = function(info, value) return not StaticPopupDialogs.CONFIRM_LOOT_ROLL end, -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
-				},
-				["AutoConfirmBindOnRoll"] = {
-					["name"] = L["Auto-Confirm Bind on Roll"],
-					["desc"] = L["AutoConfirmBindOnRoll_Desc"],
-					["type"] = "toggle",
-					["order"] = 21,
-					["arg"] = { "AutoConfirmBindOnRoll" },
-					["width"] = "full",
-				},
-				["AutoConfirmBindOnPickup"] = {
-					["name"] = L["Auto-Confirm Bind on Pickup"],
-					["desc"] = L["AutoConfirmBindOnPickup_Desc"],
-					["type"] = "toggle",
-					["order"] = 22,
-					["arg"] = { "AutoConfirmBindOnPickup" },
 					["width"] = "full",
 				},
 				["ShowMinimapButton"] = {
@@ -450,9 +434,47 @@ function PasslootBiS:OptionsGet(Info)
 	return Table[Info.arg[#Info.arg]]
 end
 
+-- Fold the three bind-confirm boxes this addon used to have into the one
+-- AutoConfirmBinds switch, once per saved profile.
+--
+-- The OLD roll key's presence is the trigger, not the new key's absence. AceDB
+-- rawsets scalar defaults straight into the profile table (copyDefaults), so
+-- AutoConfirmBinds is physically there and equal to `true` on a profile that has
+-- never heard of it -- "is the new key missing" can never answer yes, by rawget or
+-- otherwise. What DOES distinguish an old profile is a stored AutoConfirmBindOnRoll,
+-- and only a user who turned that box off has one: AceDB strips values equal to the
+-- default on the way out (removeDefaults), so a profile that left it alone stores
+-- nothing and lands on the new default of on -- which is the same answer.
+--
+-- The roll box is what decides, deliberately. It was the one that was on by default
+-- and the one that makes auto-rolling work at all, so turning it off was a real
+-- statement; the pickup box being ticked is not enough on its own to opt someone
+-- back in. All three old keys are then cleared, so a downgrade to an older build
+-- starts from that build's defaults rather than from half-migrated state.
+function PasslootBiS:MigrateBindConfirmOptions()
+	local Profile = self.db and self.db.profile
+	if (not Profile) then return end
+	local OnRoll = rawget(Profile, "AutoConfirmBindOnRoll")
+	if (OnRoll ~= nil) then
+		Profile.AutoConfirmBinds = OnRoll and true or false
+	end
+	Profile.AutoConfirmBindOnRoll = nil
+	Profile.AutoConfirmBindOnPickup = nil
+	Profile.AllowMultipleConfirmPopups = nil
+end
+
+-- The client ships CONFIRM_LOOT_ROLL with the `exclusive` bit, so only one bind
+-- prompt is on screen at a time and the rest queue behind it. That bit used to be
+-- its own option ("Allow Multiple Confirm Popups"); it is now the third thing
+-- AutoConfirmBinds governs, because it is not an independent decision -- it only
+-- ever changes what happens to prompts this addon is already answering. With
+-- auto-confirm on, letting the queue show at once means anything we deliberately do
+-- NOT answer (a roll you cast by hand, a disenchant) appears immediately instead of
+-- waiting behind a popup that is about to be hidden. With it off, the client's own
+-- behaviour is what the user asked for, so we put the bit back.
 function PasslootBiS:SetExclusiveConfirmPopupBit()
 	if (StaticPopupDialogs and StaticPopupDialogs.CONFIRM_LOOT_ROLL) then -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
-		if (self.db.profile.AllowMultipleConfirmPopups) then
+		if (self.db.profile.AutoConfirmBinds) then
 			StaticPopupDialogs.CONFIRM_LOOT_ROLL.exclusive = nil
 			StaticPopupDialogs.CONFIRM_LOOT_ROLL.multiple = 1
 		else
@@ -1760,6 +1782,9 @@ end
 
 function PasslootBiS:OnProfileChanged()
 	-- this is called every time your profile changes (after the change)
+	-- Before the bit is set from it: the profile we just switched to may still be
+	-- carrying the three old bind-confirm keys.
+	self:MigrateBindConfirmOptions()
 	self:SetExclusiveConfirmPopupBit()
 	self.CurrentRule = 0
 	self.CurrentRuleUnknownVars = {}
@@ -1899,7 +1924,7 @@ end
 -- Confirm one loot roll's bind warning exactly once, whoever asks.
 --
 -- TWO independent things answer CONFIRM_LOOT_ROLL now: the profile-wide
--- AutoConfirmBindOnRoll below, and the older per-rule "Confirm BoP" filter
+-- AutoConfirmBinds below, and the older per-rule "Confirm BoP" filter
 -- (Modules/ConfirmBoP.lua) for anyone who set one up. Both fire for the same roll
 -- when a ticked rule matches, so the confirm is funnelled through here and the
 -- second caller becomes a no-op. Returns true if THIS call is the one that
@@ -1936,6 +1961,11 @@ end
 -- from the pickup warning handled below, which is about taking an item out of a
 -- loot window rather than rolling for one.
 --
+-- Governed by the single profile-wide Auto-Confirm Bind Popups switch, which also
+-- covers the pickup prompt below and the popup-queue bit. It used to be its own
+-- box (AutoConfirmBindOnRoll); the three were merged because they are three halves
+-- of one behaviour and splitting them only asked the user to get all three right.
+--
 -- Why this is profile-wide and not another per-rule filter. The addon HAS a
 -- per-rule filter for it (Modules/ConfirmBoP.lua's "Confirm BoP") and it works --
 -- but it only fires when the rule that matched has it ticked, and none of the
@@ -1952,7 +1982,7 @@ end
 -- group, which is why Modules/ConfirmDE.lua makes you confirm the FILTER before it
 -- will auto-confirm the roll. That opt-in stands; this must not quietly undo it.
 function PasslootBiS:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
-	if (not self.db.profile.AutoConfirmBindOnRoll) then
+	if (not self.db.profile.AutoConfirmBinds) then
 		return
 	end
 	if (type(RollID) ~= "number" or RollMethod == self.RollMethod.de) then
@@ -1980,17 +2010,23 @@ end
 -- and a matched rule behind it. This one fires when you take a BoP item straight
 -- out of a loot window -- a master-loot award, personal loot, or whatever is left
 -- in the corpse once the rolls are done. It carries only a loot slot: no RollID,
--- no rule, nothing to hang a per-rule filter off. So it is a single profile-wide
--- toggle (Options > Auto-Confirm Bind on Pickup), OFF by default, because saying
--- yes binds the item for good and that is the user's call to make, not ours.
+-- no rule, nothing to hang a per-rule filter off.
+--
+-- It had its own toggle at first, off by default, on the argument that confirming
+-- binds an item for good on an action the addon did not initiate. Superseded: the
+-- prompt only ever appears because you chose to take that item, so "yes" is the
+-- answer in every case that has come up, and a second box did nothing but split one
+-- behaviour across two switches you had to get right together. It now follows the same
+-- Auto-Confirm Bind Popups setting as the roll prompt above -- so turning that on
+-- does mean BoP pickups stop asking.
 --
 -- Why this is more than a convenience. The client has a small fixed pool of
 -- StaticPopup frames, and CONFIRM_LOOT_ROLL ships with the `exclusive` bit set
--- (SetExclusiveConfirmPopupBit above, and the "Allow Multiple Confirm Popups"
--- option that clears it), so only one of them shows at a time. A boss that drops
--- several BoP items at once leaves a stack of unanswered LOOT_BIND popups sitting
--- in that pool -- exactly the thing that can crowd out the roll-confirm popup our
--- own BoP rolls have to go through. Answering these as they arrive keeps the
+-- (SetExclusiveConfirmPopupBit above clears it while this setting is on), so only
+-- one of them shows at a time by default. A boss that drops several BoP items at
+-- once leaves a stack of unanswered LOOT_BIND popups sitting in that pool --
+-- exactly the thing that can crowd out the roll-confirm popup our own BoP rolls
+-- have to go through. Answering these as they arrive keeps the
 -- queue empty and the roll path clear.
 --
 -- Dispatch order: the client's own LootFrame listens for this same event and
@@ -2000,7 +2036,7 @@ end
 -- Both hides are keyed to this slot, which is what the client stores as the
 -- dialog's `data`, so a popup for some other slot is never touched.
 function PasslootBiS:LOOT_BIND_CONFIRM(Event, Slot)
-	if (not self.db.profile.AutoConfirmBindOnPickup) then
+	if (not self.db.profile.AutoConfirmBinds) then
 		return
 	end
 	if (type(Slot) ~= "number") then

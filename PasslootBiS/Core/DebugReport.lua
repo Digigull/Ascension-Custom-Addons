@@ -179,20 +179,30 @@ local function addConfirmSection(out)
 	local p = PasslootBiS.db and PasslootBiS.db.profile
 	if not p then return end
 	out[#out + 1] = "[Bind confirms]"
-	out[#out + 1] = "  auto-confirm on roll:   " .. yn(p.AutoConfirmBindOnRoll)
-	out[#out + 1] = "  auto-confirm on pickup: " .. yn(p.AutoConfirmBindOnPickup)
-	out[#out + 1] = "  allow multiple popups:  " .. yn(p.AllowMultipleConfirmPopups)
+	-- One line, because there is now one setting: it answers the roll prompt and the
+	-- pickup prompt, and clears the popup-queue bit. Anything still asking you to
+	-- click while this says yes is either a roll you cast by hand or a disenchant --
+	-- both deliberate, both in the [Trace] as "not our roll, leaving the popup".
+	out[#out + 1] = "  auto-confirm bind popups: " .. yn(p.AutoConfirmBinds)
 end
 
--- Is the scanner's "ignore enchants" option safe to switch on for THIS gear?
+-- Would the scanner's shelved "ignore enchants" scoring be safe on THIS gear?
 --
--- The option scores equipped items through SetHyperlink so the enchant can be
--- zeroed out of the link, and LibScaledStats warns that path may report cached or
--- nominal stats for a scaled instance. Rather than guess, this prints the measured
--- answer: `real` and `link` describe the SAME item by two routes, so if they agree
--- the link scan is faithful here and the option can be trusted. If they disagree,
--- leave it off -- an enchant skew is a known, bounded error, and the scaled-stat
--- lie is the unbounded one this whole addon exists to avoid.
+-- The option is gone (shelved at the owner's call after testing -- see
+-- ns.equippedStats in the scanner), but the measurement it existed to settle is
+-- kept, because it is the evidence that decides whether the strip is ever worth
+-- bringing back and it costs one command to take.
+--
+-- It scores equipped items through SetHyperlink so the enchant can be zeroed out of
+-- the link, and LibScaledStats warns that path may report cached or nominal stats
+-- for a scaled instance. Rather than guess, this prints the measured answer: `real`
+-- and `link` describe the SAME item by two routes, so if they agree the link scan
+-- is faithful here. If they disagree, the strip is unusable on this client -- an
+-- enchant skew is a known, bounded error, and the scaled-stat lie is the unbounded
+-- one this whole addon exists to avoid.
+--
+-- `stripped` is then just how much enchant is currently in each score, which is the
+-- size of the skew you are living with while the option stays shelved.
 local function addEnchantSection(out)
 	out[#out + 1] = "[Enchant strip check]"
 	local scanner = scannerAPI()
@@ -226,16 +236,13 @@ local function addEnchantSection(out)
 	end
 	if mismatch > 0 then
 		out[#out + 1] = "  VERDICT: " .. mismatch ..
-			" slot(s) score differently by link than by instance -- do NOT enable" ..
-			" 'Ignore enchants'; SetHyperlink is not faithful on this client."
+			" slot(s) score differently by link than by instance -- the strip is NOT" ..
+			" usable here; SetHyperlink is not faithful on this client."
 	else
 		out[#out + 1] = "  VERDICT: link and instance agree on every slot -- the strip is safe here."
 		out[#out + 1] = "  " .. enchanted .. " slot(s) currently carry enchant value in their score."
 	end
-	local sok, st = pcall(scanner.GetStatus, scanner)
-	if sok and type(st) == "table" then
-		out[#out + 1] = "  option 'Ignore enchants' is currently: " .. yn(st.ignoreEnchants)
-	end
+	out[#out + 1] = "  the 'Ignore enchants' option is SHELVED: no checkbox, forced off."
 end
 
 -- Push a synthetic downgrade through the REAL contract, in game, between the
