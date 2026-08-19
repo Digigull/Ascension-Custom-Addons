@@ -84,13 +84,21 @@ The whole point: a greed roll on boss loot should no longer stop for a click.
    the roll should be cast and confirmed with **no popup left on screen**.
 6. If a popup still appears, `/plbisdebug` immediately and copy it out. The lines to
    look for in `[Trace]`:
-   - `CONFIRM_LOOT_ROLL: auto-confirming roll N` — we answered it; if a popup is
-     still up, the hide failed rather than the confirm.
-   - `not our roll, leaving the popup` — that was a **manual** roll, which is meant
-     to keep its prompt. Not a bug.
+   - `CONFIRM_LOOT_ROLL: auto-confirming roll N (addon-cast)` — we answered it; if a
+     popup is still up, the hide failed rather than the confirm.
+   - `... (hand-cast)` — a roll **you** clicked. Also answered now; the prompt no
+     longer survives just because the click was yours.
+   - `... (addon-cast, link changed)` / `... (addon-cast, roll no longer live)` — the
+     prompt was answered, but our ledger and the client disagree about that rollID.
+     Nothing depends on it any more, so nothing breaks — report it anyway, it is the
+     open question in `BIND-CONFIRMS.md`.
    - **no `CONFIRM_LOOT_ROLL` line at all** — the event never reached us, and my
      whole diagnosis is wrong. That is the most valuable failure to report.
 7. Multi-drop: a boss dropping several BoP items at once should need **zero** clicks.
+   - Then roll **Greed by hand** on a BoP drop your rules passed on. That prompt
+     should answer itself too — the behaviour this round added — and the trace line
+     should read `(hand-cast)`. A **disenchant** rolled by hand still asks; that one
+     is deliberate.
 
 ### C. The pickup-bind popup (same setting, on by default now)
 8. Nothing to tick — **Auto-Confirm Bind Popups** covers this prompt too. If you

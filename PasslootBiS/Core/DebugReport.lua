@@ -179,11 +179,15 @@ local function addConfirmSection(out)
 	local p = PasslootBiS.db and PasslootBiS.db.profile
 	if not p then return end
 	out[#out + 1] = "[Bind confirms]"
-	-- One line, because there is now one setting: it answers the roll prompt and the
-	-- pickup prompt, and clears the popup-queue bit. Anything still asking you to
-	-- click while this says yes is either a roll you cast by hand or a disenchant --
-	-- both deliberate, both in the [Trace] as "not our roll, leaving the popup".
+	-- One line, because there is now one setting: it answers the roll prompt (the
+	-- addon's own rolls AND ones you cast by hand) and the pickup prompt, and clears
+	-- the popup-queue bit. The only bind prompt still left for you while this says
+	-- yes is a disenchant, which keeps its per-rule Confirm DE opt-in. Anything else
+	-- still asking for a click is a bug, and the [Trace] line to quote is
+	-- "auto-confirming roll N" -- whether it is there at all, and which origin it
+	-- names.
 	out[#out + 1] = "  auto-confirm bind popups: " .. yn(p.AutoConfirmBinds)
+	out[#out + 1] = "    covers hand-cast rolls: yes   disenchant: no (per-rule Confirm DE)"
 end
 
 -- Is the scanner's "ignore enchants" scoring still safe on THIS gear?

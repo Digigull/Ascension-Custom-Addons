@@ -7,11 +7,11 @@ local LDB = LibStub:GetLibrary("LibDataBroker-1.1")
 local rollQueue = {}
 
 -- Rolls THIS ADDON cast, as RollID -> the item link that was up when we cast.
--- Read by the CONFIRM_LOOT_ROLL handler so the bind warning is auto-answered only
--- for rolls the addon made on your behalf. A Need you clicked yourself keeps its
--- "this will bind to you" prompt -- that is the stock client's safety net on a
--- deliberate action, and silently removing it is not what auto-rolling was asked
--- to do.
+-- Read by the CONFIRM_LOOT_ROLL handler, which no longer GATES on it: every
+-- Need/Greed bind prompt is answered now, hand-cast ones included (the why is on
+-- that handler). What this still buys is the trace -- "addon-cast" vs "hand-cast"
+-- on the auto-confirm line, which is the first question any "why did it roll that?"
+-- report has to answer.
 --
 -- The value is the LINK, not `true`, because rollIDs are recycled within a session.
 -- A mark left behind by a cast that never drew a confirm (any non-BoP roll) would
@@ -469,9 +469,11 @@ end
 -- AutoConfirmBinds governs, because it is not an independent decision -- it only
 -- ever changes what happens to prompts this addon is already answering. With
 -- auto-confirm on, letting the queue show at once means anything we deliberately do
--- NOT answer (a roll you cast by hand, a disenchant) appears immediately instead of
--- waiting behind a popup that is about to be hidden. With it off, the client's own
--- behaviour is what the user asked for, so we put the bit back.
+-- NOT answer (a disenchant) appears immediately instead of waiting behind a popup
+-- that is about to be hidden -- and, more to the point since hand-cast rolls are
+-- answered too, that several BoP drops at once are all answered in the same breath
+-- rather than one popup per click. With it off, the client's own behaviour is what
+-- the user asked for, so we put the bit back.
 function PasslootBiS:SetExclusiveConfirmPopupBit()
 	if (StaticPopupDialogs and StaticPopupDialogs.CONFIRM_LOOT_ROLL) then -- Some versions of WoW (or addons that remove) don't have CONFIRM_LOOT_ROLL
 		if (self.db.profile.AutoConfirmBinds) then
@@ -1988,17 +1990,44 @@ function PasslootBiS:CONFIRM_LOOT_ROLL(Event, RollID, RollMethod)
 	if (type(RollID) ~= "number" or RollMethod == self.RollMethod.de) then
 		return
 	end
-	-- Only rolls the addon itself cast (see CastRolls). The event fires for a roll
-	-- you clicked by hand too, and answering that one for you would remove a prompt
-	-- the client puts on a deliberate action -- a different feature from the one
-	-- being asked for here, and not one anybody opted into.
+	-- EVERY Need/Greed bind prompt is answered, whoever cast the roll.
+	--
+	-- Superseded: this used to be scoped to rolls the addon itself cast (CastRolls),
+	-- on the argument that a Need or Greed you clicked by hand should keep the
+	-- client's "are you sure" prompt, because the client puts it on a deliberate
+	-- action. Field report from a full dungeon run: the popup still had to be clicked
+	-- several times, and the trace was three "not our roll, leaving the popup" lines
+	-- with no auto-confirm anywhere. The pickup prompt's reasoning (LOOT_BIND_CONFIRM
+	-- below) applies here word for word -- the box only appears because you chose that
+	-- roll, so "yes" has been the answer in every case that has come up -- and a
+	-- setting that reads "answer bind prompts for me" but answers only the half of
+	-- them the addon cast itself is exactly the half-working switch this file already
+	-- merged three boxes to stop shipping.
+	--
+	-- Disenchant is still never folded in: it returns above and keeps the per-rule
+	-- Confirm DE opt-in (Modules/ConfirmDE.lua).
+	--
+	-- CastRolls survives the change as a TRACE ledger rather than a gate. Whether the
+	-- prompt followed our own cast is the first thing a "why did this roll happen?"
+	-- question needs, and the three not-ours cases are worth telling apart because
+	-- they read very differently: no ledger entry is a genuine hand roll; a live link
+	-- that no longer matches means the rollID was recycled between the cast and the
+	-- prompt; a nil link means the roll went away underneath us. If auto-rolled BoP
+	-- loot ever prompts again, that word is the whole diagnosis.
 	local cast = self.CastRolls[RollID]
-	if (not cast or cast ~= GetLootRollItemLink(RollID)) then
-		self:Debug("CONFIRM_LOOT_ROLL " .. RollID .. ": not our roll, leaving the popup")
-		return
+	local live = GetLootRollItemLink(RollID)
+	local origin
+	if (not cast) then
+		origin = "hand-cast"
+	elseif (cast == live) then
+		origin = "addon-cast"
+	elseif (not live) then
+		origin = "addon-cast, roll no longer live"
+	else
+		origin = "addon-cast, link changed"
 	end
 	self.CastRolls[RollID] = nil
-	self:Debug("CONFIRM_LOOT_ROLL: auto-confirming roll " .. RollID)
+	self:Debug("CONFIRM_LOOT_ROLL: auto-confirming roll " .. RollID .. " (" .. origin .. ")")
 	self:ConfirmRollOnce(RollID, RollMethod)
 end
 
