@@ -660,6 +660,71 @@ new `made link:` line in `/atrprofsort transmute` answers it in one command.
 
 ---
 
+## 12. NEW — same-name item variants share one price, and the Sell tab picks the wrong one
+
+**Seen, 2026-08-19.** The owner holds the **epic** `Bloodforged Imperial Jewel` (ilvl 61,
+requires 60, +9 Stamina). Ascension also has a **rare** one of the same name (ilvl 57, requires
+55, +7 Stamina). Only the rare is listed on the auction house at the moment. Dropping the epic
+into the Sell tab priced it off the rare's listings, and the two items' tooltips showed
+identical `Auction` (9g75s) and `Auction median` (12g33s75c) lines. `Vendor` matched too;
+`Disenchant` was the one line that differed (11s17c vs 18s94c).
+
+That last detail is the diagnosis, not a footnote. `Atr_CalcDisenchantPrice` is computed live
+from the item's own type, rarity and level (`AuctionatorHints.lua:2158`), so it splits the two.
+Everything that differed *not at all* is read from a table keyed by **name**.
+
+**This is not one bug, it is the addon's key.** Name is the primary key throughout:
+
+- `gAtr_ScanDB[name]` — the scanned auction price. Written at `AuctionatorScan.lua:668` and
+  `:1357`, read by the Sell recommendation, the Bazaar (`AuctionatorBazaar.lua:2938`), the
+  Finder's price DB (`AuctionatorFinderPriceDB.lua:159`, `:320`, `:401`) and the bag tooltip
+  (`AuctionatorHints.lua:287`).
+- `AUCTIONATOR_PRICING_HISTORY[itemname]` — your own posting history (`Auctionator.lua:3394`
+  onwards).
+- `gItemLinkCache[string.lower(itemName)]` — **one link per name**. `Atr_GetItemLink`
+  (`Auctionator.lua:443`) returns whichever variant was cached first, or whatever
+  `GetItemInfo(name)` happens to resolve to. `AtrScan:Init` seeds `self.itemLink` from it
+  (`AuctionatorScan.lua:152`), which is where "picks the first one seen" actually happens.
+- `AtrScan.items[name]` — the scan's own bucket per item.
+
+**There is already a variant split, and it is the wrong test.** `AuctionatorScan.lua:342`
+compares each listing's **texture** to the bucket's, and on a mismatch appends a space to the
+name to open a second bucket. Both Bloodforged Imperial Jewels use the same icon, so they land
+in one bucket. `GetAuctionItemInfo` hands that same loop `quality` and `level`, and
+`GetAuctionItemLink` hands it the item id — the loop uses neither for the split.
+
+**And the raw data cannot be re-partitioned afterwards.** `AtrScan:AddScanItem`
+(`AuctionatorScan.lua:381`) stores only stack size, buyout, owner and page. The row's link is
+consulted once, under `if (scn.itemLink == nil …)` at `:356`, so a bucket that already has a
+link from the name cache never learns what the listings actually are.
+
+**The Sell side has a signal it throws away.** `GetAuctionSellItemInfo()` returns
+`name, texture, count, quality, canUse, price`. `Atr_SellItemButton_OnEvent`
+(`Auctionator.lua:1491`) reads all six and uses only `texture`. Quality alone would have split
+this case (epic vs rare); the item's real link is available too, via the bag slot that
+`Atr_LoadContainerItemToSellPane` already knows.
+
+**Where the work divides.** These are separable and worth keeping separate:
+
+1. **Split the scan buckets on something that works** — quality, or required/item level, or the
+   listing's item id — instead of texture, and record the row's link in `AddScanItem` so a
+   bucket knows what it holds. Contained inside `AuctionatorScan.lua`; fixes the *displayed*
+   list on the Sell and Buy tabs.
+2. **Give the Sell tab the item it was actually handed**, from `GetAuctionSellItemInfo`'s
+   quality or from the bag link, rather than resolving the name through `gItemLinkCache`.
+   Contained; fixes the recommendation for the item in the drop box.
+3. **Re-key the price database off the item id.** This is the real one. It changes a saved
+   variable that every consumer above reads, needs a migration for existing data, and needs an
+   answer for names that legitimately have one price. Not a UI change — do 1 and 2 first and
+   see how much of the symptom is left.
+
+**Not yet known:** how common this is on Ascension. Two same-name variants of one gem is one
+sighting; whether the server does this broadly (custom itemsets, difficulty tiers) decides
+whether 3 is worth its cost or whether 1 and 2 are the whole fix. A `SavedVariables` dump would
+answer it — duplicate names carrying wildly split prices are visible in the DB.
+
+---
+
 ## Suggested order
 
 Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without any code
@@ -679,6 +744,10 @@ Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without
 5. **Item 8 (Advisor)** — scope after the Ledger, and only once the price-series question
    under "Still open" is answered.
 6. **Item 9** — investigate with ledger data in hand.
+
+**Item 12** does not have a place in that line yet. Its parts 1 and 2 are small and could go
+any time; part 3 re-keys the price database and should not be started before someone has looked
+at a `SavedVariables` dump to see how many names actually collide.
 
 ## What a SavedVariables dump answers
 
@@ -732,3 +801,6 @@ from the same account, which the supplied file did not include.
   series. The advisor cannot exist without a series, and that answer decides whether item 8 is
   a feature or a data-plumbing project.
 - **Item 9:** parked by the owner until item 7 lands.
+- **Item 12:** how many item names on this server carry more than one variant. One sighting so
+  far (`Bloodforged Imperial Jewel`, rare and epic). The answer decides whether the fix is two
+  local changes or a re-keyed price database.
