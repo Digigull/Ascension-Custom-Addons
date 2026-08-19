@@ -17,6 +17,7 @@ of it is shaped the way it is.
 | F. BiS Check dry run | **PASS** — a BiS glove at -4% vs equipped gave `WOULD VETO`; a non-list item did not fire |
 | G. Preview | **not run** |
 | H. Usable dry run (round 3) | **PASS** — wearable downgrade → `usable: yes`; unwearable Mail → `usable: no`, `red line: R4 Mail` |
+| H. Usable dry run (round 4) | **BUG FOUND** — a Bloodforged variant reported `red line: R4 ` with empty text: a blank line left red by an earlier item. Fixed; see §4 |
 
 Two changes came out of that round, so steps below are written against them:
 
@@ -42,6 +43,20 @@ New files that must be present, or the addon will not load correctly:
 
 Then `/plbisdebug on` and leave it on for the whole session. It buffers silently —
 it will not spam your chat.
+
+## 0b. Offline checks (no client needed)
+
+Run both from the repo root before shipping a change to the report or the usable
+scan. Neither needs WoW; both exit non-zero on failure.
+
+```
+lua5.1 management/addons/passlootbis/tools/report-smoke.lua
+lua5.1 management/addons/passlootbis/tools/usable-smoke.lua
+```
+
+`usable-smoke.lua` is the regression net for the blank-red-line bug in §4. Its case 1
+is that exact tooltip — if it ever fails again, `Not Usable` is silently swallowing
+gear the player can wear.
 
 ## 1. Commands
 
@@ -243,14 +258,28 @@ What round 1 did not reach, highest-risk first:
   the end of a run, and the owner pulled the **Mythic** version of the ring from it
   and equipped it. Worth remembering when reading two reports side by side: an
   equipped item can legitimately change into a higher forge of itself between runs.
-- **Why a wearable item reads as unusable.** Round 1 greeded a pair of level-54
-  leather boots on a level-60 leather wearer under the `Not Usable` rule. Still open,
-  but narrowed: round 3 ran both controls through the dry run and the filter was
-  right on each — a wearable **downgrade** (`Shadefiend Boots`, -50%) came back
-  `usable: yes`, and an unwearable **Mail** item came back `usable: no` with
-  `red line: R4 Mail`. So the red-text test is neither fooled by a bad score nor
-  over-matching in general. Whatever reddened those boots was specific to them, and
-  the next one that turns up can be answered on the spot with `/plbisdebug item `.
+- **SOLVED: why a wearable item read as unusable.** A blank tooltip line left red by
+  a previously scanned item. `GameTooltip` reuses its FontStrings — `ClearLines()`
+  hides them but does not reset their colour — so a string another item left red
+  still answers red through `GetTextColor()` when the current item leaves it blank,
+  and the scan counted that as an unmet requirement. Order-dependent, which is why it
+  looked random. Round 4 caught it: a dry run printed `red line: R4 ` with **nothing
+  after the position**. Fixed by ignoring lines with no text; locked in by
+  `tools/usable-smoke.lua` case 1.
+
+  Impact was invisible from the outside, which is why it lasted: `Not Usable` and
+  `Catch All` both greed, so the wrong rule still reached the right roll. It would
+  have mattered the moment those two rules diverged.
+- **NEXT, from the same item: does `Bloodforged` itself render red?** The round-4
+  item was a *Bloodforged* Shadefiend Boots — on Ascension a PvP variant that trades
+  PvE power for PvP power — and the owner reports its **visible** tooltip carries red
+  text reading "heroic bloodforged". If that label is red at exactly 255,32,32 in our
+  hidden tooltip too, then the blank-line fix uncovers a second misfire and every
+  forged item reads unusable, wearable or not. Re-run the same dry run to find out:
+  the capture now reports **all** red lines, not just the first, so one report
+  answers it. `usable: yes` means the blank line was the whole story;
+  `red lines: L2 Bloodforged` (or similar) means the colour test needs to exclude
+  forge labels. Do not guess which — the report says.
   - **Ruled out: the BiS Scanner's own tooltip line.** The obvious suspect is the
     red downgrade text the scanner adds on hover, but it cannot reach this test
     twice over. `PassLootBiS_Scanner/Core/Tooltip.lua` hooks `GameTooltip` and

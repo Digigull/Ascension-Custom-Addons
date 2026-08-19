@@ -88,8 +88,15 @@ function usableModule:GetUsableText(id) return id == 2 and "Usable" or "Unusable
 function usableModule.Widget:SetMatch(itemObj)
   if not (itemObj and itemObj.link) then error("Usable SetMatch got no link") end
   addon.TooltipCache = { link = itemObj.link, usable = false,
-    unusableLine = "L3 Requires Level 60" }
+    unusableLines = { "R4 Mail", "L2 Bloodforged" } }
   usableModule.CurrentMatch = 3
+end
+-- Core/Cache.lua's helper, stubbed: two red lines, so the report is checked on the
+-- multi-line form rather than only the single one. The real one joins with " | ".
+function addon:UnusableReason()
+  local reds = self.TooltipCache and self.TooltipCache.unusableLines
+  if not (reds and #reds > 0) then return nil end
+  return table.concat(reds, " | ")
 end
 function addon:GetModule(name, silent)
   if name == "Usable" then return usableModule end
@@ -123,6 +130,7 @@ print(r2)
 -- here turns "tell me what went wrong" into a second thing that went wrong.
 addon.API = nil
 addon.GetModule = nil
+addon.UnusableReason = nil
 addon.EnumerateBiSLists = function() return {} end
 addon.CollectStaleBiSItems = function() return {} end
 addon.DebugVar = false

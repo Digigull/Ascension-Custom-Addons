@@ -309,14 +309,14 @@ local function addUsableLine(out, link)
 		return
 	end
 	local match = mod.CurrentMatch
-	local cache = PasslootBiS.TooltipCache or {}
+	local reason = PasslootBiS.UnusableReason and PasslootBiS:UnusableReason()
 	-- The red line is the evidence, not decoration: "unusable" is inferred from the
 	-- client painting a requirement red (Core/Cache.lua), so without it the verdict
 	-- cannot be checked -- which is exactly how a pair of plainly wearable leather
 	-- boots came to greed under Not Usable with nothing to say why.
 	out[#out + 1] = "  usable: " .. yn(match == 2) ..
 		"   (" .. tostring(match) .. " " .. tostring(mod:GetUsableText(match)) .. ")" ..
-		(cache.unusableLine and ("   red line: " .. tostring(cache.unusableLine)) or "")
+		(reason and ("   red lines: " .. reason) or "")
 end
 
 local function addItemSection(out, link)

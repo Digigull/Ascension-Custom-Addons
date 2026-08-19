@@ -125,9 +125,10 @@ function module.Widget:SetMatch(itemObj, Tooltip)
 	-- decided it: "unusable" is an inference from a colour, and an inference you
 	-- cannot audit from a trace is one you end up debugging twice.
 	module.CurrentMatch = cache.usable and 2 or 3
+	local reason = PasslootBiS:UnusableReason()
 	module:Debug("Usable: " .. module.CurrentMatch ..
 		" (" .. module:GetUsableText(module.CurrentMatch) .. ")" ..
-		(cache.unusableLine and ("  red line: " .. tostring(cache.unusableLine)) or ""))
+		(reason and ("  red lines: " .. reason) or ""))
 end
 
 function module.Widget:GetMatch(RuleNum, Index)

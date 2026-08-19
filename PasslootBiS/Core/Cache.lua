@@ -19,45 +19,62 @@ local function ColorCheck(Red, Green, Blue, Alpha)
 	return (Red == 255 and Green == 32 and Blue == 32 and Alpha == 255)
 end
 
+-- How many red lines to keep. More than one matters: a red line can sit behind
+-- another, and each extra round trip to find that out costs a whole play session.
+local MAX_RED_LINES = 5
+
 -- `where` is the line's position as "L3"/"R1" -- left or right column, 1-based --
 -- and is only used to label a red line for the trace (see below).
 local function getLine(Line, where)
 	if Line then
 		local text = Line:GetText()
-		local Red, Green, Blue, Alpha = Line:GetTextColor()
-		if ColorCheck(Red, Green, Blue, Alpha) then
-			local cache = PasslootBiS.TooltipCache
-			cache.usable = false
-			-- Keep the FIRST red line, with its position, for the trace. "Unusable" here
-			-- is an inference from a colour, so a trace that prints only the verdict cannot
-			-- be checked: a Dire Maul run (2026-08) ruled a pair of leather boots unusable
-			-- on a leather-wearing character and left nothing to say which requirement the
-			-- client had painted red. Modules/Usable.lua appends this to its trace line.
-			--
-			-- The position is worth having because the text alone does not say what KIND
-			-- of refusal this is. Measured examples (owner, 2026-08):
-			--   R4 Mail   -- an armour class you cannot wear. The armour type sits in the
-			--                RIGHT column of the armour line, and the client reddens just
-			--                that word. This is the commonest refusal by far.
-			--
-			-- SUPERSEDED, and worth stating because the wrong version was written down
-			-- first: the guess was that a client refusal lives in the left column near the
-			-- top and that a right-column red implied some addon had bolted a line on. The
-			-- very first measurement was R4, so the column says nothing about the source.
-			-- Nothing else hooks this tooltip anyway -- it is our own hidden PasslootBiSTT
-			-- (Libs/Libs.xml), and the BiS Scanner annotates GameTooltip/ItemRefTooltip
-			-- only, in a base colour the red test cannot see.
-			--
-			-- First red line rather than last, because later reds are usually knock-on: a
-			-- missing profession reddens the "Requires" line and the recipe's spell line.
-			if not cache.unusableLine then
-				cache.unusableLine = (where and (where .. " ") or "") .. (text or "")
+		-- EMPTY LINES STATE NO REQUIREMENT, whatever colour they are left in, and this
+		-- guard is the whole reason the check works. GameTooltip reuses its FontStrings:
+		-- ClearLines() hides them but does NOT reset their colour, so a string another
+		-- item left red still answers red through GetTextColor() when the current item
+		-- leaves it blank. Reading that as "unusable" made the Not Usable rule greed
+		-- items the player could plainly wear -- a pair of leather boots on a leather
+		-- wearer, intermittently, depending only on what had been scanned before them.
+		--
+		-- It stayed hidden for so long because the symptom is invisible from the outside:
+		-- Not Usable and Catch All both greed, so the wrong rule reached the right
+		-- outcome. What caught it was the capture below printing "red line: R4 " with
+		-- nothing after the position (owner, 2026-08).
+		if text and text ~= "" then
+			local Red, Green, Blue, Alpha = Line:GetTextColor()
+			if ColorCheck(Red, Green, Blue, Alpha) then
+				local cache = PasslootBiS.TooltipCache
+				cache.usable = false
+				-- Keep the red lines, with their positions, for the trace. "Unusable" here
+				-- is an inference from a colour, so a report that prints only the verdict
+				-- cannot be checked -- which is exactly how the blank-line bug above
+				-- survived. Measured vocabulary so far:
+				--   R4 Mail  -- an armour class you cannot wear. The armour TYPE sits in the
+				--              right column of the armour line and the client reddens just
+				--              that word.
+				-- (Superseded guess, recorded because it is the one someone re-derives: that
+				-- a client refusal lives in the left column and a right-column red meant an
+				-- addon had added the line. The first measurement was R4. The column says
+				-- nothing about the source, and nothing else hooks this tooltip anyway.)
+				local reds = cache.unusableLines
+				if reds and #reds < MAX_RED_LINES then
+					reds[#reds + 1] = (where and (where .. " ") or "") .. text
+				end
 			end
 		end
 		return text and text or ""
 	else
 		return ""
 	end
+end
+
+-- The red lines behind an "unusable" verdict, as one string, or nil if the item is
+-- usable. Shared so the trace line (Modules/Usable.lua) and the item dry run
+-- (Core/DebugReport.lua) can never describe the same verdict differently.
+function PasslootBiS:UnusableReason()
+	local reds = self.TooltipCache and self.TooltipCache.unusableLines
+	if not (reds and #reds > 0) then return nil end
+	return table.concat(reds, " | ")
 end
 
 function PasslootBiS:BuildTooltipCache(item)
@@ -68,7 +85,7 @@ function PasslootBiS:BuildTooltipCache(item)
 	cache.Left, cache.Right = {}, {}
 	cache.link = item.link
 	cache.usable = true
-	cache.unusableLine = nil
+	cache.unusableLines = {}
 
 	PasslootBiSTT:ClearLines()
 	PasslootBiSTT:SetHyperlink(item.link)
