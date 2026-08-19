@@ -293,9 +293,41 @@ ledger should record the intended purchase **and** the delivered item where they
 distinguished, not assume they match. That is what makes item 9 answerable rather than a
 second guess.
 
-Storage is a new account-wide saved variable with a bounded row count (the Hints DB caps its
-raw sample log at 500, `AuctionatorHints.lua:901` — follow that precedent). Decide the cap and
-the pruning rule before writing rows, not after the file gets large.
+### The row is the design decision
+
+Everything else about the Ledger is ordinary; the row shape is the part that is expensive to
+change later, because a row written under the wrong schema cannot be back-filled. Four things
+have to be decided before the first row is written, and the reasoning for each:
+
+**1. Intended vs. delivered are separate fields, not one.** The buy loop knows what it *asked*
+for; what arrived is a different question and is exactly what item 9 is about. A row that
+records only "bought X" cannot answer it. Record both, and leave the delivered side nil when we
+genuinely could not observe it — nil is honest, a copy of the intended value is not.
+
+**2. Money is copper, always.** The Bazaar already established this ("everything is reduced to
+copper internally, since that's the only exact integer axis the AH gives us" — `README.md`).
+Store unit price *and* quantity separately rather than a total, since every downstream question
+— per-item margin, restock cost — needs the unit.
+
+**3. Time needs a real timestamp, not a display string.** `AUCTIONATOR_PRICING_HISTORY` packs
+its time through `ToTightTime` (`Auctionator.lua:6221`) to keep the table small. Reuse that if
+size matters, but keep the *resolution*: the Advisor (item 8) is the only consumer that will
+ever need a series out of this, and it will want ordering finer than the day.
+
+**4. Rows carry a source tag.** Auction buy, auction sale, expiry, cancellation, deposit,
+vendor buy, vendor sale — one table with a `src` field, not seven tables. The Ledger's whole
+value is being able to total across them.
+
+**Storage:** a new account-wide saved variable with a bounded row count. The Hints DB caps its
+raw sample log at 500 (`AuctionatorHints.lua:901`) — follow that precedent, but note the Ledger
+is a *record* rather than a sample, so pruning loses history the user may care about. Prefer a
+generous cap plus a documented pruning rule (oldest first) over silent eviction, and never the
+mean DB's random eviction (`FRAMEWORK.md` §5 — it destroyed the ordering there and cannot be
+undone). Decide the cap before writing rows, not after the file gets large.
+
+**Scope question still open:** whether the first version covers vendor buy/sell and mail, or
+auction house activity only. That is the difference between one event source and five, and it
+decides whether the Ledger ships in one pass or two.
 
 This item is the prerequisite for items 8 and 9. Build it first.
 
@@ -350,6 +382,27 @@ columns for a real case. Recorded here only so the observation is not lost.
 5. **Items 4, 6** — Finder work, independent of each other.
 6. **Item 8 (Advisor)** — scope after the Ledger.
 7. **Item 9** — investigate with ledger data in hand.
+
+## What a SavedVariables dump answers
+
+The owner offered their in-game Auctionator database, which is cheaper than a diagnostic for
+most open questions and needs no code. The file is the **account-level** one —
+`WTF/Account/<ACCT>/SavedVariables/Auctionator-Finder-Ascension.lua`, not the per-character
+copy; `tools/README.md` explains why and how to take one cleanly (fully exit the client first,
+or the last session's learning is missing).
+
+What each open question gets out of it:
+
+| Question | Variable | What settles it |
+|---|---|---|
+| Are scrolls named `"Scroll of <enchant>"`? | `AUCTIONATOR_PRICE_DATABASE` | The DB is name-keyed, so the scroll names are literally the keys. Definitive. |
+| Which item is Enchanting Vellum here? | `AUCTIONATOR_NPC_PRICES` | itemID → price. An entry near the observed 2g40s is the candidate; confirms or replaces `ATR_ENCHANT_VELLUM_ID`. Needs an enchanting vendor to have been opened. |
+| Was enchanting really absent from the harvest? | `AUCTIONATOR_CRAFT_RECIPES` | Confirms the item 2 diagnosis outright — pre-fix there should be no enchant entries at all. |
+| What yield was harvested for a multi-output recipe? | `AUCTIONATOR_CRAFT_RECIPES[id].made` | **Partial.** This field stores `GetTradeSkillNumMade`'s FIRST return only. A `made = 1` on a recipe known to make 3 proves `minMade` is 1 — but not whether `maxMade` is 3 (a one-line fix) or also 1 (needs the manual box). Only `/atrprofsort distilled` separates those two. |
+| Does a market price series exist? | `AUCTIONATOR_MEAN_PRICE_DATABASE` | Confirms `FRAMEWORK.md` §5 against real data — the sample arrays should carry no timestamps. |
+
+Worth taking one before the enchanting fix is loaded, since a pre-fix dump is the only clean
+evidence of what the harvest was missing.
 
 ## Answered by the owner, 2026-08-19
 
