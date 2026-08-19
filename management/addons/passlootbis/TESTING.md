@@ -19,6 +19,7 @@ of it is shaped the way it is.
 | H. Usable dry run (round 3) | **PASS** — wearable downgrade → `usable: yes`; unwearable Mail → `usable: no`, `red line: R4 Mail` |
 | H. Usable dry run (round 4) | **BUG FOUND** — a Bloodforged variant reported `red line: R4 ` with empty text: a blank line left red by an earlier item. Fixed; see §4 |
 | H. Usable dry run (round 5) | **PASS** — same Bloodforged item after the fix: `usable: yes   (2 Usable)`, no red lines. Forge labels do not trip the colour test |
+| H. Usable dry run (round 6) | **PASS** — `Bloodforged Pyremail Wristguards` (Mail): `usable: no`, `red lines: R3 Mail`. Forged *and* unwearable is still caught, and the index moved R4 → R3 |
 
 Two changes came out of that round, so steps below are written against them:
 
@@ -213,7 +214,9 @@ The remaining steps need real loot only because they check the *trace*:
     column, then the line number. Known vocabulary so far:
     - `R4 Mail` — **an armour class you cannot wear.** The armour type sits in the
       right column of the armour line and the client reddens just that word. Round 2
-      measured this on `Leggings of Destruction`; it is the commonest refusal.
+      measured this on `Leggings of Destruction`; it is the commonest refusal. The
+      **index is not fixed** — round 6 saw the same refusal at `R3` on an item with
+      one fewer line above it. Read the text, never the position.
 
     *Superseded:* the position was originally documented as telling a client refusal
     (left column, near the top) from an addon-added line (right column or bottom).
@@ -247,16 +250,13 @@ What round 1 did not reach, highest-risk first:
 - **`LOOT_BIND` / `CONFIRM_LOOT_ROLL` popup hiding** — the confirm is event-driven
   and solid; the *hide* assumes the client stores the slot/rollID as the dialog's
   `data`.
-- **A Bloodforged variant scored identically to its base item.** `Shadefiend Boots`
-  (round 3) and `Bloodforged Shadefiend Boots` (round 5) both scored **23.5** against
-  the same equipped feet. Bloodforged is described as trading PvE power for PvP power,
-  which should make the forged one score *lower* under a PvE weight set, not equal.
-  Two innocent explanations — the trade is purely additive (PvP stats added, PvE stats
-  untouched), or the two listings happened to roll the same stats — and one that is
-  not: the scan is reading the base item rather than the forged instance, which is the
-  scaled-stat failure mode this addon exists to avoid. Cheap check: hover both and
-  compare the stat lines by eye. If the tooltips differ and the scores do not, it is
-  the third one.
+- **~~A Bloodforged variant scored identically to its base item.~~ Explained, not a
+  bug.** `Shadefiend Boots` (round 3) and `Bloodforged Shadefiend Boots` (round 5)
+  both scored 23.5, which looked wrong for an item said to trade PvE power for PvP
+  power. Owner: the PvE/PvP power weighting is switched **off** on this character, so
+  the forged half contributes nothing either way, and these items roll variable stats
+  anyway. Two independent reasons for the scores to land together. Left here only so
+  the next person reading two forged scores does not re-open it.
 - **`LOOT_ITEM_*` chat patterns** feeding the ledger, if Ascension reworded loot
   messages. Round 1 is *not* evidence against them: the one item won that run was
   `Jasper Link of the Arcane`, an intellect ring worth 0 to a Brigand, and

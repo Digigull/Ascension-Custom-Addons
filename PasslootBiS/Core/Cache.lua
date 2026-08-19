@@ -51,7 +51,9 @@ local function getLine(Line, where)
 				-- survived. Measured vocabulary so far:
 				--   R4 Mail  -- an armour class you cannot wear. The armour TYPE sits in the
 				--              right column of the armour line and the client reddens just
-				--              that word.
+				--              that word. The INDEX is not fixed: the same refusal has been
+				--              measured at R3 and at R4, depending on how many lines the item
+				--              carries above it. Never match on the position.
 				-- (Superseded guess, recorded because it is the one someone re-derives: that
 				-- a client refusal lives in the left column and a right-column red meant an
 				-- addon had added the line. The first measurement was R4. The column says
