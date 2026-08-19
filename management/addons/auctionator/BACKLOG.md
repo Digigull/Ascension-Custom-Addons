@@ -334,6 +334,13 @@ Essence of Earth x2   69g00s00c   <- 75% of the craft cost
 real. Nothing in the addon can check it; a glance at the auction house can. Note every reagent
 here priced from the AH — none is vendor-sold, so the NPC path does not soften it.
 
+**Checked, 2026-08-19: the price is real.** The owner searched it — "yes its really high like 32g
+ish" — and a fresh scan re-priced it at exactly **32g**. So the reagent is genuinely that
+expensive, the craft cost is genuinely that high, and **item 3 is closed on all counts**: the
+yield reads correctly, the arithmetic reproduces to the copper, and the inputs are real. The
+per-flask figure moves with the market (32g rather than 34g50s puts it near 28g85s), which is the
+point of computing it live.
+
 What the earlier dump had already proved is that
 `GetTradeSkillNumMade`'s first return is **not universally clamped to 1 on this server** —
 three scroll recipes are stored `made = 2`. So a flask recorded as `made = 1` would be a real
@@ -395,10 +402,18 @@ selection already survives its stat vanishing from results, so pre-selecting bef
 persists with no extra work.
 
 **Verified** by `luac5.1 -p` and by reading the call order (both new entry points run long after
-SavedVariables load — `Fdr_AnalyzeResults` post-scan, the dropdown on user click). **Not
-verified in-game.** The 2026-08-19 dump carries **no `statKeys`**, which is expected rather than
-a failure: it was taken from a client still running the pre-merge build. The check is to install
-the merged build, run one Finder search, and look for the key. The thing to look at first is **menu height**: the list can now hold every
+SavedVariables load — `Fdr_AnalyzeResults` post-scan, the dropdown on user click).
+
+**Verified in game, 2026-08-19.** Two Finder searches on the merged build (`Essence of Earth`,
+`Bloodforged`) left **31 keys in `AUCTIONATOR_FINDER_SETTINGS.statKeys`** — the 24 stock
+`ITEM_MOD_*` stats, six `RESISTANCE*_NAME` keys, and **`PVP_POWER`**. That last one is the whole
+argument for "learn, don't seed" arriving as evidence: it is an Ascension custom stat, no stock
+constant covers it, and a static seed would have missed it.
+
+One cosmetic follow-up, not worth a change on its own: `Fdr_StatDisplayName` has no `_G` entry for
+`PVP_POWER`, so its de-tokenising fallback renders it **"Pvp power"**. Correct and readable, just
+not how anyone writes it. If a future edit touches that function, upper-casing each word would
+give "Pvp Power"; getting "PvP Power" needs a special case, which is not worth carrying. The thing to look at first is **menu height**: the list can now hold every
 stat the account has ever seen (realistically 30–50 entries) where it used to hold one scan's
 worth, and 3.3.5's `UIDropDownMenu` has no scrollbar — it can only flip above the button. If it
 runs off screen, that is the follow-up, and paging is the fix, not a smaller learned set.
@@ -905,10 +920,32 @@ get both wrong.
 variants apart: `AtrScan.items[name]` is one bucket per name and `AddScanItem` never records
 the row's link. Part 3 without part 1 is a schema with no data.
 
-**Not yet known:** how common this is on Ascension. Two same-name variants of one gem is one
-sighting; whether the server does this broadly (custom itemsets, difficulty tiers) decides
-whether 3 is worth its cost or whether 1 and 2 are the whole fix. A `SavedVariables` dump would
-answer it — duplicate names carrying wildly split prices are visible in the DB.
+**Measured 2026-08-19, and it cuts two ways.** A broad `Bloodforged` search (hundreds of gear
+listings, price DB 5267 → 5471) was scanned and the dump re-read:
+
+- **The texture test fired zero times on gear.** Trailing-space keys stayed at exactly 3, the
+  same three recipes and container as before. Whatever the existing split is catching, it is not
+  catching same-name gear — which is the case that was actually reported. Part 1's replacement is
+  not competing with a mechanism that works; it is replacing one that is inert where it matters.
+- **The reported item is in the DB and looks the part.** `Bloodforged Imperial Jewel` holds one
+  price, 9g75s — exactly what the owner saw their epic priced at — over mean samples of
+  `9g75s, 9g77s, 9g77s, 14g90s`. The 14g90s outlier is what a second variant looks like from
+  inside a name-keyed table: not obviously wrong, just quietly averaging two different items.
+- **148 of 5471 names (2.7%) carry mean samples splitting 5x or wider**, topping out at 130x
+  (`Recipe: Distilled Flask of Adept Striking`, 7g64s → 998g99s) with 25–70x common among
+  Bloodforged gear.
+
+**Read that 2.7% carefully — it is a ceiling on the evidence, not a count of variants.** Three
+different things produce a wide split under one name and this data cannot separate them: a true
+same-name variant pair (item 12's case), Ascension's per-INSTANCE scaling of gear (the Finder's
+own `rec.scaled` machinery exists for exactly this, and the Bloodforged names dominating the list
+are all scaled gear), and plain outlier listings (a recipe is not scaled, so the 130x row is
+market noise the mean DB deliberately keeps).
+
+What it does establish is the thing part 3 needs: **one number per name is being asked to stand
+for items that differ by 25x and more, on 2.7% of the database.** Whichever of the three causes
+dominates, the value shape is wrong for those rows, and the variant-in-value design fixes it for
+the first two without needing to tell them apart up front.
 
 ---
 
