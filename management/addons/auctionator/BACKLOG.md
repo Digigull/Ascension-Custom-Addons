@@ -509,9 +509,16 @@ modern Auctionator's, not this 2.9.9 fork's, and the file supplied was named
    would look like: this fork writing into a table another addon owns.
 3. **Ascension ships its own Auctionator variant** that wrote the file.
 
-**Check first, before writing any code:** ask which addons are installed, and get
-`Auctionator-Finder-Ascension.lua` specifically. If that file's price DB is plain numbers, this
-item closes as "the dump was a different addon's".
+**Closed by the owner, 2026-08-19, and it was none of the three.** `Bronzebeard - Warcraft
+Reborn` is a **predecessor of the realm actually in use** — Rexxar - Conquest of Azeroth is the
+new version of that server, similar enough that some naming carried over. All scanning has only
+ever been done on Rexxar - CoA, whose two keys are the plain numbers this addon reads and
+writes. The table-shaped entries are a historical residue under realm keys that never match at
+runtime, so nothing reads them and nothing is broken. No code, no shim, no warning: **the fix
+was a question.**
+
+Worth keeping in mind if a realm is ever renamed *into* one of those keys, and worth keeping as
+the reason this item existed — the shape is real, it is just not this realm's.
 
 **If it turns out to be real**, the fix is small but the decision is not: read `mr` when an
 entry is a table (a compatibility shim for a format we do not write), or detect the foreign
@@ -527,15 +534,66 @@ an Advisor would want, and is worth remembering when that item is scoped.
 
 ---
 
+## 11. Transmutes get no craft cost or profit — DONE
+
+**Found by the owner, 2026-08-19**, hovering `Transmute: Arcanite` in an Alchemy window: the
+tooltip showed Vendor, Auction and Auction median for **Arcanite Bar** and then stopped. No
+`Craft cost`, no `Craft profit`, not even the `Craft cost unknown` line that a craftable-but-
+unpriceable item is supposed to get.
+
+**Cause: this file assumed a row's name is its product's name**, which is true of nearly every
+recipe and false of a transmute. `Transmute: Arcanite` makes `Arcanite Bar`. Two things broke
+on that, in two different places:
+
+1. **The sort.** `Atr_ProfSort_RowProfit` looked the market price up under the ROW name, so
+   every transmute came back unpriced and sank below every priced recipe with a blank profit —
+   the identical symptom, from the identical cause, as the enchanting rows in item 2. Item 2's
+   write-up said a named helper would be wanted "for any craft whose row name is not its
+   product name"; this is that craft, and it did not get one at the time.
+2. **The craft-cost tooltip.** Both of its sources have to FIND the recipe that makes the
+   hovered item, and both match on the produced item's ID or on the row's NAME. The name match
+   cannot work for a transmute, so the whole thing rests on the ID — and this client hands back
+   no item link for some rows, the quirk the `SetTradeSkillItem` hook already works around by
+   reading the link back off the *rendered* tooltip. When that happens there is nothing left to
+   match on, no row is found, and `isCraftable` stays false: hence silence rather than a wrong
+   number.
+
+**Built.**
+
+- `Atr_ProfSort_RowSellName(i)` (`AuctionatorFinderProfession.lua`) — the item name a row's
+  output is listed under. Enchant → the scroll; anything else → the produced item's name read
+  off its own link, with the row name as the fallback for a row with no link. One helper now
+  answers a question three call sites were each answering their own way.
+- **The craft-cost tooltip no longer searches when it does not have to.** The trade skill hook
+  knows exactly which row the tooltip is for, so `ShowTipWithPricing` and
+  `Atr_AddCraftProfitToTip` take an optional `skillIndex` and cost straight off it. Exact,
+  cheaper than the scan it replaces, and immune to both failure modes above — including the
+  nil-link one, which no amount of better matching could have fixed. It also proves the recipe
+  exists, so an unpriceable transmute now says `Craft cost unknown` instead of nothing.
+  Reagent hovers still go the ordinary way; every other tooltip caller passes no index and is
+  unaffected.
+- `/atrprofsort <text>` prints each row's **produced item link**, or says the harvest skips the
+  row when there is none. That is the datum that separates "no link" from "unpriced reagent",
+  and it is what would have named this bug from the first report.
+
+**Verified** under bare `lua5.1` against a mock trade skill window: the sell name for an
+ordinary craft, a transmute, a transmute whose link is nil, and an enchant; the transmute
+pricing and ranking rather than sinking; the unpriceable row still sinking; and the row-index
+route costing a transmute that the name match cannot find at all. **Not verified in game.**
+
+**Still open:** whether the profession **harvest** stores transmutes. It keys by produced-item
+ID and skips any row without an item link, so on a client that returns none for these rows the
+Sell tab's Crafted Goods Margin filter and a bag tooltip (profession window closed) will still
+have no cost for `Arcanite Bar`. The trade skill window itself is now correct either way. The
+new `made link:` line in `/atrprofsort transmute` answers it in one command.
+
+---
+
 ## Suggested order
 
-Items 2 and 3 are **done** and out of this list (2026-08-19). What is left, in order:
+Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without any code
+(2026-08-19). What is left, in order:
 
-0. **Item 10's one question, before anything price-dependent.** It is not a build — it is
-   asking which addons are installed and getting `Auctionator-Finder-Ascension.lua` itself. If
-   the foreign price-DB shape is real, every price feature on the affected realms is silently
-   dead, including what items 2 and 3 just shipped. Costs nothing; the downside if skipped is
-   everything.
 1. **Items 5, 1** — the last of the fully-decided, self-contained UI changes, and small enough
    to land together. Item 5 has one thing to get right (the persisted `reqOnly` has to be
    honoured from the user's own click once the auto-tick block stops writing it); item 1 has
@@ -595,6 +653,10 @@ from the same account, which the supplied file did not include.
   `/atrprofsort stamina` answers both. Neither breaks the numbers if wrong — see item 2.
 - **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
   ("Already known") string.
+- **Item 11:** whether the profession harvest stores transmutes at all — i.e. whether this
+  client returns an item link for those rows. Decides only whether the Sell tab and bag
+  tooltips know an `Arcanite Bar`'s craft cost with the profession window closed; the trade
+  skill window is correct either way. `/atrprofsort transmute` now prints the link.
 - **Item 8:** what `AUCTIONATOR_PRICE_DATABASE` actually retains — a current price, or a dated
   series. The advisor cannot exist without a series, and that answer decides whether item 8 is
   a feature or a data-plumbing project.

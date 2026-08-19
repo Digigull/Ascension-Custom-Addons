@@ -93,6 +93,44 @@ function Atr_Craft_RowYield(i)
     return made;
 end
 
+-- WHAT A ROW IS SOLD AS ------------------------------------------------------
+
+-- The item NAME a trade skill row's output is listed under, which is not always
+-- the row's own name.  Three cases, and only the first is the row name itself:
+--
+--   ordinary craft   "Distilled Flask of the Unyielding" makes an item of the
+--                    same name, so the row name works and always has.
+--   TRANSMUTE        "Transmute: Arcanite" makes "Arcanite Bar".  The row is
+--                    named for the ACTION, not the product, so looking the row
+--                    name up on the auction house finds nothing -- no price, no
+--                    profit, and the row sinks below every priced recipe in the
+--                    sort.  Same failure the enchanting rows had, from the same
+--                    cause: this file used to assume row name == product name.
+--   ENCHANT          makes no item at all; sold as "Scroll of <row name>".
+--
+-- The produced item's own LINK is the authority here, and the row name is only
+-- the fallback for a row this client hands back no link for.  This is the
+-- named helper the enchanting work said would be wanted "for any craft whose
+-- row name is not its product name" -- a transmute is exactly that craft.
+-- Global for the harness.
+function Atr_ProfSort_RowSellName(i)
+    if (type(GetTradeSkillInfo) ~= "function") then return nil; end
+    local rowName = (GetTradeSkillInfo(i));
+    if (rowName == nil or rowName == "") then return nil; end
+
+    if (Atr_ProfSort_RowIsEnchant(i)) then
+        return Atr_Craft_ScrollName(rowName) or rowName;
+    end
+
+    local link = (type(GetTradeSkillItemLink) == "function") and GetTradeSkillItemLink(i) or nil;
+    if (link and type(GetItemInfo) == "function") then
+        local made = GetItemInfo(link);
+        if (made and made ~= "") then return made; end
+    end
+
+    return rowName;
+end
+
 -- ENCHANTING -----------------------------------------------------------------
 --
 -- Enchanting is the one profession whose recipes produce no item, and that is
@@ -591,14 +629,13 @@ function Atr_ProfSort_RowProfit(i)
     local name, skillType = GetTradeSkillInfo(i);
     if (skillType == "header" or name == nil) then return nil; end
 
-    -- An enchant is never listed under its own name -- the scroll it gets applied
-    -- to is.  Looking the row name up directly is what left every enchanting row
-    -- unpriced, and therefore sorted below every other recipe, with a blank
-    -- profit column.
-    local sellName = name;
-    if (Atr_ProfSort_RowIsEnchant(i)) then
-        sellName = Atr_Craft_ScrollName(name) or name;
-    end
+    -- A row is not always listed under its own name: an enchant sells as a
+    -- scroll, a transmute is named for the action rather than the product.
+    -- Looking the row name up directly is what left every enchanting row -- and
+    -- then every transmute -- unpriced, and therefore sorted below every other
+    -- recipe with a blank profit column.  Atr_ProfSort_RowSellName knows all
+    -- three cases; see it for which.
+    local sellName = Atr_ProfSort_RowSellName(i) or name;
 
     local sell = (Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(sellName)) or nil;
     if (sell == nil or sell <= 0) then return nil; end   -- no market price to rank on
@@ -1095,15 +1132,24 @@ if (SlashCmdList) then
                     if (type(GetTradeSkillNumMade) == "function") then lo, hi = GetTradeSkillNumMade(i); end
 
                     local isEnch   = Atr_ProfSort_RowIsEnchant(i);
-                    local sellName = isEnch and (Atr_Craft_ScrollName(rname) or rname) or rname;
+                    local sellName = Atr_ProfSort_RowSellName(i) or rname;
                     local sell     = Atr_GetAuctionPrice and tonumber(Atr_GetAuctionPrice(sellName)) or nil;
                     local cost     = Atr_ProfSort_RowCost(i);
                     local profit   = Atr_ProfSort_RowProfit(i);
                     local made     = Atr_Craft_RowYield(i);
 
+                    -- The produced item's LINK is the datum most of this file
+                    -- keys off -- the harvest skips a row without one, and the
+                    -- item-to-row match behind the craft-cost tooltip needs it
+                    -- for any row whose name is not its product's.  When
+                    -- something is wrong for one profession and right for the
+                    -- rest, this line is usually where it shows.
+                    local madeLink = (type(GetTradeSkillItemLink) == "function") and GetTradeSkillItemLink(i) or nil;
+
                     add("    [" .. i .. "] " .. rname .. (isEnch and "   (enchant)" or ""));
                     add("        NumMade:  min=" .. tostring(lo) .. "  max=" .. tostring(hi)
                         .. "   (cost maths uses min)");
+                    add("        made link: " .. (madeLink and madeLink:gsub("|", "||") or "(NONE - harvest skips this row)"));
                     add("        sells as: " .. sellName);
                     add("        per item:    sell=" .. Atr_ProfSort_Money(sell)
                         .. "  cost=" .. Atr_ProfSort_Money(cost)
