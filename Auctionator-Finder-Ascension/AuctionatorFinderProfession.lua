@@ -31,6 +31,122 @@ local function Atr_Craft_DB()
     return AUCTIONATOR_CRAFT_RECIPES;
 end
 
+-- SHARED REAGENT PRICING -----------------------------------------------------
+--
+-- Reagent unit cost in copper, or nil when nothing can price it.
+--
+-- ONE cascade, used by every craft-cost path in this file: the harvested-recipe
+-- cost (Atr_Craft_GetCraftCost) and the live trade-skill-window cost
+-- (Atr_ProfSort_RowCost).  It used to be written out twice, once in each, with
+-- a comment on the second saying it mirrored the first -- two copies of a
+-- three-branch fallback that had to stay in agreement, or the Sell tab's
+-- Crafted Goods Margin filter and the trade skill window's profit column would
+-- quietly disagree about the same item.
+--
+-- The order is not arbitrary:
+--   1. NPC price.  A vendor-sold reagent's real cost is the fixed shop price,
+--      whatever someone is relisting it for on the auction house.
+--   2. Auction price, by NAME.  The price DB is name-keyed, and a name still
+--      works for a reagent whose item link came back nil -- which happens on
+--      this client often enough that the harvest carries names for that reason.
+--   3. Vendor sell value, as a rough floor, when nothing else knows it.
+--
+-- Step 2 asks by name in preference to ID, where the two earlier copies
+-- disagreed (the harvested-recipe one asked by ID first).  Atr_GetAuctionPrice
+-- resolves an ID to a name through GetItemInfo, so ID-first returns nothing for
+-- an item the client has not cached while name-first still answers.  Same
+-- result whenever both work; strictly better when only one does.
+function Atr_Craft_ReagentPrice(id, name)
+    local price = (id and Atr_GetNPCPrice) and tonumber(Atr_GetNPCPrice(id)) or nil;
+
+    if (price == nil or price <= 0) then
+        local key = name or id;
+        price = (key and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(key)) or nil;
+    end
+
+    if (price == nil or price <= 0) then
+        local key = id or name;   -- GetSellValue reads the item cache, so ID first here
+        price = (key and Atr_GetSellValue) and tonumber(Atr_GetSellValue(key)) or nil;
+    end
+
+    if (price == nil or price <= 0) then return nil; end
+    return price;
+end
+
+-- ENCHANTING -----------------------------------------------------------------
+--
+-- Enchanting is the one profession whose recipes produce no item, and that is
+-- why every profit figure for it was blank rather than wrong.  A trade skill row
+-- reads "Enchant Bracer - Superior Stamina" and GetTradeSkillItemLink hands back
+-- an |Henchant: link, not an |Hitem: one, so the ID-keyed harvest skipped
+-- enchanting entirely, and the profit column looked its market price up under
+-- the ENCHANT's name -- which is never what is listed on the auction house.
+--
+-- What is actually sold is the enchant applied to an Enchanting Vellum: an
+-- ordinary item called "Scroll of Enchant Bracer - Superior Stamina".  So an
+-- enchant's economics are
+--
+--     cost  = reagents + one vellum
+--     sells = auction price of  "Scroll of " .. <row name>
+--
+-- and both halves of that are handled here.
+--
+-- The vellum is bought from a vendor at a fixed price, which is exactly what the
+-- NPC price learner already records (AuctionatorFinderMerchant.lua walks any
+-- merchant window and stores unlimited-stock, gold-priced Trade Goods).  So
+-- visiting any enchanting supplier prices it -- and prices it at what THIS
+-- character actually pays, reputation discount included, which is the part a
+-- hardcoded number could never get right.  The constant below is only the
+-- cold-start value for an install that has never opened such a vendor.
+
+ATR_ENCHANT_VELLUM_ID   = 38682;        -- Enchanting Vellum
+ATR_ENCHANT_VELLUM_COLD = 24000;        -- 2g40s: owner's observed price, 2026-08.
+                                        -- Superseded the moment a vendor is seen.
+ATR_SCROLL_PREFIX       = "Scroll of ";
+
+-- The item name an enchant is sold under.  Idempotent, so it is safe to call on
+-- a name that is already a scroll.
+function Atr_Craft_ScrollName(enchantName)
+    if (type(enchantName) ~= "string" or enchantName == "") then return nil; end
+    if (enchantName:sub(1, #ATR_SCROLL_PREFIX) == ATR_SCROLL_PREFIX) then return enchantName; end
+    return ATR_SCROLL_PREFIX .. enchantName;
+end
+
+-- True for a trade skill link that makes an enchant rather than an item.  The
+-- test is the link type itself, so the rows in an enchanting window that DO make
+-- an item -- rods, shards, the odd oil -- return an item link, fail this, and
+-- are costed as ordinary crafts.  Which is correct: those are sold as
+-- themselves and consume no vellum.
+function Atr_Craft_IsEnchantLink(link)
+    return (type(link) == "string") and (link:find("|Henchant:", 1, true) ~= nil);
+end
+
+-- Whether trade skill row i makes an enchant.  Global for the harness.
+function Atr_ProfSort_RowIsEnchant(i)
+    if (type(GetTradeSkillItemLink) == "function") then
+        local link = GetTradeSkillItemLink(i);
+        if (link) then return Atr_Craft_IsEnchantLink(link); end
+    end
+
+    -- No link at all: the row is cold, or this client hands back nothing for an
+    -- enchant.  Ask the price DB instead -- an enchant is precisely a row whose
+    -- scroll exists as a real, priced item.  That is locale-proof (it does not
+    -- test the profession's name) and self-consistent: a row we cannot find a
+    -- scroll price for has no profit to report by either route.
+    if (type(GetTradeSkillInfo) ~= "function") then return false; end
+    local scroll = Atr_Craft_ScrollName((GetTradeSkillInfo(i)));
+    if (scroll == nil or Atr_GetAuctionPrice == nil) then return false; end
+    return (tonumber(Atr_GetAuctionPrice(scroll)) or 0) > 0;
+end
+
+-- What one vellum costs, in copper.  Priced through the shared cascade, so a
+-- learned NPC price beats whatever someone is relisting vellums for.
+function Atr_Craft_VellumCost()
+    local p = Atr_Craft_ReagentPrice(ATR_ENCHANT_VELLUM_ID, nil);
+    if (p and p > 0) then return p; end
+    return ATR_ENCHANT_VELLUM_COLD;
+end
+
 -- Walk the currently-open trade skill and store every recipe we can read.
 -- Returns  stored, complete  where `complete` is false if any recipe row's item
 -- link was still cold (data streaming in): the caller uses that to decide
@@ -46,13 +162,24 @@ function Atr_Craft_Harvest()
 
     local stored, cold = 0, 0;
     for i = 1, n do
-        local _, skillType = GetTradeSkillInfo(i);
+        local rowName, skillType = GetTradeSkillInfo(i);
         if (skillType and skillType ~= "header") then
             local madeLink = GetTradeSkillItemLink and GetTradeSkillItemLink(i) or nil;
             if (madeLink == nil) then
                 cold = cold + 1;   -- recipe row present but its item data is still streaming
             else
-                local madeID = ItemID and tonumber((ItemID(madeLink))) or nil;   -- extra parens: ItemID returns 3 values
+                -- Key by the produced item's ID, except for an enchant, which
+                -- produces no item at all: those are keyed by the NAME of the
+                -- scroll they are sold as, which the by-name lookup in
+                -- Atr_Craft_GetCraftCost then finds unchanged.  isEnchant is
+                -- carried into the record so the cost path knows to add a vellum.
+                local madeID, isEnchant;
+                if (Atr_Craft_IsEnchantLink(madeLink)) then
+                    madeID    = Atr_Craft_ScrollName(rowName);
+                    isEnchant = true;
+                else
+                    madeID = ItemID and tonumber((ItemID(madeLink))) or nil;   -- extra parens: ItemID returns 3 values
+                end
                 if (madeID) then
                     local made = 1;
                     if (GetTradeSkillNumMade) then
@@ -79,7 +206,7 @@ function Atr_Craft_Harvest()
                     end
 
                     if (#reagents > 0) then
-                        db[madeID] = { made = made, reagents = reagents };
+                        db[madeID] = { made = made, reagents = reagents, vellum = isEnchant or nil };
                         stored = stored + 1;
                     end
                 end
@@ -122,22 +249,19 @@ function Atr_Craft_GetCraftCost(link, name)
 
     local total = 0;
     for _, r in ipairs(rec.reagents) do
-        local key = r.id or r.name;   -- ID from window harvest, name from tooltip harvest
-
-        -- NPC-sold reagent (vial, thread, flux, ...): its real cost is the fixed
-        -- NPC price, so use that and ignore whatever it's relisted for on the AH.
-        local price = (r.id and Atr_GetNPCPrice) and tonumber(Atr_GetNPCPrice(r.id)) or nil;
-
-        if (price == nil or price <= 0) then
-            price = (key and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(key)) or nil;
-        end
-        if (price == nil or price <= 0) then
-            price = (key and Atr_GetSellValue) and tonumber(Atr_GetSellValue(key)) or nil;   -- vendor-value floor
-        end
-        if (price == nil or price <= 0) then
+        -- ID from the window harvest, name from the tooltip harvest; the shared
+        -- cascade takes both and prefers whichever it can actually price.
+        local price = Atr_Craft_ReagentPrice(r.id, r.name);
+        if (price == nil) then
             return nil;   -- a reagent we can't price -> craft cost unknown
         end
         total = total + (price * (r.count or 1));
+    end
+
+    -- An enchant is only sellable once it has been applied to a vellum, so the
+    -- vellum is as much a reagent as the dust is.  Flagged at harvest time.
+    if (rec.vellum) then
+        total = total + Atr_Craft_VellumCost();
     end
 
     local made = rec.made or 1;
@@ -320,22 +444,16 @@ end
 --
 -- Profit per item = the produced item's auction price (Atr_GetAuctionPrice)
 -- minus what its reagents cost, divided by the recipe's yield.  Reagent cost
--- uses the same cascade the Crafted Goods Margin filter uses: fixed NPC price
--- first (vials, thread, ...), then auction price, then the vendor-sell floor.
-
--- Reagent unit cost in copper, or nil when we cannot price it at all.  Mirrors
--- the cascade in Atr_Craft_GetCraftCost, read live from the open window here.
-local function Atr_ProfSort_ReagentPrice(id, name)
-    local price = (id and Atr_GetNPCPrice) and tonumber(Atr_GetNPCPrice(id)) or nil;
-    if (price == nil or price <= 0) then
-        price = (name and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name)) or nil;
-    end
-    if (price == nil or price <= 0) then
-        local key = id or name;
-        price = (key and Atr_GetSellValue) and tonumber(Atr_GetSellValue(key)) or nil;
-    end
-    return price;
-end
+-- goes through Atr_Craft_ReagentPrice at the top of this file -- the one cascade
+-- the Crafted Goods Margin filter uses too, so the two never drift apart.
+--
+-- Two rows do not fit that sentence and are handled where it says so above:
+--   * An ENCHANT has no produced item, so its market price is looked up under
+--     the scroll it is sold as, and the vellum it is applied to is added to the
+--     cost.  See the ENCHANTING block at the top of this file.
+--   * A recipe whose yield the client misreports is costed per item from
+--     whatever GetTradeSkillNumMade says; `/atrprofsort <name>` prints both of
+--     that function's returns so a suspect row can be checked against reality.
 
 -- Per-item craft COST for trade-skill row i, in copper, read live from the open
 -- window, or nil when a reagent can't be priced.  Independent of the produced
@@ -361,9 +479,14 @@ function Atr_ProfSort_RowCost(i)
         local rname, _, rcount = GetTradeSkillReagentInfo(i, j);
         local rlink = (type(GetTradeSkillReagentItemLink) == "function") and GetTradeSkillReagentItemLink(i, j) or nil;
         local rid   = (rlink and zc and zc.ItemIDfromLink) and tonumber((zc.ItemIDfromLink(rlink))) or nil;   -- extra parens: returns 3 values
-        local price = Atr_ProfSort_ReagentPrice(rid, rname);
-        if (price == nil or price <= 0) then return nil; end   -- one unpriceable reagent -> whole recipe unpriced
+        local price = Atr_Craft_ReagentPrice(rid, rname);
+        if (price == nil) then return nil; end   -- one unpriceable reagent -> whole recipe unpriced
         total = total + price * (tonumber(rcount) or 1);
+    end
+
+    -- The vellum an enchant has to be applied to before it can be sold.
+    if (Atr_ProfSort_RowIsEnchant(i)) then
+        total = total + Atr_Craft_VellumCost();
     end
 
     return math.floor(total / made);
@@ -378,7 +501,16 @@ function Atr_ProfSort_RowProfit(i)
     local name, skillType = GetTradeSkillInfo(i);
     if (skillType == "header" or name == nil) then return nil; end
 
-    local sell = (Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name)) or nil;
+    -- An enchant is never listed under its own name -- the scroll it gets applied
+    -- to is.  Looking the row name up directly is what left every enchanting row
+    -- unpriced, and therefore sorted below every other recipe, with a blank
+    -- profit column.
+    local sellName = name;
+    if (Atr_ProfSort_RowIsEnchant(i)) then
+        sellName = Atr_Craft_ScrollName(name) or name;
+    end
+
+    local sell = (Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(sellName)) or nil;
     if (sell == nil or sell <= 0) then return nil; end   -- no market price to rank on
 
     local cost = Atr_ProfSort_RowCost(i);
@@ -419,6 +551,11 @@ function Atr_Craft_LiveCostForItem(link, name)
                 if (madeID and madeID == wantID) then matched = true; end
             end
             if (not matched and name and madeName == name) then matched = true; end
+            -- "Scroll of Enchant X" on the auction house is made by the row
+            -- called "Enchant X", so the craft-cost tooltip finds it too.
+            if (not matched and name and madeName and Atr_Craft_ScrollName(madeName) == name) then
+                matched = true;
+            end
             if (matched) then
                 return Atr_ProfSort_RowCost(i), true;   -- cost may be nil (a reagent unpriced), but the recipe exists
             end
@@ -471,6 +608,20 @@ local function Atr_ProfSort_MoneyShort(c)
     else                str = a .. "c"; end
     local col = neg and "|cffff5555" or "|cff55ff55";
     return col .. (neg and "-" or "+") .. str .. "|r";
+end
+
+-- Full copper -> "12g 34s 56c" for diagnostics, or "(nil)" when unpriced.
+-- Distinct from Atr_ProfSort_MoneyShort above, which deliberately keeps only the
+-- largest denomination so a list row stays narrow; a diagnostic wants the lot.
+function Atr_ProfSort_Money(c)
+    c = tonumber(c);
+    if (c == nil) then return "(nil)"; end
+    local neg = (c < 0);
+    local a   = neg and -c or c;
+    return (neg and "-" or "")
+        .. math.floor(a / 10000) .. "g "
+        .. math.floor((a % 10000) / 100) .. "s "
+        .. (a % 100) .. "c";
 end
 
 -- ---- reorder state + UI ----------------------------------------------------
@@ -727,13 +878,26 @@ if (type(CreateFrame) == "function") then
     end);
 end
 
--- /atrprofsort : diagnostics for the profit sort.  Prints what the reorder can
--- see on this client (the frame, scroll frame and list buttons it needs), the
--- feature's state and the last error -- so a "hit a snag" report has something
--- concrete behind it.  Copies to the clipboard when the client supports it.
+-- /atrprofsort [text] : diagnostics for the profit sort.  Prints what the
+-- reorder can see on this client (the frame, scroll frame and list buttons it
+-- needs), the feature's state and the last error -- so a "hit a snag" report has
+-- something concrete behind it.  Copies to the clipboard when the client
+-- supports it.
+--
+-- With `text`, it also dumps the working per-row figures for every open recipe
+-- whose name contains it, which is how the two things this file gets asked about
+-- are actually checked:
+--
+--   /atrprofsort distilled     -- what GetTradeSkillNumMade really returns for a
+--                                 multi-output recipe.  BOTH returns are shown,
+--                                 because the cost maths reads only the first
+--                                 (minMade) and the open question is whether the
+--                                 second differs.
+--   /atrprofsort stamina       -- whether an enchant is recognised as one, and
+--                                 which item name its market price came from.
 if (SlashCmdList) then
     SLASH_ATRPROFSORT1 = "/atrprofsort";
-    SlashCmdList["ATRPROFSORT"] = function ()
+    SlashCmdList["ATRPROFSORT"] = function (msg)
         local L = {};
         local function add(s) L[#L + 1] = s; end
 
@@ -758,6 +922,45 @@ if (SlashCmdList) then
         add("  disabled by error:      " .. (gProfSort_Broken and "yes" or "no"));
         add("  open profession rows:   " .. open .. "  (recipes ranked: " .. #order .. ", priced: " .. priced .. ")");
         add("  last error:             " .. (Atr_ProfSort_LastError or "(none)"));
+
+        -- Vellum: what an enchant's mandatory extra reagent is costing us, and
+        -- whether that is a real learned vendor price or the cold-start guess.
+        local npcVellum = Atr_GetNPCPrice and tonumber(Atr_GetNPCPrice(ATR_ENCHANT_VELLUM_ID)) or nil;
+        add("  vellum (item " .. ATR_ENCHANT_VELLUM_ID .. "):    " .. Atr_ProfSort_Money(Atr_Craft_VellumCost())
+            .. ((npcVellum and npcVellum > 0) and "  (learned from a vendor)"
+                                              or  "  (COLD-START GUESS - open an enchanting supplier)"));
+
+        -- Per-row detail for a name filter.
+        local filter = tostring(msg or ""):gsub("^%s+", ""):gsub("%s+$", "");
+        if (filter ~= "" and open > 0) then
+            local want, shown = filter:lower(), 0;
+            add("");
+            add("  rows matching \"" .. filter .. "\":");
+            for i = 1, open do
+                local rname, skillType = GetTradeSkillInfo(i);
+                if (rname and skillType and skillType ~= "header" and rname:lower():find(want, 1, true)) then
+                    shown = shown + 1;
+
+                    local lo, hi;
+                    if (type(GetTradeSkillNumMade) == "function") then lo, hi = GetTradeSkillNumMade(i); end
+
+                    local isEnch   = Atr_ProfSort_RowIsEnchant(i);
+                    local sellName = isEnch and (Atr_Craft_ScrollName(rname) or rname) or rname;
+                    local sell     = Atr_GetAuctionPrice and tonumber(Atr_GetAuctionPrice(sellName)) or nil;
+                    local cost     = Atr_ProfSort_RowCost(i);
+                    local profit   = Atr_ProfSort_RowProfit(i);
+
+                    add("    [" .. i .. "] " .. rname .. (isEnch and "   (enchant)" or ""));
+                    add("        NumMade:  min=" .. tostring(lo) .. "  max=" .. tostring(hi)
+                        .. "   (cost maths uses min)");
+                    add("        sells as: " .. sellName);
+                    add("        sell=" .. Atr_ProfSort_Money(sell)
+                        .. "  cost=" .. Atr_ProfSort_Money(cost)
+                        .. "  profit=" .. Atr_ProfSort_Money(profit) .. "   (all per item)");
+                end
+            end
+            if (shown == 0) then add("    (no open recipe matched)"); end
+        end
 
         local report = table.concat(L, "\n");
         if (DEFAULT_CHAT_FRAME) then

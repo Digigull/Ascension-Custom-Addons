@@ -205,13 +205,14 @@ Four global functions answer "what is this worth":
 
 Four functions, three home files, none of them named for pricing. Callers span seven files. The **cascade** — NPC price, then auction price, then vendor floor —
 is written out twice, in `Atr_Craft_GetCraftCost` (`AuctionatorFinderProfession.lua:126-140`)
-and `Atr_ProfSort_ReagentPrice` (`:328-338`), and the second one's comment says it "mirrors" the
-first. Two copies of a four-branch fallback that must agree, or the Sell tab's margin filter and
-the trade skill window's profit column disagree about the same item.
+and `Atr_ProfSort_ReagentPrice`, and the second one's comment said it "mirrored" the first. Two
+copies of a three-branch fallback that had to agree, or the Sell tab's margin filter and the
+trade skill window's profit column would disagree about the same item.
 
-**This is the single best small cleanup in the codebase**, and backlog items 2 and 3 both edit
-this exact code. Collapsing the two into one named helper is a few lines and removes a whole
-class of "the two screens disagree" bug.
+**Collapsed 2026-08-19** into `Atr_Craft_ReagentPrice` (`AuctionatorFinderProfession.lua`),
+while building backlog item 2. Every craft-cost path now goes through it. Enchanting adds one
+more term on top — a vellum — which is applied by the callers, not the cascade; see the
+ENCHANTING block in the same file.
 
 Note also that `AuctionatorAPI.lua` is the *outward* API — it re-exports Tekkub's
 `GetSellValue`/`GetAuctionBuyout` for other addons. It is not the internal one.
@@ -344,7 +345,7 @@ Small, verifiable by reading, and each pays for itself on a backlog item:
 
 | Priority | Change | Why now |
 |---|---|---|
-| 1 | **Unify the reagent price cascade** (§6) into one helper | Items 2 and 3 both edit both copies. Doing it first means editing the logic once. |
+| ~~1~~ | ~~Unify the reagent price cascade (§6) into one helper~~ | **Done 2026-08-19** — now `Atr_Craft_ReagentPrice`, collapsed while building backlog item 2. |
 | 2 | **Give `AuctionatorHints.lua` a header comment** listing its five concerns | Ten minutes; it is the file people will land in looking for the pricing API. |
 | 3 | **Extract SELL browser + layout** (`Auctionator.lua:1569–2721`) into `AuctionatorSell.lua` | 793 lines, 100% 4-space in a tab file, zero upstream interleaving — it is already a separate file. Shrinks the monolith by 13%. Do it as its own commit, moving code *without editing it*, before item 1 rather than during. |
 | 4 | **Write the tab-adding recipe into a comment** at `Auctionator.lua:120` | The `-- BAZAAR_TAB` trail already encodes it; one comment makes it findable. |
