@@ -170,33 +170,33 @@ So after dropping `SetToplevel` you may choose strata purely for **layering**:
 ```lua
 -- strata order, low → high:
 -- WORLD < BACKGROUND < LOW < MEDIUM < HIGH < DIALOG < FULLSCREEN < FULLSCREEN_DIALOG < TOOLTIP
-frame:SetFrameStrata("LOW")   -- below the character panel/bags/world map, above the 3D world
-frame:Raise()                 -- (once, on open) orders among LOW siblings only; cannot cross strata
+frame:SetFrameStrata("MEDIUM")   -- under the panels (HIGH+), over the bars and unit frames
+frame:SetFrameLevel(100)         -- and over anything else sharing MEDIUM; re-assert on open
 ```
 
-**`LOW` does not clear the action bars or the unit frames** (added later, in the field). Blizzard's
-bars and unit frames are on `LOW` themselves, and they are `toplevel` — so clicking one restacks
-`LOW` and lifts it over your window. Bar addons such as Bartender default to `MEDIUM`. A window that
-must never be drawn through by a health bar or an action button therefore needs `MEDIUM` **and** a
-frame level well clear of its neighbours (100 in this repo; Blizzard frames and the bar addons sit in
-the low single digits), because within one strata the higher level wins:
+That pair is the house default for a **persistent window you leave open while playing** (a meter, a
+floating log): the Blizzard interaction panels — bags, character sheet, world map, all `HIGH` and
+above — render over it, which is what players expect from custom UI, while the action bars and unit
+frames do not. Keep `FULLSCREEN_DIALOG` for windows you **deliberately open and read** (settings
+panels, copy/paste popups) and for anything launched from the options panel (rule 4).
 
-```lua
-frame:SetFrameStrata("MEDIUM")
-frame:SetFrameLevel(100)   -- front-of-strata with no restack; re-assert it on open instead of Raise()
-```
+**Why not `LOW`, which sounds like the obvious choice** (added later, in the field — all three
+addons here shipped `LOW` first and had to be moved): Blizzard's action bars and unit frames are on
+`LOW` themselves, and they are `toplevel`, so clicking one restacks `LOW` and lifts it over your
+window. Health bars and action buttons draw straight through a `LOW` window.
 
-That fixed level is also the correct replacement for `Raise()` here — `MEDIUM` is populated, so rule 2
-applies and `Raise()` is out. Setting one frame's level reorders nothing, and like `Raise()` it cannot
-cross strata, so the window still stays under the Blizzard panels.
+**Why the level, not just the strata:** bar addons such as Bartender default to `MEDIUM` too, and
+within one strata the higher frame level wins. Blizzard frames and the bar addons sit in the low
+single digits there, so 100 clears them, with room for the window's own children (101 upwards).
 
-`LOW` is otherwise the right default for a **persistent window you leave open while playing** (a
-meter, a floating log): the default Blizzard panels render over it, which is what players expect
-from custom UI. Keep `FULLSCREEN_DIALOG` for windows you **deliberately open and read** (settings panels,
-copy/paste popups) and for anything launched from the options panel (rule 4).
+**Why not `Raise()` any more:** `MEDIUM` is populated, so rule 2 applies and `Raise()` is out — it is
+the restack the freeze is made of. The fixed level is the replacement: setting one frame's level
+reorders nothing, so a show path just applies the same strata + level again. Like `Raise()` it cannot
+cross strata, so the window still stays under the Blizzard panels. `Raise()` on open remains fine on
+a near-empty strata such as `FULLSCREEN_DIALOG`, which is where the copy/paste windows still use it.
 
-**This is spike-free only because there is no `SetToplevel`.** A `LOW` + `SetToplevel` window would
-restack the `LOW` strata on every drag — the same mechanism as the `HIGH` freeze, just cheaper.
+**This is spike-free only because there is no `SetToplevel`.** A `MEDIUM` + `SetToplevel` window
+would restack the `MEDIUM` strata on every drag — the same mechanism as the `HIGH` freeze.
 If you ever restore the flag, the strata becomes load-bearing again.
 
 ## Repo-wide rollout (Ascension-Custom-Addons)
@@ -218,6 +218,7 @@ If you ever restore the flag, the strata becomes load-bearing again.
 | `Atr_Mask` | Auctionator | Dropped toplevel, strata left below the dialogs (rule 3) |
 | Options + Filter windows | BiS Scanner | Dropped toplevel; strata → `LOW`, **since moved to `MEDIUM`** + frame level 100 so the action bars and unit frames stop drawing through them. `Raise()` dropped with that move (rule 2) — `frontOnOpen()` re-asserts the fixed level instead, which reorders nothing |
 | Export / detail / glossary | ClientPerfProbe | Dropped toplevel, `Raise()` on open |
+| Meter window | ClientPerfProbe | Strata → `LOW`, **since raised to `MEDIUM`** + frame level 100 for the same action-bar/unit-frame reason; `Raise()` on open dropped with that move (rule 2) |
 | 2 dropdown menus | ClientPerfProbe | Dropped toplevel (no `Raise()` — one menu open at a time) |
 | Loot Window | PassLootBiS | Strata → `LOW` (persistent log), **since raised to `MEDIUM`** + frame level 100 for the same action-bar/unit-frame reason as the Scanner windows; `Raise()` on open dropped with that move (rule 2) |
 | PvP points panel | Honor Tracker | `DIALOG` → `HIGH` to match the character panel it attaches to. Deliberately **no** `Raise()` (rule 2) |

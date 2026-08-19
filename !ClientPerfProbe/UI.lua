@@ -49,6 +49,44 @@ local function darkBackdrop(f)
     f:SetBackdropBorderColor(0.30, 0.30, 0.34, 1)
 end
 
+-- Strata + frame level for the meter window, the one cpp window you leave open while
+-- playing. (The export/detail/glossary popups and the menus set FULLSCREEN_DIALOG
+-- themselves: you open those to read, so they float over everything.)
+--
+-- MEDIUM, not LOW: LOW is where Blizzard's action bars and unit frames live, and they
+-- are toplevel, so clicking one restacks LOW and lifts it over anything of ours
+-- sitting there — the meter was being drawn through by health bars and action
+-- buttons. MEDIUM clears them and still leaves the window UNDER the interaction
+-- panels on HIGH and above (character panel, bags, world map), which is the whole
+-- point of not putting a meter up high.
+--
+-- The level matters as much as the strata: bar addons (Bartender among them) default
+-- to MEDIUM too, and within one strata the higher frame level wins. Blizzard's frames
+-- and the bar addons sit in the low single digits there, so 100 clears them with room
+-- for the window's own children, which take 101 upwards.
+--
+-- It also replaces the Raise() this window used to do on open. Raise() reorders a
+-- frame against every sibling in its strata — the exact operation the drag-freeze is
+-- made of (variant A, management/docs/DRAG-FREEZE.md): cheap on a sparse strata like
+-- the old LOW, but the ~0.6-2.6s engine pass on a populated one, and MEDIUM is
+-- populated. Setting one frame's level reorders nothing, so UI.Show() calls this
+-- again instead of Raise(). Like Raise() it cannot cross strata, so the meter still
+-- stays under the panels.
+--
+-- Never pair this (or any strata) with SetToplevel(true): that is variant A, one
+-- restack per click/drag. This addon measured the freeze; it should not ship it.
+local WINDOW_STRATA = "MEDIUM"
+local WINDOW_LEVEL = 100
+
+local function applyWindowChrome(f)
+    if not f or type(f.SetFrameStrata) ~= "function" then return f end
+    f:SetFrameStrata(WINDOW_STRATA)
+    if type(f.SetFrameLevel) == "function" then
+        f:SetFrameLevel(WINDOW_LEVEL)
+    end
+    return f
+end
+
 -- Live refresh cadence: a refresh rebuilds the snapshot + relays a big list, which
 -- itself costs a frame, so default TAME and let the user slow it or turn it Off.
 local POLL_OPTIONS = { 0, 1, 2, 5, 10 }   -- seconds; 0 = off (manual only)
@@ -984,15 +1022,15 @@ local function build()
         frame:ClearAllPoints()
         frame:SetPoint(db.ui.point, UIParent, db.ui.relPoint or db.ui.point, db.ui.x or 0, db.ui.y or 0)
     end
-    -- Strata LOW so the meter sits BEHIND the interaction panels (character
-    -- panel, world map, bags, etc.) instead of on top of everything — LOW is
-    -- below MEDIUM/HIGH/DIALOG/FULLSCREEN yet still above the 3D world (WORLD),
-    -- so the window renders over the game but under the panels.
+    -- Strata + level so the meter sits BEHIND the interaction panels (character
+    -- panel, world map, bags) but IN FRONT of the action bars and unit frames —
+    -- read applyWindowChrome() above before changing either half; LOW alone put the
+    -- meter under the bars, and the level is what settles a tie with a bar addon on
+    -- the same strata.
     -- No SetToplevel: that + a populated strata is the confirmed drag-freeze
     -- (variant A, management/docs/DRAG-FREEZE.md); without it any strata is spike-free
-    -- (variant B). A one-time Raise() on open (UI.Show) only orders it among
-    -- LOW siblings — it cannot cross strata, so the window stays under the panels.
-    frame:SetFrameStrata("LOW")
+    -- (variant B).
+    applyWindowChrome(frame)
     darkBackdrop(frame)
     frame:EnableMouse(true)
     frame:SetMovable(true)
@@ -1143,7 +1181,10 @@ end
 function UI.Show()
     if not frame then build() end
     frame:Show()
-    frame:Raise()   -- orders it among LOW siblings only (cannot cross strata); no SetToplevel per-drag restack (DRAG-FREEZE.md)
+    -- Front-of-strata on open without a restack. Deliberately NOT frame:Raise() — on
+    -- MEDIUM that is the drag-freeze pass itself; re-asserting this window's own
+    -- strata + level reorders nothing (see applyWindowChrome above).
+    applyWindowChrome(frame)
     saveShown(true)
     render()
 end

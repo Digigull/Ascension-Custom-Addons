@@ -74,26 +74,31 @@ performance one. Current decisions:
 
 | Use | Strata | Examples |
 |---|---|---|
-| Persistent window left open while playing | `LOW` | cpp meter |
-| Window that must clear the action bars / unit frames | `MEDIUM` + frame level 100 | BiS Scanner options/filter, PassLootBiS Loot Window |
+| Persistent window left open while playing | `MEDIUM` + frame level 100 | cpp meter, PassLootBiS Loot Window, BiS Scanner options/filter |
 | Deliberately opened; copy/paste popups | `FULLSCREEN_DIALOG` | cpp export/detail/glossary, BiS Scanner debug box |
 | Opened from *inside* the Interface Options panel | `FULLSCREEN_DIALOG` | PassLootBiS BiS Manager |
 | Attached to a Blizzard panel | match that panel | Honor Tracker panel (`HIGH`) |
 
 Rules behind the table:
 
-- Custom UI should generally render **under** the default Blizzard panels — `LOW` is the
-  house default for anything you leave open.
-- **`LOW` does not clear the action bars or the unit frames.** Blizzard's bars and unit frames
-  are on `LOW` too (and they are `toplevel`, so clicking one lifts it over your window), and bar
-  addons such as Bartender default to `MEDIUM`. A window that must never be drawn through by a
-  health bar or an action button needs `MEDIUM` **and** a frame level well above its neighbours
-  — within one strata the higher level wins. Both addons that need this have a helper for it,
-  so don't hand-roll the pair: `ns.UI.applyWindowChrome()` (`PassLootBiS_Scanner/Core/UI.lua`)
-  and `PasslootBiS:ApplyWindowChrome()` (`PasslootBiS/Core/PassLoot.lua`), both `MEDIUM` + level
-  100.
+- Custom UI should generally render **under** the default Blizzard panels (bags, character
+  sheet, world map — `HIGH` and above) but **over** the action bars and unit frames. That is
+  `MEDIUM` + frame level 100, the house default for anything you leave open while playing.
+- **`LOW` is not that default, however low it sounds.** Blizzard's bars and unit frames are on
+  `LOW` themselves (and they are `toplevel`, so clicking one restacks `LOW` and lifts it over
+  your window) — every window in this repo that started on `LOW` was being drawn through by
+  health bars and action buttons. The level is the other half of the fix: bar addons such as
+  Bartender default to `MEDIUM` too, and within one strata the higher frame level wins. Blizzard
+  frames and the bar addons sit in the low single digits there, so 100 clears them with room for
+  a window's own children, which take 101 upwards.
+- **Don't hand-roll the pair — each addon has a helper:** `ns.UI.applyWindowChrome()`
+  (`PassLootBiS_Scanner/Core/UI.lua`), `PasslootBiS:ApplyWindowChrome()`
+  (`PasslootBiS/Core/PassLoot.lua`), and a file-local `applyWindowChrome()` in
+  `!ClientPerfProbe/UI.lua`. All three are `MEDIUM` + level 100, and each carries the reasoning.
 - **Nothing on `MEDIUM` or above may call `Raise()`.** The raise is the drag-freeze restack;
-  it is only cheap on a sparse strata. Use a fixed high frame level for front-on-open instead.
+  it is only cheap on a sparse strata. Use a fixed high frame level for front-on-open instead —
+  that is what the three helpers do when a show path calls them again. `Raise()` on open is
+  still fine on `FULLSCREEN_DIALOG`, which is near-empty.
 - **Exception: notifications.** A toast exists to be noticed and usually fires while bags are
   open. `PassLootBiS_Scanner/Core/Alert.lua` deliberately stays high.
 - **Exception: copy/paste boxes.** You open them to read and select text from.
