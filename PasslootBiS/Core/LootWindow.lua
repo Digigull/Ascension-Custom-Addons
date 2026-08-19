@@ -80,6 +80,124 @@ local function needStreakColor(n)
 	return "ffffffff"
 end
 
+-- Class colouring for the character names on the roll / winner / callout lines.
+--
+-- There is NO "class of an arbitrary player name" API on 3.3.5 — nothing in
+-- management/Documentation/ returns a class colour, and RAID_CLASS_COLORS is a
+-- plain global table keyed by the UPPERCASE class token, not a call. The only
+-- name -> class mapping the client will give us is the current group roster, so
+-- the class is resolved WHEN A ROLL IS RECORDED and stamped onto the roll record
+-- (stampClasses). By the time you read the log the group has usually broken up,
+-- and after a /reload it is gone entirely — resolving at render time only would
+-- leave every older line white.
+local classCache = {}   -- name -> class token; a character's class never changes
+local classMiss = {}    -- names that failed THIS pass (re-armed by markRosterDirty)
+local rosterDirty = true
+
+local function noteUnit(unit)
+	local n = UnitName(unit)
+	if (not n) then return end
+	local _, token = UnitClass(unit)
+	if (token) then classCache[n] = token end
+end
+
+-- 3.3.5 roster calls (no GetNumGroupMembers on this client). Raid and party are
+-- exclusive: in a raid the partyN units are not the raid.
+local function scanRoster()
+	noteUnit("player")
+	local nRaid = (GetNumRaidMembers and GetNumRaidMembers()) or 0
+	if (nRaid > 0) then
+		for i = 1, nRaid do noteUnit("raid" .. i) end
+		return
+	end
+	local nParty = (GetNumPartyMembers and GetNumPartyMembers()) or 0
+	for i = 1, nParty do noteUnit("party" .. i) end
+end
+
+-- The scan is worth doing once per record/render pass, not once per name: the log
+-- holds up to MAX_GROUPS groups, and names that can no longer resolve (the roller
+-- left, or the log outlived the group) would otherwise re-walk up to 40 units for
+-- every uncoloured line on every redraw. Both entry points re-arm it.
+local function markRosterDirty()
+	rosterDirty = true
+	classMiss = {}
+end
+
+local function classToken(name)
+	if (type(name) ~= "string" or name == "") then return nil end
+	local hit = classCache[name]
+	if (hit) then return hit end
+	if (classMiss[name]) then return nil end
+	if (rosterDirty) then
+		rosterDirty = false
+		scanRoster()
+		hit = classCache[name]
+	end
+	if (not hit) then
+		-- The client also resolves a group member's NAME as a unit id, which picks
+		-- up anyone the roster walk missed. pcall because the name comes off a chat
+		-- line and is being handed to the client as a unit token.
+		local ok, _, token = pcall(UnitClass, name)
+		if (ok and token) then
+			hit = token
+			classCache[name] = token
+		end
+	end
+	if (not hit) then classMiss[name] = true end
+	return hit
+end
+
+-- Called from LootTracker_Record, while the roster that can answer is still there.
+local function stampClasses(g)
+	if (type(g) ~= "table") then return end
+	for _, r in ipairs(g.rolls or {}) do
+		if (r.player and not r.class) then r.class = classToken(r.player) end
+	end
+	if (g.winner and not g.winnerClass) then g.winnerClass = classToken(g.winner) end
+end
+
+-- |c hex for a class token. CUSTOM_CLASS_COLORS first so a colour-override addon
+-- wins, RAID_CLASS_COLORS otherwise — the same order as ExadMinimap/minimap.lua.
+-- Ascension's table already carries every custom class (Hero, Tinker, Chronomancer
+-- ...; Modules/PlayerClass.lua indexes all of them), so no table of our own is
+-- needed and an unknown token simply falls through to nil = the plain white the
+-- window used before.
+local function classHex(token)
+	if (not token) then return nil end
+	local c = (CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[token])
+		or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[token])
+	if (type(c) ~= "table") then return nil end
+	if (type(c.colorStr) == "string") then return c.colorStr end
+	return string.format("ff%02x%02x%02x",
+		math.floor((c.r or 1) * 255), math.floor((c.g or 1) * 255), math.floor((c.b or 1) * 255))
+end
+
+local function colorPlayer(name, token)
+	local s = tostring(name or "?")
+	local hex = classHex(token)
+	if (not hex) then return s end
+	return "|c" .. hex .. s .. "|r"
+end
+
+-- Colour one name inside a line that is otherwise a single colour (the green
+-- winner line, the red/yellow/green need callouts). |c..|r spans DO NOT NEST —
+-- the inner |r closes the outer span too, so the rest of such a line would lose
+-- its colour from the name onwards. Instead the surrounding text is emitted as two
+-- separate spans with the class-coloured name sitting between them.
+-- `text` is the already-formatted line with NAME_SLOT standing in for the name.
+local NAME_SLOT = "\001"
+local function colorAround(text, outerHex, name, token)
+	local pre, post = text:match("^(.-)\001(.*)$")
+	if (not pre) then
+		return "|c" .. outerHex .. text .. "|r"   -- no slot (odd locale string): unchanged
+	end
+	local out = ""
+	if (pre ~= "") then out = "|c" .. outerHex .. pre .. "|r" end
+	out = out .. colorPlayer(name, token)
+	if (post ~= "") then out = out .. "|c" .. outerHex .. post .. "|r" end
+	return out
+end
+
 local function acquireRow(f, idx)
 	local row = f.rows[idx]
 	if (not row) then
@@ -227,7 +345,8 @@ function PasslootBiS:LootTracker_Record(ev)
 	local LT = self.LootTracker
 	if (not LT) then return end
 	local log = ensureLog(self)
-	LT.ApplyEvent(log, ev, UnitName("player"))
+	markRosterDirty()
+	stampClasses(LT.ApplyEvent(log, ev, UnitName("player")))
 	LT.Trim(log, MAX_GROUPS)
 	persist(self)
 	if (self.LootWindowFrame and self.LootWindowFrame:IsShown()) then
@@ -438,6 +557,7 @@ function PasslootBiS:LootWindow_Render()
 	local f = self.LootWindowFrame
 	if (not f) then return end
 	if (f.fontBtn) then f.fontBtn:SetText(tostring(currentFontSize())) end
+	markRosterDirty()
 	local log = ensureLog(self)
 	local groups = log.groups
 
@@ -454,6 +574,9 @@ function PasslootBiS:LootWindow_Render()
 	-- outcome line (Winner / Everyone passed / Rolling…) below. The winner line and
 	-- any Need line use the larger emphasis font; a repeated needer also gets a
 	-- coloured "needed N times consecutively" callout. Groups separated by a blank.
+	-- Every character name (roller, winner, callout subject) is CLASS COLOURED where
+	-- the class is known; on the winner and callout lines that is the name only, the
+	-- rest of the line keeping its outcome/severity colour (see colorAround).
 	-- link/itemName are only set on the item topline; they are what turns that row
 	-- into a tooltip hover region (layoutRows). Older persisted logs may have no
 	-- link on a group, in which case the row simply stays inert.
@@ -474,25 +597,31 @@ function PasslootBiS:LootWindow_Render()
 			local col = CHOICE_COLORS[r.choice] or "ffffffff"
 			local val = r.value and (" (" .. r.value .. ")") or ""
 			local isNeed = (r.choice == "need")
-			add(string.format("   %s: |c%s%s|r%s", tostring(r.player), col, choiceLabel(r.choice), val), isNeed)
+			-- r.class was stamped when the roll was recorded; the classToken fallback
+			-- is for logs persisted before class stamping existed (and still resolves
+			-- while the roller is in the group).
+			local token = r.class or classToken(r.player)
+			add(string.format("   %s: |c%s%s|r%s",
+				colorPlayer(r.player, token), col, choiceLabel(r.choice), val), isNeed)
 			-- Need callouts at 3+: consecutive streak AND running total, each coloured
 			-- by its own count (3 green / 4 yellow / 5+ red). Streak <= total, so the
 			-- consecutive line only ever appears alongside the total line.
 			if (isNeed and counts and counts[i] and counts[i][r.player]) then
 				local c = counts[i][r.player]
 				if (c.streak >= 3) then
-					add(string.format("      |c%s%s|r", needStreakColor(c.streak),
-						string.format(L["LootWindow_NeedStreak"], tostring(r.player), c.streak)), true)
+					add("      " .. colorAround(string.format(L["LootWindow_NeedStreak"], NAME_SLOT, c.streak),
+						needStreakColor(c.streak), r.player, token), true)
 				end
 				if (c.total >= 3) then
-					add(string.format("      |c%s%s|r", needStreakColor(c.total),
-						string.format(L["LootWindow_NeedTotal"], tostring(r.player), c.total)), true)
+					add("      " .. colorAround(string.format(L["LootWindow_NeedTotal"], NAME_SLOT, c.total),
+						needStreakColor(c.total), r.player, token), true)
 				end
 			end
 		end
 		add(" ", false)                                           -- spacer
 		if (g.winner) then
-			add("   |cff40ff40" .. string.gsub(L["LootWindow_Winner"], "%%s", g.winner) .. "|r", true)
+			add("   " .. colorAround(string.gsub(L["LootWindow_Winner"], "%%s", NAME_SLOT),
+				"ff40ff40", g.winner, g.winnerClass or classToken(g.winner)), true)
 		elseif (g.allPassed) then
 			add("   |cff999999" .. L["LootWindow_AllPassed"] .. "|r", false)
 		else
