@@ -199,6 +199,31 @@ median, the craft cost (labelled `(+vellum)`, since the vellum is in the total b
 window's reagent list) and the profit. Reagent hovers are never diverted. Same ALT gate and
 same `AUCTIONATOR_A_TIPS` gate as every other addon price line. **Not verified in game.**
 
+**Confirmed harvesting, from the first real dump (2026-08-19).** `AUCTIONATOR_CRAFT_RECIPES`
+holds 191 recipes, **88 of them `Scroll of Enchant ...`**. Pre-fix the diagnosis was that
+enchanting was absent from the harvest entirely; it is plainly not absent now. The other 103
+are crafted items (blacksmithing/tailoring names). **Every key is a string name — zero numeric
+keys**, so `Atr_Craft_GetRecipe`'s itemID path is dead in practice and only the name fallback
+ever fires. Worth knowing before item 12 touches name-keying.
+
+**The vellum question is answered, 2026-08-19 — and answering it cost a bug fix.**
+`AUCTIONATOR_NPC_PRICES` was empty, and stayed empty after the owner visited two supply vendors
+and reloaded, because `Atr_NPC_HarvestMerchant` could never store anything (item 14). After that
+fix, one vendor visit filled it — and **two items sit at exactly 2g40s: `52510` and `52511`**,
+the armor and weapon vellums this server splits them into. The owner's observed price was right
+to the copper.
+
+**And the vellum was being costed from the auction house all along.** The price database carries
+both names — `Enchanting Vellum - Armor` at **6g85s** and `Enchanting Vellum - Weapon` at
+**3g22s** — which is what enchant craft costs were using, because `Atr_Craft_IDForName` sits in
+the same file as the missing `zc` capture and returned nil, so `Atr_Craft_ReagentPrice` could
+never reach its step-1 NPC branch. Every armor-vellum enchant was overstating its craft cost by
+**4g45s** and every weapon one by **82s**. Both now price at the vendor's 2g40s, which is what
+the cascade was written to do.
+
+The `ATR_ENCHANT_VELLUM_COLD = 24000` fallback turns out to have been exactly right — it was
+just never the value being used.
+
 ---
 
 ## 3. Multi-output crafts price wrong (Distilled Flasks makes 3) — DONE
@@ -289,6 +314,31 @@ a reagent price or the produced item's own auction price; nothing above tests th
 `per craft x3` line makes it checkable at a glance — 91g55s97c of reagents against a 127g80s
 stack of 3 on the AH.
 
+**Settled 2026-08-19, from a live alchemy window after item 14's fix.** The harvest now stores
+**ten recipes at `made = 3`** — the Blightroot Extract flask family — and one at `made = 2`. The
+yield is being read correctly off the window; no manual-yield box is needed for these.
+
+**And the disputed number reproduces exactly.** Costing recipe `967456`'s reagents against this
+same dump's price database gives **91g55s99c per craft, 30g51s99c per flask** — the figure in
+this item, to the copper. So the arithmetic is not in question; the *inputs* are, and the
+sensitivity is concentrated in one of them:
+
+```
+Fiery Frond x1         4g55s99c
+Blightroot Extract x1 10g00s00c
+Mountain Silversage x10 8g00s00c
+Essence of Earth x2   69g00s00c   <- 75% of the craft cost
+```
+
+**Essence of Earth at 34g50s each is the whole question.** If that price is real, 30g51s99c is
+real. Nothing in the addon can check it; a glance at the auction house can. Note every reagent
+here priced from the AH — none is vendor-sold, so the NPC path does not soften it.
+
+What the earlier dump had already proved is that
+`GetTradeSkillNumMade`'s first return is **not universally clamped to 1 on this server** —
+three scroll recipes are stored `made = 2`. So a flask recorded as `made = 1` would be a real
+reading of `minMade`, not an API that always says one.
+
 ---
 
 ## 4. Finder — stats dropdown usable before a search has run — DONE
@@ -346,7 +396,9 @@ persists with no extra work.
 
 **Verified** by `luac5.1 -p` and by reading the call order (both new entry points run long after
 SavedVariables load — `Fdr_AnalyzeResults` post-scan, the dropdown on user click). **Not
-verified in-game.** The thing to look at first is **menu height**: the list can now hold every
+verified in-game.** The 2026-08-19 dump carries **no `statKeys`**, which is expected rather than
+a failure: it was taken from a client still running the pre-merge build. The check is to install
+the merged build, run one Finder search, and look for the key. The thing to look at first is **menu height**: the list can now hold every
 stat the account has ever seen (realistically 30–50 entries) where it used to hold one scan's
 worth, and 3.3.5's `UIDropDownMenu` has no scrollbar — it can only flip above the button. If it
 runs off screen, that is the follow-up, and paging is the fix, not a smaller learned set.
@@ -578,16 +630,46 @@ modern Auctionator's, not this 2.9.9 fork's, and the file supplied was named
    would look like: this fork writing into a table another addon owns.
 3. **Ascension ships its own Auctionator variant** that wrote the file.
 
-**Closed by the owner, 2026-08-19, and it was none of the three.** `Bronzebeard - Warcraft
-Reborn` is a **predecessor of the realm actually in use** — Rexxar - Conquest of Azeroth is the
-new version of that server, similar enough that some naming carried over. All scanning has only
-ever been done on Rexxar - CoA, whose two keys are the plain numbers this addon reads and
-writes. The table-shaped entries are a historical residue under realm keys that never match at
-runtime, so nothing reads them and nothing is broken. No code, no shim, no warning: **the fix
-was a question.**
+**Closed by the owner, 2026-08-19.** `Bronzebeard - Warcraft Reborn` is a **predecessor of the
+realm actually in use** — Rexxar - Conquest of Azeroth is the new version of that server,
+similar enough that some naming carried over. All scanning has only ever been done on
+Rexxar - CoA, whose two keys are the plain numbers this addon reads and writes. The
+table-shaped entries are a historical residue under realm keys that never match at runtime, so
+nothing reads them and nothing is broken. No code, no shim, no warning: **the fix was a
+question.**
+
+**Confirmed later the same day, and it was possibility 1 — the dump was simply another addon's
+file.** The owner listed `Interface/AddOns` and the account's `SavedVariables`:
+
+- **Only `Auctionator-Finder-Ascension` is installed.** There is no `Auctionator`,
+  `Auctionator_Price_Database` or `Auctionator_Pricing_History` folder, so possibility 2 (two
+  Auctionators sharing globals) is ruled out, not merely unlikely. Stock Auctionator splits its
+  two big tables into companion addon folders and therefore writes three files; this fork
+  declares everything in one `.toc` and writes exactly one. Three files means three folders once
+  existed.
+- **Those three files are frozen at `Jul 21 16:31`** — all to the same minute, one final logout —
+  against `Aug 19 08:31` for this addon's own file. The analysed `Auctionator_Price_Database.lua`
+  was 82 KB; `Auctionator-Finder-Ascension.lua` was 1.14 MB.
+
+So the foreign shape was read out of a file that **no installed addon can load**. SavedVariables
+are loaded per addon folder, and those folders are gone: this fork has never had those rows in
+memory and could not. That closes the item on evidence rather than on inference — the realm-key
+explanation above still holds, and is now the second reason rather than the only one.
+
+**And the real file, read 2026-08-19, is uniform.** `AUCTIONATOR_PRICE_DATABASE` holds exactly
+one realm key — `Rexxar - Conquest of Azeroth_Alliance`, 5267 entries, **every value a plain
+number, zero tables** — beside one top-level scalar, `__dbversion = 2`. No Bronzebeard key
+exists in this addon's data at all. There is nothing here this addon cannot read.
 
 Worth keeping in mind if a realm is ever renamed *into* one of those keys, and worth keeping as
-the reason this item existed — the shape is real, it is just not this realm's.
+the reason this item existed — the shape is real, it is just not this realm's, and it is not
+even this addon's file.
+
+**What it cost:** every conclusion drawn from that dump was drawn from a month-stale file
+belonging to a different addon. The item 2 findings that survive it (scroll naming, the vellum
+correction) survive because they are about what items on the server are *called*, which does not
+depend on who wrote the file. Nothing that dump said about *this* addon's database was ever
+evidence. Hence the file-name warning now sitting at the top of the next section.
 
 **If it turns out to be real**, the fix is small but the decision is not: read `mr` when an
 entry is a table (a compatibility shim for a format we do not write), or detect the foreign
@@ -706,6 +788,25 @@ writes `gAtr_ScanDB[scn.itemName]` (`:668`) — so **the live database already c
   will keep answering lookups for a name nobody queries. That decision is not made yet, and it
   is the only thing standing between part 1 and someone writing it.
 
+  **Measured, 2026-08-19, and it is cheap: three rows.** Of 5267 price-database entries exactly
+  **3** carry a trailing space, and the same 3 appear in the mean database:
+
+  ```
+  ["Plans: Splintering Staff "]            = 44g60s
+  ["Plans: Effigy of Overgrowth "]         = 18g45s
+  ["Duskrune Chopper Cache (Backsheath) "] = 300g
+  ```
+
+  **None of the three has an unsuffixed twin** — `db["Plans: Splintering Staff"]` is nil. So
+  they are not "second variants beside a first", they are the only row those items have, and
+  replacing the hack orphans nothing that a competing row would shadow. The migration is
+  therefore: strip the trailing space, adopt the value, done — three rows, no merge conflict,
+  no `__dbversion` bump. **Part 1 is startable.**
+
+  Two things the sample says about the *texture* test itself: it fires roughly once in 1800
+  entries, and all three hits are recipes or a container — **not gear**. The Bloodforged case,
+  which is gear, is exactly the one it misses.
+
 **And the raw data cannot be re-partitioned afterwards.** `AtrScan:AddScanItem`
 (`AuctionatorScan.lua:381`) stores only stack size, buyout, owner and page. The row's link is
 consulted once, under `if (scn.itemLink == nil …)` at `:356`, so a bucket that already has a
@@ -811,30 +912,174 @@ answer it — duplicate names carrying wildly split prices are visible in the DB
 
 ---
 
+## 13. NEW — a third of the saved-variables file is redundant
+
+**Measured 2026-08-19** from the first real dump: `Auctionator-Finder-Ascension.lua`,
+**1,144,785 bytes**. Not a bug and not urgent — the client loads it fine — but the vendor-price
+research (which was the right call, and is not what should be cut) has left two chunks that are
+pure duplication, and both are cheap to stop writing.
+
+| Variable | Bytes | Share |
+|---|---:|---:|
+| `AUCTIONATOR_MEAN_PRICE_DATABASE` | 394,144 | 34.4% |
+| `AUCTIONATOR_VENDOR_LEARNED` | 360,970 | 31.5% |
+| `AUCTIONATOR_PRICE_DATABASE` | 226,517 | 19.8% |
+| `AUCTIONATOR_BAZAAR` | 67,886 | 5.9% |
+| `AUCTIONATOR_CRAFT_RECIPES` | 60,860 | 5.3% |
+| `AUCTIONATOR_ITEM_LOCATIONS` | 25,942 | 2.3% |
+| everything else (12 variables) | 8,466 | 0.7% |
+
+Inside `AUCTIONATOR_VENDOR_LEARNED`: `cb` 156,502 (13.7% of the file), `obs` 112,879 (9.9%),
+`base` 54,663 (4.8%), `log` 34,589 (3.0%), `trk` 2,275.
+
+### Trim 1 — the seed echo, ~152 KB (13%)
+
+`obs` holds 1437 entries of which **1338 carry `seed = 1`**, and `base` 518 of which **449**
+do. `tools/diff-vendor-seed.lua` against the shipped seed reports **1349 obs agree, 0 disagree,
+0 contested, 0 malformed**, and **453 base agree, 0 disagree**. So ~93% of `obs` and ~87% of
+`base` is a byte-for-byte copy of `AuctionatorVendorSeed.lua`, which already ships inside the
+addon. Every user carries a private duplicate of a file they already have.
+
+The real payload is small and is the part to protect: **88 new observations and 65 new base
+facts** this dump contributed that the seed did not have.
+
+**The mechanism already exists.** `AUCTIONATOR_VENDOR_LEARNED.seedver` records which seed built
+the table (`"2026-08-16"`, matching the shipped one). The rule would be: drop seed-flagged
+entries from the table at `PLAYER_LOGOUT` and re-merge from the seed at load — WoW serialises
+whatever is in the table at logout, so *not persisting* something means removing it before then,
+not skipping a write. When `seedver` does not match the shipped seed, keep everything as-is
+rather than trusting a flag written against a different seed.
+
+### Trim 2 — single-sample "means", ~232 KB (20%)
+
+`AUCTIONATOR_MEAN_PRICE_DATABASE` holds 5267 entries and 8898 samples. **3810 of those entries
+hold exactly one sample**, costing 231,629 bytes, and **1769 of them are byte-identical to the
+`AUCTIONATOR_PRICE_DATABASE` row for the same name**. A one-sample mean is not a mean; it is the
+same number written twice, in a table wrapper that costs ~60 bytes to say it.
+
+Options, cheapest first: don't create the mean row until a second sample arrives; or store a
+lone sample as a bare number and only promote to a table on the second (the codebase already
+branches on `type(m) ~= "table"` at `AuctionatorScan.lua:1360`, so the reader is half-written).
+Either way `Atr_GetMeanPrice` needs the scalar branch, and item 12 part 3's variant-in-value
+design has to be written to expect it.
+
+### What NOT to trim
+
+- **`cb` (156 KB, 13.7%)** looks like the obvious target and is not. All 1299 entries hold a
+  **single** sighting — the cap of 12 never binds — and only **97** of them also have a `base`
+  fact, so 1202 are the only variant record their item has. It exists precisely because owning
+  an item rewrites the client's on-disk cache and destroys the pre-purchase sighting
+  (`AuctionatorHints.lua:909`). Deleting it to save bytes would silently degrade prediction.
+- **`log` (34.6 KB, 3.0%)** — 109 rows, and `VENDOR-PRICE-RESEARCH.md` wants *more* of them, not
+  fewer. It is capped at 500 already.
+- **The price database itself (19.8%)** — 5267 plain numbers is what the addon is for.
+
+### Not part of this item
+
+`AUCTIONATOR_ITEM_LOCATIONS`, `AUCTIONATOR_BAZAAR` and `AUCTIONATOR_CRAFT_RECIPES` are all
+proportionate to what they hold. `AUCTIONATOR_SELL_IGNORE` and `AUCTIONATOR_NPC_PRICES` are
+empty — the second one is item 2's open check, not a size problem.
+
+**Worth doing when?** Neither trim changes behaviour, so this ranks below anything the user can
+see. It becomes worth doing if the file gets big enough to slow logout, or as tidy-up alongside
+item 12 part 3, which has to touch both databases' value shapes anyway.
+
+---
+
+## 14. Two files never captured `zc`, so every itemID lookup in them was nil — DONE
+
+**Found 2026-08-19** by the dump, not by a report. Two observations that looked unrelated —
+`AUCTIONATOR_NPC_PRICES` empty after weeks of play, and `AUCTIONATOR_CRAFT_RECIPES` holding 191
+recipes with **zero numeric keys** — are one bug.
+
+`zc` is file-local in `zcUtils.lua` and exported only as `addonTable.zc`. Sixteen files capture
+it with `local addonName, addonTable = ...; local zc = addonTable and addonTable.zc or _G.zc;`.
+**Two did not**, so in those two `zc` resolved to a nil *global* — and because every use site is
+written defensively as `zc and zc.ItemIDfromLink`, nothing errored. It just quietly did nothing,
+forever.
+
+**`AuctionatorFinderMerchant.lua` (1 use).** `Atr_NPC_HarvestMerchant` sets
+`local ItemID = (zc and zc.ItemIDfromLink) or nil` and then stores under
+`if (itemID) then db[itemID] = unit`. With `ItemID` nil the condition never held: **the NPC price
+learner has never recorded a single item.** Confirmed twice over — the owner visited an
+enchanting and an alchemy supply vendor, reloaded, and the table was still empty.
+
+**`AuctionatorFinderProfession.lua` (11 uses).** Worse, because it silently halved a feature.
+`Atr_Craft_Harvest` keys a recipe by its produced item's ID, *except* enchants, which are keyed
+by scroll name:
+
+```lua
+if (Atr_Craft_IsEnchantLink(madeLink)) then madeID = Atr_Craft_ScrollName(rowName);
+else                                        madeID = ItemID and tonumber((ItemID(madeLink))) or nil; end
+if (madeID) then ... db[madeID] = ... end
+```
+
+With `ItemID` nil, `madeID` was nil for everything that is not an enchant, so **the
+profession-window harvest stored enchants and nothing else.** The 103 non-enchant recipes in the
+dump all came from the other source, the recipe-*tooltip* harvest, which is name-keyed and was
+never affected. That is why the file has zero numeric keys, and why opening an alchemy window
+produced no flasks, no transmutes and no `Arcanite Bar`: alchemy makes items, so every row hit
+the dead branch. Reagent IDs were nil for the same reason; reagents still priced because the
+record keeps the name too.
+
+**The fix** is the capture those two files were missing, matching the other sixteen. Two lines
+each, no logic touched.
+
+**What it unblocks.** Item 11's open question is answered without an experiment — transmutes
+were never stored, and the cause was not the item-link theory. Item 3 gets its flask yields the
+first time an alchemy window is opened after the fix, and item 2 gets its vellum the first time
+a supply vendor is. All three were waiting on data this bug was eating.
+
+**Watch for on the next dump:** `AUCTIONATOR_CRAFT_RECIPES` will start carrying **numeric** keys
+from the window harvest while the 103 existing name keys stay. That is expected and both readers
+handle it (`Atr_Craft_GetCraftCost` tries ID then name), but a recipe seen from both sources will
+occupy two rows. Harmless — the ID row wins and carries the better data — and worth folding into
+item 13's tidy-up rather than fixing separately.
+
+**Verified** by `luac5.1 -p`, by a repo-wide re-check that no other file has the same gap (the
+only other hit, `AuctionatorQuery.lua`, uses `zc.` in commented-out debug lines only), and by the
+two dumps that are the evidence for the diagnosis.
+
+**Verified in game the same day**, on a third dump taken after installing the fix and opening one
+supply vendor and one alchemy window:
+
+| | before | after |
+|---|---:|---:|
+| `AUCTIONATOR_NPC_PRICES` | 0 | **9** |
+| `AUCTIONATOR_CRAFT_RECIPES` | 191 | **286** |
+| — of those, numeric keys | 0 | **95** |
+| reagents carrying an item ID | 0 | **267** |
+
+The 95 new rows are the window harvest working for the first time: ten `made = 3` flask recipes,
+`Arcanite Bar` (`12360`), and 84 others. Both vellums appeared in `NPC_PRICES` at 2g40s. Items 2,
+3 and 11 all closed on that one dump.
+
+---
+
 ## Suggested order
 
-Items 2, 3 and 11 are **done**, and item 10 closed on the owner's answer without any code
-(2026-08-19). What is left, in order:
+Items 1–5, 11 and 14 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+after the first real dump, same day. What is left, in order:
 
-1. **Items 5, 1** — the last of the fully-decided, self-contained UI changes, and small enough
-   to land together. Item 5 has one thing to get right (the persisted `reqOnly` has to be
-   honoured from the user's own click once the auto-tick block stops writing it); item 1 has
-   three (the hidden icon must survive `recommendElements` re-showing the block, the tooltip
-   owner must move off the hidden frame, and the new hover target must be re-sized whenever the
-   name changes).
-2. **Item 4** — Finder stats dropdown. Decided in full ("learn, don't seed"), no open
-   questions, and a real ordering fix for the user: pick the stat, *then* search.
-3. **Item 6** — Finder recipe filter, once someone has confirmed in game whether Ascension's
-   recipe tooltips carry the stock `ITEM_SPELL_KNOWN` string. Blocked on that, not on code.
-4. **Item 7 (Ledger)** — the biggest new surface, and it unblocks 8 and 9.
-5. **Item 8 (Advisor)** — scope after the Ledger, and only once the price-series question
-   under "Still open" is answered.
+1. **Item 6** — Finder recipe filter, the last small self-contained feature. The in-game check
+   it was blocked on (does Ascension carry the stock `ITEM_SPELL_KNOWN` string?) is softer than
+   it reads: read `_G.ITEM_SPELL_KNOWN` at runtime and fall back to the line's *colour*, the
+   technique `USABLE-SCAN.md` already proved in the PassLoot pair. Per-character cache, not
+   account-wide.
+2. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
+   waiting on: three trailing-space rows, none with an unsuffixed twin, so replacing the texture
+   hack orphans nothing. Part 2 (give the Sell tab the item it was handed) is independent and
+   smaller still.
+3. **Item 7 (Ledger)** — the biggest new surface, and it unblocks 8 and 9. One scope question
+   to answer before the first row is written: auction house only, or vendor and mail too.
+4. **Item 12 part 3** — the price database's value shape. Do it after part 1, which is what
+   gives it data to store, and fold item 13's mean-database change into the same pass since both
+   touch the same value types.
+5. **Item 8 (Advisor)** — now known to be a data-plumbing project first: there is no price
+   series, confirmed on real data. Scope after the Ledger.
 6. **Item 9** — investigate with ledger data in hand.
-
-**Item 12** does not have a place in that line yet. Its parts 1 and 2 are small and could go
-any time; part 3 changes the price database's value shape and should not be started before
-someone has looked at a `SavedVariables` dump to see how many names actually collide. Part 3's
-design is settled either way — see the recommended shape in the item.
+7. **Item 13** — saved-variable trimming. Invisible to the user, so it ranks last on its own;
+   worth folding into item 12 part 3 if that lands first.
 
 ## What a SavedVariables dump answers
 
@@ -843,6 +1088,15 @@ most open questions and needs no code. The file is the **account-level** one —
 `WTF/Account/<ACCT>/SavedVariables/Auctionator-Finder-Ascension.lua`, not the per-character
 copy; `tools/README.md` explains why and how to take one cleanly (fully exit the client first,
 or the last session's learning is missing).
+
+> **Take the file named after the addon folder, and no other.** This fork declares all 35 of its
+> saved variables in one `.toc`, so **everything it owns is in `Auctionator-Finder-Ascension.lua`**
+> — there is no companion file. A `SavedVariables` folder that has been through a few installs
+> can also hold `Auctionator.lua`, `Auctionator_Price_Database.lua` and
+> `Auctionator_Pricing_History.lua`; those are **stock Auctionator's**, which splits its big
+> tables into companion addon folders. The 2026-08-19 dump was one of those by mistake, which is
+> the whole of item 10 above. Size is the quick tell — this addon's file was 1.14 MB against
+> stock's stale 82 KB.
 
 What each open question gets out of it:
 
@@ -854,10 +1108,38 @@ What each open question gets out of it:
 | What yield was harvested for a multi-output recipe? | `AUCTIONATOR_CRAFT_RECIPES[id].made` | **Partial.** This field stores `GetTradeSkillNumMade`'s FIRST return only. A `made = 1` on a recipe known to make 3 proves `minMade` is 1 — but not whether `maxMade` is 3 (a one-line fix) or also 1 (needs the manual box). Only `/atrprofsort distilled` separates those two. |
 | Does a market price series exist? | `AUCTIONATOR_MEAN_PRICE_DATABASE` | Confirms `FRAMEWORK.md` §5 against real data — the sample arrays should carry no timestamps. |
 
-**Taken 2026-08-19 (price DB only).** It confirmed the scroll naming and corrected the vellum
-assumption — see item 2. It also surfaced a new issue, item 10 below, which the addon's own
-code did not predict. Still wanted: `AUCTIONATOR_NPC_PRICES` and `AUCTIONATOR_CRAFT_RECIPES`
-from the same account, which the supplied file did not include.
+**First dump, 2026-08-19 — and it was the wrong file.** It was stock Auctionator's
+`Auctionator_Price_Database.lua`, a month stale and belonging to an addon no longer installed
+(item 10). Its scroll-naming and vellum findings hold, because they are about item *names* on
+the server. Nothing else it suggested about this addon's data was ever evidence.
+
+**Second dump, 2026-08-19 — the real file**, `Auctionator-Finder-Ascension.lua`,
+1,144,785 bytes. What it settled, row by row:
+
+| Question | Answer |
+|---|---|
+| Are scrolls named `"Scroll of <enchant>"`? | **Yes** — 88 `Scroll of Enchant ...` keys in `AUCTIONATOR_CRAFT_RECIPES`. |
+| Which item is the vellum here? | **`52510` and `52511`**, both 2g40s from a vendor — after item 14's fix made the harvest able to write at all. |
+| Was enchanting really absent from the harvest? | **Confirmed fixed** — 88 of 191 recipes are enchants. |
+| What yield was harvested for a multi-output recipe? | **`made = 3`, correctly** — ten flask recipes, once item 14's fix let the window harvest store items at all. |
+| Does a market price series exist? | **No, confirmed on real data.** 5267 mean entries, 8898 samples, all bare numbers in an array, no timestamps, max 14 samples against the cap of 15. `FRAMEWORK.md` §5 stands. |
+| How many same-name variants? (item 12) | **3 trailing-space keys in 5267**, none with an unsuffixed twin. Part 1 unblocked. |
+| Is item 4's learning accumulating? | **Still unverified** — `statKeys` is absent from all three dumps. The third was taken on the merged build but without a Finder search having run, which is what writes it. |
+| What is the price DB's shape? (item 10) | One realm key, 5267 entries, **all plain numbers**, `__dbversion = 2`. |
+
+It also produced item 13 (a third of the file is redundant), item 14 (two files never captured
+`zc`, so the NPC harvest never wrote and the profession harvest stored only enchants — found
+because a *second* dump, taken straight after two vendor visits, was byte-identical apart from
+one timestamp), and a vendor-research re-run:
+`diff-vendor-seed` reports **0 disagreements and 0 contested tuples** across 1349 obs and 453
+base facts, with 88 + 65 new real facts — see `VENDOR-PRICE-RESEARCH.md`.
+
+**Third dump, 2026-08-19 — after item 14's fix, one supply vendor and one alchemy window.** It
+closed items 2, 3 and 11 together, exactly as the plan above predicted once the bug eating that
+data was gone. Counts in item 14.
+
+**Still wanted:** one Finder search on the merged build, which is all item 4's `statKeys` needs
+to become visible.
 
 ## Answered by the owner, 2026-08-19
 
@@ -872,22 +1154,30 @@ from the same account, which the supplied file did not include.
 
 ## Still open
 
-- **Item 3:** whether 30g51s99c per flask is *right* — i.e. whether the reagent prices behind
-  it are. The maths and the display are settled; nothing shipped tests the inputs. The
-  `Craft cost x3` line makes it a glance: 91g55s97c of reagents against a 127g80s stack of 3.
-- **Item 2 (built, needs one in-game check):** whether the *weapon* vellum's name is in the
-  candidate list, and whether both vellums price from a vendor rather than the auction house.
-  `/atrprofsort stamina` answers both. Neither breaks the numbers if wrong — see item 2.
+- **Item 3:** whether 30g51s99c per flask is *right*. **Narrowed to one reagent, 2026-08-19:**
+  the craft cost reproduces exactly from real data, and `Essence of Earth x2` is 69g of the
+  91g56s. Whether 34g50s each is a real market price is an auction-house question, not an addon
+  one.
+- ~~**Item 2:** whether the *weapon* vellum's name is in the candidate list, and whether both
+  vellums price from a vendor rather than the auction house.~~ — **closed 2026-08-19.** Both
+  names are in the price database and both candidate names match; both vellums are vendor-sold
+  at 2g40s (`52510`, `52511`) and now price from there instead of the AH's 6g85s / 3g22s.
 - **Item 6:** whether Ascension's recipe tooltips carry the stock `ITEM_SPELL_KNOWN`
   ("Already known") string.
-- **Item 11:** whether the profession harvest stores transmutes at all — i.e. whether this
-  client returns an item link for those rows. Decides only whether the Sell tab and bag
+- ~~**Item 11:** whether the profession harvest stores transmutes at all~~ — **closed
+  2026-08-19.** It did not, and the item-link theory was wrong: the window harvest dropped every
+  recipe producing an item because its file never captured `zc` (item 14). After the fix,
+  `Arcanite Bar` is stored as `id = 12360, made = 1, reagents = Thorium Bar x1 + Arcane
+  Crystal x1`. Transmutes harvest fine and the client's links were never the problem. Decides only whether the Sell tab and bag
   tooltips know an `Arcanite Bar`'s craft cost with the profession window closed; the trade
   skill window is correct either way. `/atrprofsort transmute` now prints the link.
-- **Item 8:** what `AUCTIONATOR_PRICE_DATABASE` actually retains — a current price, or a dated
-  series. The advisor cannot exist without a series, and that answer decides whether item 8 is
-  a feature or a data-plumbing project.
+- **Item 8:** ~~what `AUCTIONATOR_PRICE_DATABASE` actually retains~~ — **answered 2026-08-19:
+  a current price, no series.** 5267 entries of one plain number each, and the mean database's
+  8898 samples carry no timestamps. The advisor is a data-plumbing project before it is a
+  feature.
 - **Item 9:** parked by the owner until item 7 lands.
-- **Item 12:** how many item names on this server carry more than one variant. One sighting so
-  far (`Bloodforged Imperial Jewel`, rare and epic). The answer decides how much part 3 is
-  worth, not what shape it takes — that is settled (variant-in-value, not a re-key).
+- **Item 12:** how many item names on this server carry more than one variant. **Part 1's
+  blocker is answered** (3 trailing-space rows, no twins — see the item), but the wider question
+  is not: the texture test caught 3 in 5267 and misses gear, which is the case that was
+  actually reported. The answer decides how much part 3 is worth, not what shape it takes —
+  that is settled (variant-in-value, not a re-key).

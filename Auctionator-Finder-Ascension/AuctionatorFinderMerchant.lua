@@ -22,6 +22,15 @@
 -- The mark is only set when the list was fully populated, so a scan taken while
 -- the list was still filling in is retried on the next quiet update.
 
+-- zc lives in the addon table (zcUtils.lua keeps it file-local), so a file that
+-- wants it has to capture it.  This one did not: `zc` resolved to a nil GLOBAL,
+-- so `ItemID` in Atr_NPC_HarvestMerchant below was always nil, every itemID came
+-- out nil, and the harvest stored NOTHING -- silently, since the guard reads as
+-- ordinary defensiveness.  AUCTIONATOR_NPC_PRICES was empty in both 2026-08-19
+-- dumps, including one taken straight after visiting two supply vendors.
+local addonName, addonTable = ...;
+local zc = addonTable and addonTable.zc or _G.zc;
+
 -- Local translation passthrough (the Bazaar's BZT is file-local over there).
 local function MZT (s)
 	if (ZT) then return ZT (s); end
