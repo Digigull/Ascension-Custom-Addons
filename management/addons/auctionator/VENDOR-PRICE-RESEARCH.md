@@ -5,6 +5,8 @@ argument; the tools that produced them are in `tools/` and every number here is 
 by running them against a SavedVariables dump.
 
 Sample behind this: 487 logged sales across two accounts, plus 1349 confirmed price tuples.
+**Re-run against a fresh dump 2026-08-19 (see the last section) — no fact below moved, and the
+first premise survived a 1349-tuple re-test with zero conflicts.**
 
 ## The model
 
@@ -71,6 +73,29 @@ accurate to roughly 30%, and no amount of modelling the available features impro
 
 Effort is better spent widening coverage than sharpening the estimator.
 
+## The 2026-08-19 re-run
+
+First dump of the real saved-variables file (`Auctionator-Finder-Ascension.lua`, 1.14 MB).
+Both tools were run against it unchanged.
+
+**`diff-vendor-seed`: the premise held.** 1349 obs agree with the shipped seed, **0 disagree**,
+**0 contested**, 0 malformed; 453 base facts agree, **0 disagree**. The dump added **88 new real
+observations and 65 new base facts** the seed did not have. `seedver` reads `2026-08-16` and
+matches the shipped seed, so nothing is a ghost from an older one.
+
+**The learned table is 93% echo.** 1338 of 1437 `obs` entries and 449 of 518 `base` entries are
+seed copies written back to disk — about 152 KB of a 1.14 MB file duplicating a table that ships
+inside the addon. That is a storage question rather than a research one; it is backlog item 13.
+
+**`analyze-growth`, and this one is a flag, not a finding.** On the 76 usable growth rows in this
+dump, rebuilding the price as **flat `price = base price` scored 2.4% median error against the
+shipped predictor's 20.3%**. That is *not* a refutation of the 30.4% figure above, which came
+from 409 sales across two accounts: 76 rows from one account, heavily weighted to items sold at
+or near their base item level, is exactly the sample where flat wins by construction. What it
+does say is that the shipped estimator **over-predicts on fresh data**, and that is worth
+re-checking the moment the log grows — it is cheap, it is one command, and if it holds on a
+wider pool then the estimator should be flooring to base far more often than it does.
+
 ## Open
 
 - Is the multiplier fixed per item, or rolled per generated instance? Two instances of one
@@ -78,8 +103,11 @@ Effort is better spent widening coverage than sharpening the estimator.
 - What sets it. `1.00x` and `2.00x` being so dominant suggests a small set of server-side
   brackets, but nothing in the client identifies which bracket an item is in.
 - Whether the `1.00x`/`2.00x` spikes hold on a wider item pool. 409 samples, mostly one account.
-- Seller level is now recorded on each logged sale (`lv`), so the level question can be
-  re-checked from data rather than a single controlled test. No dump yet carries it.
+- Seller level. **`lv` now reaches the dumps** — 96 of the 109 log rows in the 2026-08-19 file
+  carry it — but the question is still open for want of the right *shape* of data, not the
+  field: **no tuple in that log was sold at two different seller levels**, so there is nothing to
+  compare. It stays open until one is, and the single controlled test remains the only evidence.
+- Whether flat-at-base beats the shipped estimator on a wider sample — see the re-run above.
 
 ## Re-running
 
@@ -89,4 +117,9 @@ lua5.1 tools/diff-vendor-seed.lua <dump.lua>                      # provenance, 
 ```
 
 A conflict reported by either tool contradicts the first fact above and is worth chasing before
-anything else.
+anything else. Run them from the **repo root** — `diff-vendor-seed` resolves the shipped seed by
+a path relative to the working directory.
+
+Take the dump from `WTF/Account/<ACCT>/SavedVariables/`**`Auctionator-Finder-Ascension.lua`** and
+no other file; a folder that has seen a few installs can also hold stock Auctionator's
+`Auctionator_Price_Database.lua`, which is a different addon's data (BACKLOG item 10).

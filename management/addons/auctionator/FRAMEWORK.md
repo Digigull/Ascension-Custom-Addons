@@ -168,7 +168,12 @@ upstream tabs and need no save/restore dance.
 ### The finding that matters most: there is no market price series
 
 This settles the open question hanging over backlog item 8 (Advisor), and it is worth stating
-flatly because three different variables *look* like they might answer it:
+flatly because three different variables *look* like they might answer it.
+
+**Confirmed on real data, 2026-08-19.** The first genuine dump of this addon's saved variables
+holds 5267 price rows of one plain number each, and 5267 mean rows carrying 8898 samples — every
+one a bare number in an array, no timestamps anywhere, longest array 14 against the cap of 15.
+Read from source, then confirmed from the file:
 
 - **`AUCTIONATOR_PRICE_DATABASE` is current-value only.** One number per item name, overwritten
   on each scan. No history.
@@ -182,7 +187,8 @@ flatly because three different variables *look* like they might answer it:
   (`Auctionator.lua:2793`, `:2812`, `:2880`) all pass `gJustPosted_*`. **It records what you
   listed things at, not what the market did.**
 
-So "ore is up, go mine" is not computable from anything currently stored. The *machinery* for a
+So "ore is up, go mine" is not computable from anything currently stored — not from the code,
+and not from a year of accumulated data. The *machinery* for a
 dated series exists and is reusable (`ToTightTime`/`FromTightTime` at `:6221`/`:6229`, plus the
 condenser); the *market* series does not. That makes item 8 a data-plumbing project first, and
 it is the reason the backlog orders the Ledger ahead of it.
