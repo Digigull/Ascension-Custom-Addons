@@ -2799,9 +2799,80 @@ tooltip on the first hover of a fresh session once the watchlist has been rescan
 
 ---
 
+## 27. The tooltips that still needed a manual load — an ID index — DONE
+
+**Reported 2026-08-20**, testing item 26 in game:
+
+> "I have Essence of Earth in my market tab, and previously left clicked it and the tooltip was then
+> loaded afterwards. But after updating the addon again I had to perform the same action to get the
+> tooltip again, but did not need to get the tooltip in this way for other items on my Market lists.
+> I also noticed that on the Crafting page, most of the tooltips have loaded but when I filtered for
+> scroll, most of the Scroll of Enchant tooltips also need this manual load process too."
+
+Both halves are the same gap, and item 26 named it as the case it had not closed: **a tooltip needs
+an item ID, and this tab is full of rows that only have a NAME.** The watchlist is keyed by one, and
+so is every enchant recipe — an enchant makes no item, so its record is filed under the scroll it
+sells as. `GetItemInfo` turns a name into a link only for an item the CLIENT has cached, which on
+this server is not something to rely on: item 26's warming needed an ID to work with, and neither of
+these rows had one.
+
+Essence of Earth and the scrolls were the two rows where every fallback missed. Everything else on
+the market list happened to be in the client's cache, which is why they behaved differently.
+
+### The addon has been writing name → ID down for months
+
+Not on purpose, and in three saved tables it keeps for other reasons:
+
+- **every reagent of every harvested recipe carries an `id` AND a `name`** — the profession harvest
+  stores both because a reagent's link can come back nil on this client, so the name is its
+  fallback. That is a name → ID map of every trade good the player's professions touch, **Essence of
+  Earth among them**, built by opening a profession window once;
+- **every ledger row carries both**, since `Atr_Ledger_Add` resolves the ID off the link when it
+  records the trade;
+- **every observed watched item** carries the ID item 26 started storing.
+
+`Atr_An_IdForName` assembles those into one in-memory index, once per session, at **no storage
+cost** — the data is already saved, just not in a shape anyone could ask. So Essence of Earth is
+hoverable on arrival now, with no scan, no click and no new capture.
+
+### What the index cannot know, it learns once and keeps
+
+A scroll is nobody's reagent and may never have been traded, so the index starts out blank on it.
+`Atr_An_LearnId` writes down any name → ID resolved from a real link, into `AUCTIONATOR_ANALYSIS.ids`
+— which is what makes one manual lookup the **last** one that item ever needs, rather than one per
+session. Three places feed it:
+
+- the Finder's result feed, which sees a link beside every name it returns;
+- **the shared scan engine** (`Atr_An_CollectListing`), and this one matters: a scroll is not gear,
+  so looking one up lands on the **Buy** tab, which never reaches the Finder's feed. Without this,
+  the manual lookup the owner described would have taught the addon nothing;
+- a row whose name the client *can* resolve — worth writing down, because that cache is a session
+  and this is not.
+
+**The saved map is gated to names this tab can draw** (watched, or a harvested recipe key), which
+bounds it at a few hundred entries. An ungated name → ID cache fed by a category sweep is thousands
+of rows of saved variable, and item 13 was spent clawing back exactly that kind of weight. The gate
+decides only what is *saved*: anything learned still answers for the rest of the session.
+
+The same gate keeps the scan path cheap — two table lookups per listing, and the auction API is
+asked for a link only for a name this tab can draw and cannot already resolve.
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each), and a throwaway 13-assertion check of
+the index driven against hand-built saved variables: a reagent resolved out of the recipe DB, one
+out of an enchant's recipe, a ledger row's own item, a watched item's observation, a previously
+saved entry, an unknown name staying unknown, a ledger row with no ID teaching nothing, a learned
+recipe key both answering and being saved, a watched item likewise, an unrelated name answering but
+**not** being saved, and a non-numeric ID refused. All passed first run; not kept.
+
+**Not verified in game.** The checks are: Essence of Earth hoverable without touching it, on a fresh
+session; a Scroll of Enchant row hoverable after one lookup and still hoverable next session; and
+nothing new appearing in the saved variables beyond a few hundred `ids` entries.
+
+---
+
 ## Suggested order
 
-Every numbered item has now shipped or closed: 1–9 and 11–26 are **DONE** or deliberately parked,
+Every numbered item has now shipped or closed: 1–9 and 11–27 are **DONE** or deliberately parked,
 and item 10 closed without any code (2026-08-19). Rewritten twice that day — once after the first
 real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is unstarted.** What
 is left is follow-on work inside shipped items, two standing deferrals, and two questions that
