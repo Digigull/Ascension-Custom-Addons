@@ -249,7 +249,21 @@ Assume a **daily** sample (§6 argues why daily is not merely enough but generou
 |---|---|---|---|
 | A. `obs[name][i] = { t = , p = }` | ~5–8 MB | 158,000 **tables** | the shape item 8 C ruled out; do not |
 | B. `obs[name][i] = "day:price"` | ~3.2–4.7 MB | 5,267 tables + 158,000 strings | still one line per sample |
-| **C. `obs[name] = "d1:p1;d2:p2;…"`** | **~1.5–1.8 MB** | **5,267 strings** | one line per *name*; decode lazily |
+| **C. `obs[name] = "d1:p1;d2:p2;…"`** | **~1.8 MB** (measured) | **5,267 strings** | one line per *name*; decode lazily |
+
+**The C row stopped being an estimate on 2026-08-21.** A first real day on the owner's account wrote
+647 items in 31 KB, which decomposes as: **23 bytes of item name, 15 bytes of fixed line overhead,
+and 9.8 bytes of packed sample**. Only the last of those grows with time, which is the property the
+shape was chosen for. Projected from the measured figures:
+
+| | 7 days | 30 days | 90 days |
+|---|---|---|---|
+| 647 items (one session's scanning) | 71 KB | 228 KB | 636 KB |
+| 5267 items (the whole price database) | 578 KB | **1.81 MB** | 5.06 MB |
+
+So the estimate held, and the 30-day whole-market case is confirmed affordable: **1.81 MB in a file
+that regrows by scanning**, against a main file of 1.14 MB that cannot. 90 days is the one that is
+not, which is what the condenser (stage 5) is for.
 
 Shape **C** — one packed string per item name, the whole series in it — is the recommendation, and
 the reasoning is the same one item 13 made about the mean database's single-sample wrapper: the
@@ -361,9 +375,36 @@ database still earns its 5267 rows.
 
 ---
 
-## 11. Stage 1 as built, 2026-08-21
+## 11. Stage 1 as built, 2026-08-21 — and confirmed in game the same day
 
-Reasoned and unit-tested offline; **not yet seen in game**. Files:
+**It works.** First real run on the owner's account: 647 items recorded from one session's
+scanning, all on day 6593 (2008-08-01 + 6593 days = 2026-08-20 — the epoch arithmetic is right),
+24 of them closed more than once and carrying the `:2` / `:3` scan counts, `n = 647` in step with
+the entry count, and the whole thing in
+`WTF/Account/<ACCT>/SavedVariables/Auctionator-Finder-Ascension-History.lua` — its own file, which
+was the entire premise. `/atrhistory show` round-tripped a series back out of the packed string
+through the real client, not a stub.
+
+**One defect, found and fixed by that run.** The copy box printed `58  00` where it meant 58 gold:
+`zc.priceToMoneyString` renders coins as TEXTURES, and a texture copies out of an EditBox as
+nothing. Every money formatter in this addon has that property, and it is invisible until someone
+pastes. The diagnostic now formats plain `58g 00s 00c` text with the raw copper beside it — a copy
+box whose text does not survive being copied has not delivered anything.
+
+**The baseline load figure, from `/cpp load` on the same session:**
+`Auctionator-Finder-Ascension` costs **96.2 ms and 1052 KB** at login, rank 7 of 27 addons, against
+a 3683 ms total login and a top entry (Details) of 1724.5 ms. That reading was taken while the
+history file was still empty — SavedVariables are written at logout, so a login profile always
+reflects the *previous* session's file — which makes it exactly the before-figure. The comparison
+worth taking next is the same command after a login with a full file in place; the companion should
+appear as a line of its own, which is the per-addon attribution the separate file was supposed to
+buy.
+
+The capture also independently confirms a research finding: `GetAddOnMemoryUsage` reports
+`st=zero` on this server, so `/atr clear`'s memory line is indeed useless here and the load profile
+is the only per-addon channel.
+
+Files:
 
 - **`Auctionator-Finder-Ascension-History/`** — the companion. A `.toc` declaring
   `AUCTIONATOR_MARKET_HISTORY` and one line of Lua setting

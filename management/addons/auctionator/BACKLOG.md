@@ -3588,8 +3588,31 @@ measure-then-decide shape as items 12 part 3b and 13.
 
 ### Stage 1 built, 2026-08-21 — the store, the toggle and the writer. No readers.
 
-Reasoned and unit-tested offline, **not yet seen in game**. Detail in `HISTORY-STORE.md` §11; the
-short of it:
+**Confirmed in game the same day**, which is the part that matters: 647 items from one session's
+scanning, in `Auctionator-Finder-Ascension-History.lua` — its own file, which was the entire
+premise. The day index is right (6593 = 2026-08-20), the multi-scan closes carry their `:2`/`:3`
+counts, the entry counter is in step, and `/atrhistory show` round-tripped a series back out of the
+packed string through the real client.
+
+**Size stopped being an estimate.** 647 items in 31 KB, decomposing as 23 bytes of item name,
+15 of fixed line overhead and **9.8 of packed sample** — and only the last grows with time, which is
+the property the shape was picked for. That projects to **1.81 MB for the whole 5267-name database
+at 30 days**, landing exactly on the top of the estimate, in a file that regrows by scanning against
+a main file of 1.14 MB that does not. 90 days would be 5 MB, which is what stage 5's condenser is
+for.
+
+**Baseline load cost, from `/cpp load` in the same session:** the addon is **96.2 ms and 1052 KB**,
+rank 7 of 27, against a 3683 ms login. Taken while the history file was still empty (SavedVariables
+are written at logout, so a login profile reflects the previous session's file), so it is the
+before-figure. The capture also confirms the research finding that `GetAddOnMemoryUsage` reports
+zero on this server.
+
+**One defect, found by the run and fixed:** the copy box printed `58  00` where it meant 58 gold.
+`zc.priceToMoneyString` renders coins as textures and a texture copies out of an EditBox as nothing
+— true of every money formatter in this addon, and invisible until somebody pastes. The diagnostic
+now writes plain text with the raw copper beside it.
+
+Detail in `HISTORY-STORE.md` §11; the short of the build:
 
 - **`Auctionator-Finder-Ascension-History/`** is the companion — a `.toc` owning
   `AUCTIONATOR_MARKET_HISTORY` and one line of Lua setting a marker global. Everything that reads or

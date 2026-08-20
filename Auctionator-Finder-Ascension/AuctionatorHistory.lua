@@ -428,9 +428,20 @@ end
 -- anything until stage 2 is built on top of it.
 -- ===========================================================================
 
+-- PLAIN TEXT, not zc.priceToMoneyString, and that is the whole point of it:
+-- every money formatter in this addon renders coins as TEXTURES, which look
+-- right on screen and copy out of an EditBox as nothing at all -- the first real
+-- run of this box pasted back "58  00" where it meant 58 gold.  A copy box whose
+-- text does not survive being copied has not delivered anything.
 local function Hist_Money (c)
-	if (zc and zc.priceToMoneyString) then return zc.priceToMoneyString (c); end
-	return tostring (c);
+
+	c = math.floor (tonumber (c) or 0);
+
+	local g  = math.floor (c / 10000);
+	local s  = math.floor ((c % 10000) / 100);
+	local cp = c % 100;
+
+	return string.format ("%dg %02ds %02dc", g, s, cp);
 end
 
 function Atr_Hist_Report ()
@@ -470,10 +481,10 @@ function Atr_Hist_Show (name)
 	if (#s == 0) then
 		tinsert (out, "(nothing recorded)");
 	else
-		tinsert (out, "day\tage\tscans\tprice");
+		tinsert (out, "day\tage\tscans\tprice           copper");
 		local i;
 		for i = 1, #s do
-			tinsert (out, string.format ("%d\t%dd\t%d\t%s   (%d copper)",
+			tinsert (out, string.format ("%d\t%dd\t%d\t%-16s%d",
 				s[i].d, s[i].age or 0, s[i].n or 1, Hist_Money (s[i].p), s[i].p));
 		end
 	end
