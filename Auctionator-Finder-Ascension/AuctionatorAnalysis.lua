@@ -545,7 +545,7 @@ end
 -- asks for the group half only.
 
 local gAnMenu_Item		= nil;		-- what the open menu is about
-local gAnMenu_Shop		= false;	-- offer the shopping-list branch
+local gAnMenu_Mode		= "both";	-- "both" | "groups" | "lists"
 local gAnMenu_Frame		= nil;
 local gAn_PendingItem	= nil;		-- survives the menu closing, for a popup
 
@@ -675,21 +675,32 @@ local function An_Menu_Init (self, level)
 		info.notCheckable	= true;
 		UIDropDownMenu_AddButton (info, level);
 
-		if (gAnMenu_Shop) then
+		-- A button that already says what it does gets the choices FLAT; only the
+		-- Finder's row menu, which offers both destinations, needs submenus.
+		if (gAnMenu_Mode == "groups") then
+
+			An_Menu_Groups (level);
+
+		elseif (gAnMenu_Mode == "lists") then
+
+			An_Menu_Lists (level);
+
+		else
+
 			info = UIDropDownMenu_CreateInfo();
 			info.text			= AZT("Add to shopping list");
 			info.notCheckable	= true;
 			info.hasArrow		= true;
 			info.value			= "SLIST";
 			UIDropDownMenu_AddButton (info, level);
-		end
 
-		info = UIDropDownMenu_CreateInfo();
-		info.text			= AZT("Add to Analysis group");
-		info.notCheckable	= true;
-		info.hasArrow		= true;
-		info.value			= "GROUP";
-		UIDropDownMenu_AddButton (info, level);
+			info = UIDropDownMenu_CreateInfo();
+			info.text			= AZT("Add to Analysis group");
+			info.notCheckable	= true;
+			info.hasArrow		= true;
+			info.value			= "GROUP";
+			UIDropDownMenu_AddButton (info, level);
+		end
 
 	elseif (level == 2) then
 
@@ -701,16 +712,17 @@ local function An_Menu_Init (self, level)
 	end
 end
 
--- `anchor` is a frame, or "cursor" for a right-click.  Returns false when the
--- dropdown API is not there to drive, so a caller can fall back rather than error.
-function Atr_An_ShowItemMenu (anchor, itemName, withShoppingList)
+-- `anchor` is a frame, or "cursor" for a right-click.  `mode` is "both" (the
+-- Finder's row menu), "groups" or "lists".  Returns false when the dropdown API
+-- is not there to drive, so a caller can fall back rather than error.
+function Atr_An_ShowItemMenu (anchor, itemName, mode)
 
 	if (itemName == nil or itemName == "") then return false; end
 	if (type (UIDropDownMenu_Initialize) ~= "function" or type (ToggleDropDownMenu) ~= "function") then return false; end
 	if (type (CreateFrame) ~= "function") then return false; end
 
 	gAnMenu_Item = itemName;
-	gAnMenu_Shop = (withShoppingList == true);
+	gAnMenu_Mode = mode or "both";
 
 	if (gAnMenu_Frame == nil) then
 		gAnMenu_Frame = CreateFrame ("Frame", "Atr_An_ItemMenu", UIParent, "UIDropDownMenuTemplate");
@@ -775,33 +787,53 @@ end
 --
 -- The item the Buy tab is showing, or nil.  gCurrentPane is a file-local in
 -- Auctionator.lua; Atr_GetCurrentPane exists precisely so other modules can ask.
+--
+-- IsNil is the test that matters, not an empty string: a pane with no item still
+-- carries a scan, and Atr_FindScan(nil) names it the literal string "nil".  On the
+-- Buy tab's search-summary view that is exactly the state, and without this the
+-- buttons would offer to watch an item called "nil".
 function Atr_An_BuyItemName ()
 
 	if (type (Atr_GetCurrentPane) ~= "function") then return nil; end
 
 	local pane = Atr_GetCurrentPane ();
 	local scn  = pane and pane.activeScan;
-	local nm   = scn and scn.itemName;
 
-	if (nm == nil or nm == "") then return nil; end
+	if (scn == nil) then return nil; end
+	if (scn.IsNil and scn:IsNil()) then return nil; end
+
+	local nm = scn.itemName;
+	if (nm == nil or nm == "" or nm == "nil") then return nil; end
 
 	return nm;
 end
 
--- The button lives under the recommend icon and travels with the rest of that
--- strip (it is in recommendElements), so it hides wherever they hide.  What that
--- cannot express is "Buy tab only" -- the strip is shown on SELL as well -- so
--- this runs straight after the strip is shown and takes it back.
+-- Show the two buttons on the Buy tab's item view, and nowhere else.
+--
+-- THE FIRST ATTEMPT PUT THEM IN recommendElements AND THEY NEVER APPEARED.  That
+-- strip is the SELL tab's recommendation ("Recommended buyout price" and the two
+-- prices); the Buy tab explicitly HIDES it (Atr_UpdateUI's else branch) and then
+-- paints its own header by re-showing two of its members through
+-- Atr_ShowItemNameAndTexture -- the icon, and Atr_Recommend_Text reused as the
+-- item's name.  So membership meant "hidden on every Buy tab repaint", which is
+-- the exact opposite of what was wanted.
+--
+-- Hence: not in that table, and called from the three places that repaint or
+-- leave that header -- Atr_ShowItemNameAndTexture (Buy paints it),
+-- Atr_UpdateRecommendation (SELL paints it) and the tab click.  Each just asks
+-- this, and this decides.
 function Atr_An_UpdateBuyButton ()
 
-	local b = Atr_An_BuyWatchButton;
-	if (b == nil) then return; end
+	local watch = Atr_An_BuyWatchButton;
+	local shop  = Atr_An_BuyListButton;
 
-	if (type (Atr_IsModeBuy) == "function" and Atr_IsModeBuy() and Atr_An_BuyItemName ()) then
-		b:Show();
-	else
-		b:Hide();
-	end
+	if (watch == nil and shop == nil) then return; end
+
+	local show = (type (Atr_IsModeBuy) == "function" and Atr_IsModeBuy()
+					and Atr_An_BuyItemName () ~= nil);
+
+	if (watch) then if (show) then watch:Show(); else watch:Hide(); end end
+	if (shop)  then if (show) then shop:Show();  else shop:Hide();  end end
 end
 
 -- RESCAN ------------------------------------------------------------------
@@ -1148,37 +1180,63 @@ function Atr_An_Init ()
 	progress:SetJustifyH ("RIGHT");
 	progress:SetText ("");
 
-	-- BUY TAB (BACKLOG item 18): a Watch button under the item's icon.  It is
-	-- built here, with the rest of the analysis UI, but it belongs to the SHARED
-	-- main panel -- so it is parented to the icon's own parent and anchored to the
-	-- icon, which keeps it correct if that strip is ever moved.  The band below
-	-- the icon is empty: the recommend text and prices all sit at x >= 109, and
-	-- the auction list starts at y -213.
-	local icon = _G["Atr_RecommendItem_Tex"];
-	if (icon and icon.GetParent) then
+	-- BUY TAB (BACKLOG item 18, corrected in 19): two buttons on the item view.
+	--
+	-- They are built here with the rest of the analysis UI but belong to the
+	-- SHARED main panel, so they are parented to that panel and anchored to
+	-- Atr_Recommend_Text -- which on the Buy tab holds the ITEM'S NAME (that tab
+	-- reuses the FontString; see Atr_ShowItemNameAndTexture).  Anchoring to it
+	-- puts them under the name whatever the header does.
+	--
+	-- Under the ICON is where they were first put, and that space is taken: the
+	-- Back button sits there whenever a search matched more than one item.  Below
+	-- the name is clear on this tab -- what occupies it on SELL is the two
+	-- recommended prices, and these are hidden there.
+	local nameFS = _G["Atr_Recommend_Text"];
+	local panelP = _G["Atr_Main_Panel"];
 
-		local watch = CreateFrame ("Button", "Atr_An_BuyWatchButton", icon:GetParent(), "UIPanelButtonTemplate");
-		watch:SetSize (58, 18);
-		watch:SetPoint ("TOPLEFT", icon, "BOTTOMLEFT", -2, -6);
-		watch:SetText (AZT("Watch"));
-		watch:SetNormalFontObject ("GameFontNormalSmall");
-		watch:SetHighlightFontObject ("GameFontHighlightSmall");
-		watch:Hide();
+	if (nameFS and panelP) then
 
-		watch:SetScript ("OnClick", function (self)
-			local nm = Atr_An_BuyItemName ();
-			if (nm) then Atr_An_ShowItemMenu (self, nm, false); end
-		end);
+		local function headerButton (name, w, label, mode, tipTitle, tipBody)
 
-		watch:SetScript ("OnEnter", function (self)
-			if (GameTooltip) then
-				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
-				GameTooltip:SetText (AZT("Watch on the Analysis tab"), 1, 1, 1);
-				GameTooltip:AddLine (AZT("Adds this item to an Analysis group, so searches start counting what sells."), 0.8, 0.8, 0.8, true);
-				GameTooltip:Show();
-			end
-		end);
-		watch:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+			local b = CreateFrame ("Button", name, panelP, "UIPanelButtonTemplate");
+			b:SetSize (w, 18);
+			b:SetText (AZT (label));
+			b:SetNormalFontObject ("GameFontNormalSmall");
+			b:SetHighlightFontObject ("GameFontHighlightSmall");
+			b:Hide();
+
+			b:SetScript ("OnClick", function (self)
+				local nm = Atr_An_BuyItemName ();
+				if (nm) then Atr_An_ShowItemMenu (self, nm, mode); end
+			end);
+
+			b:SetScript ("OnEnter", function (self)
+				if (GameTooltip) then
+					GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+					GameTooltip:SetText (AZT (tipTitle), 1, 1, 1);
+					GameTooltip:AddLine (AZT (tipBody), 0.8, 0.8, 0.8, true);
+					GameTooltip:Show();
+				end
+			end);
+			b:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+			return b;
+		end
+
+		local watch = headerButton ("Atr_An_BuyWatchButton", 58, "Watch", "groups",
+			"Watch on the Analysis tab",
+			"Adds this item to an Analysis group, so searches start counting what sells.");
+		watch:SetPoint ("TOPLEFT", nameFS, "BOTTOMLEFT", 2, -8);
+
+		-- The panel's own "Add Item To List" button adds whatever is in the SEARCH
+		-- BOX, which on a broad search is the search term and not this item -- so
+		-- searching "silk" and pressing it files "silk".  This one files the item
+		-- you are looking at, and asks which list.
+		local tolist = headerButton ("Atr_An_BuyListButton", 96, "Add to List", "lists",
+			"Add to a shopping list",
+			"Adds THIS item -- not the search term -- to a shopping list of your choosing.");
+		tolist:SetPoint ("LEFT", watch, "RIGHT", 6, 0);
 	end
 end
 

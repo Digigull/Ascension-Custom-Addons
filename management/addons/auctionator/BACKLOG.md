@@ -2044,11 +2044,14 @@ It is created in `Atr_An_Init` but parented to the icon's own parent and anchore
 it stays put if that strip ever moves. The band below the icon is empty: the recommend text and
 prices all sit at x >= 109, and the auction list starts at y -213.
 
-Show/hide is the part worth knowing. It is `recommendElements[8]`, so it hides everywhere that
+~~Show/hide is the part worth knowing. It is `recommendElements[8]`, so it hides everywhere that
 strip hides. What membership cannot express is **"Buy tab only"** — the strip is shown on SELL as
 well — so `Atr_An_UpdateBuyButton` runs immediately after `Atr_ShowElems (recommendElements)` in
-`Atr_ShowCurrentAuctions` and takes it back unless we are on Buy with an item. Ordering matters:
-show first, then correct, inside the one call.
+`Atr_ShowCurrentAuctions` and takes it back unless we are on Buy with an item.~~
+
+**Superseded — this was wrong, and the button never appeared. See item 19.** The recommend strip
+is the SELL tab's; the Buy tab *hides* it. Membership therefore meant "hidden on every Buy tab
+repaint".
 
 **Verified** by `luac5.1 -p` and by the two existing offline tests still passing (17 + 27), which
 cover the batch loop and the analysis feed this touches around. The menu itself is UI and the two
@@ -2062,9 +2065,87 @@ seen.
 
 ---
 
+## 19. The Buy tab's Watch button never appeared — and a second button beside it — DONE
+
+**Reported 2026-08-20** with two screenshots, which is what made it quick: item 18's **Watch**
+button was nowhere on the Buy tab. And a companion request — an **add to shopping list** button
+there too.
+
+### Why it never appeared
+
+Item 18 made the button `recommendElements[8]`, reasoning that it would then "hide wherever that
+strip hides". The strip is `Atr_Recommend_Text`, the two prices, and the icon.
+
+**That strip is the SELL tab's recommendation, and the Buy tab explicitly hides it.** In
+`Atr_UpdateUI`:
+
+```lua
+if (Atr_IsModeCreateAuction()) then     -- SELL
+    Atr_UpdateRecommendation (false);   -- ... shows the strip
+else
+    Atr_HideElems (recommendElements);  -- BUY and MORE: hides it
+    ...
+    Atr_ShowItemNameAndTexture (...)    -- then paints its own header
+```
+
+So membership meant *hidden on every Buy tab repaint* — the exact opposite of the intent — and the
+one place that showed the strip again (`Atr_UpdateRecommendation`, where the correcting call was
+placed) only ever runs on SELL.
+
+The Buy tab's header is `Atr_ShowItemNameAndTexture`, which **re-shows two members of that hidden
+strip by hand**: the icon, and `Atr_Recommend_Text` *reused as the item's name*. That reuse is the
+detail the first attempt missed — the strip is not one thing that is either up or down, it is a
+SELL widget set that Buy borrows two pieces of.
+
+### The fix
+
+The buttons are **not** in `recommendElements`. `Atr_An_UpdateBuyButton` is called from the three
+places that paint or leave that header, and it decides:
+
+| Call site | Tab | Result |
+|---|---|---|
+| `Atr_ShowItemNameAndTexture` | Buy paints its item header | shown, when an item is up |
+| `Atr_UpdateRecommendation` | SELL paints its recommendation | hidden |
+| the tab click, after `Atr_HideElems` | anything else | hidden |
+
+The third exists because a tab whose header never repaints would otherwise inherit whatever the
+Buy tab left visible.
+
+**Also fixed while there:** the Buy tab's *search summary* view calls the same header function with
+the search text, and its pane still carries a scan — one that `Atr_FindScan (nil)` names the
+literal string `"nil"`. The visibility test now uses `AtrScan:IsNil()`, so the buttons do not offer
+to watch an item called "nil".
+
+### Placement, corrected by the screenshot
+
+Item 18 put the button under the **icon**, on the reasoning that the band there is empty. It is
+not: the **Back** button sits there whenever a search matched more than one item, which is the
+common case (the screenshot was a "silk" search). Both buttons now anchor under
+`Atr_Recommend_Text` — the item's name on this tab — which is clear on Buy. What occupies that
+space on SELL is the two recommended prices, and these are hidden there.
+
+### The second button
+
+**Add to List**, beside Watch, opening the shopping-list half of the same menu.
+
+It is not a duplicate of the panel's existing *Add Item To List*: **that one adds whatever is in
+the search box**, so searching `silk`, opening `Silk Cloth` and pressing it files *"silk"*. This
+one files the item you are looking at, and asks which list.
+
+`Atr_An_ShowItemMenu`'s third argument became a mode — `"both"`, `"groups"`, `"lists"` — rather
+than a boolean. A button that already says what it does gets its choices **flat**; only the
+Finder's row menu, which offers both destinations, needs submenus.
+
+**Verified** by `luac5.1 -p` and the two offline tests (17 + 27) still passing. The failure this
+item fixes was a UI-visibility rule spread across three files, which no offline test in this repo
+could have caught — the honest answer is that the screenshot caught it, one round later.
+**Not verified in game.**
+
+---
+
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16, 17 and 18 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16, 17, 18 and 19 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
