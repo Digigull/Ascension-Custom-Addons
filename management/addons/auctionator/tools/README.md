@@ -127,3 +127,21 @@ but a seeded base fact that real unscaled sales later re-confirmed keeps `seed =
 raises `n` (the vote path never clears the flag). Those are the `base.new.tested` bucket in the
 diff. The default union mode keeps them, which is one more reason not to reach for `--replace`
 without checking that bucket first.
+
+## sell-variant-smoke.lua — the one thing in here that is not vendor-seed tooling
+
+```
+lua5.1 management/addons/auctionator/tools/sell-variant-smoke.lua      # 27 assertions
+```
+
+An offline test of the same-name variant bucketing in `AtrSearch:AnalyzeResultsPage` — the loop
+that decides which of two items sharing one name (the rare and the epic `Bloodforged Imperial
+Jewel`) the SELL tab is looking at. It loads the real `AuctionatorScan.lua` under bare `lua5.1`
+with a dozen stubs and replays a page of listings in **both orders**.
+
+It exists because BACKLOG item 16's symptom had already escaped a fix once, and because its cause
+was listing order — which is precisely what reading the code kept getting wrong. Against the
+pre-fix source it fails 7 of its 27 assertions, and only in the rare-listed-first order; that
+asymmetry is the intermittency the owner reported.
+
+**Do not grow it into a client emulator.** It stubs what that one loop touches and nothing else.

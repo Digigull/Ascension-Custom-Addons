@@ -145,6 +145,11 @@ function AtrScan:Init (itemName)
 	self.itemName			= itemName;
 	self.variantQuality		= nil;		-- see the quality split in AtrSearch:ProcessBatch
 	self.itemLink			= nil;
+	self.itemQuality		= nil;		-- travels with itemLink; UpdateItemLink sets both.
+										-- Cleared here so a reused scan whose link
+										-- cannot be resolved cannot answer with the
+										-- PREVIOUS item's quality -- the batch loop
+										-- now bases its bucketing on this field.
 	self.texture            = nil;		-- vestigial: the texture-based variant split
 										-- that set it is gone (BACKLOG item 12
 										-- part 1) and nothing reads it
@@ -376,11 +381,23 @@ function AtrSearch:AnalyzeResultsPage()
 					self.items[baseName] = scn;
 				end
 
-				-- adopt the first quality this search sees as the primary bucket's;
-				-- Init clears it, so a scan reused from an earlier search cannot
-				-- leak a stale value in here
+				-- The primary bucket's quality comes from the item the scan is
+				-- ABOUT, not from whichever listing the auction house happened to
+				-- return first (BACKLOG item 16).  By the time a batch lands the
+				-- sell path has already pushed the real sell item's link in (item
+				-- 12 part 2 / item 15), so scn.itemQuality IS the variant the user
+				-- is holding.  Adopting the first listing's instead made the epic's
+				-- own bucket depend on listing order: with a rare listed first the
+				-- primary bucket became the RARE's, and the sell pane -- which
+				-- keeps showing that primary bucket -- priced and coloured the epic
+				-- as a rare.
+				--
+				-- Falls back to the listing's quality when the scan has no link of
+				-- its own, which is the old behaviour and is all a browse search
+				-- ever has.  Init clears both fields, so a scan reused from an
+				-- earlier search cannot leak a stale value in here.
 				if (scn.variantQuality == nil) then
-					scn.variantQuality = quality;
+					scn.variantQuality = scn.itemQuality or quality;
 				end
 
 				if (quality ~= nil and quality ~= scn.variantQuality) then
@@ -398,7 +415,22 @@ function AtrSearch:AnalyzeResultsPage()
 
 				scn:AddScanItem (name, count, buyoutPrice, owner, 1, curpage);
 				
-				if (scn.itemLink == nil or self.itemClass == nil) then
+				-- Take a listing's link only when this bucket needs one.  The old
+				-- condition tested `self.itemClass` -- a field AtrSearch does not
+				-- have, only AtrScan does -- so it was ALWAYS true: every listing
+				-- overwrote the scan's identity, leaving the bucket describing
+				-- whichever listing it saw LAST, and every one of them also wrote
+				-- the name-keyed link cache.  That is what turned an epic sell
+				-- item blue part-way through its own search (BACKLOG item 16).
+				--
+				-- Two cases genuinely need a listing's link: a bucket with no link
+				-- at all, and a VARIANT bucket, whose Init could only look the name
+				-- up in that same name-keyed cache and so starts out holding the
+				-- OTHER variant's link.  Both are self-limiting -- once the link's
+				-- quality matches the bucket's, this stops firing -- so the
+				-- correction still costs one comparison per listing, not a rewrite.
+				if (scn.itemLink == nil
+					or (scn.variantQuality ~= nil and scn.itemQuality ~= scn.variantQuality)) then
 					scn:UpdateItemLink (GetAuctionItemLink("list", x));
 				end
 
@@ -709,7 +741,7 @@ function AtrSearch:Finish()
 		local newprice = Atr_CalcNewDBprice (scn.itemName, scn.lowprices);
 		
 		if (newprice > 0) then
-			if (scn.itemQuality + 1 >= AUCTIONATOR_SCAN_MINLEVEL) then
+			if ((scn.itemQuality or 0) + 1 >= AUCTIONATOR_SCAN_MINLEVEL) then
 				-- The one writer that KNOWS its variant: after the quality split
 				-- (part 1) each bucket carries its own listing's link, so the price
 				-- lands in that variant's slot instead of overwriting the name.
