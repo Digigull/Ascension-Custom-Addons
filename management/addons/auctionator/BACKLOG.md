@@ -910,10 +910,54 @@ rather than set-merged (the Ledger's mail lesson, applied); rates are per elapse
 gap accumulates no observed time at all; and unwatching forgets the history. **Not verified in
 game.**
 
+### Group D shipped 2026-08-20 — "My trades", the half that is not an estimate
+
+A second view on the same tab, reached by a **Market / My trades** toggle at the top right, and
+`Atr_Ledger_ItemTotals` in `AuctionatorLedger.lua` behind it. **No new saved variable and no new
+capture** — the Ledger has recorded everything this needs since item 7 stage 2. Columns:
+Bought, Paid, Sold, Got, Margin, Sell-through, per item.
+
+**Two tables, not extra columns on one.** Every market column is inferred from listings that
+vanished between two scans; every column here is money that actually moved. A fact printed in the
+same row as an estimate reads as an estimate, so they are kept apart — and the toggle's two
+tooltips say which kind each view holds.
+
+**The design call that made it cheap: aggregate per item NAME, never per transaction.** A
+per-transaction margin needs each purchase paired to its delivery, which is item 9's unsolved
+problem — the mail carries no reference to the auction, and Postal delivers a batch at once.
+Total paid for X against total received for X needs no pairing, so D shipped without waiting on 9.
+
+Four judgements are in the code and worth having here too, because each one is a field that
+looked obvious and was wrong:
+
+- **Got is the invoice's bid minus the cut, not the mail's `money`.** A successful auction's mail
+  also hands back the deposit, so `money` would book your own deposit as profit. `money` is the
+  fallback where a mail carried no invoice.
+- **Paid comes from `won` rows**, which carry a buyer invoice — so a purchase made by hand in the
+  auction house counts, not only the ones the Buy tab drove. An item with no priced `won` row
+  falls back to its `buy` rows and is marked with a `*`. The two are never summed: an addon
+  purchase writes both.
+- **Deposits are never netted into the margin.** That is what avoids having to know whether a
+  sale's mail returns the deposit inside `money`, and a deposit on a listing still up is not lost
+  yet. They are their own figure in the totals line.
+- **Sell-through counts sold against sold + expired.** A cancelled listing is your verdict on the
+  price, not the market's, so it is on neither side.
+
+The totals line carries the window: the ledger prunes oldest-first at `ATR_LEDGER_MAX_ROWS`, so
+it reads `since <date>` rather than presenting a window as an all-time figure.
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each, unchanged), and a throwaway
+25-assertion check of `Atr_Ledger_ItemTotals` against hand-built rows — the deposit-inside-`money`
+case, the hand-bought item with no `buy` row, the intent fallback and its `*`, the no-invoice
+sale, sold-vs-expired, outstanding stock valued at the last ask, and an empty ledger. All passed
+first run; not kept, per the repo's tooling rule. **Not verified in game.** The checks are: the
+toggle switches both the headers and the rows, the Rescan button and the add/group controls
+disappear on the Ledger view, and a known flip's margin matches what you remember making.
+
 #### Still to come
 
-B2/B3 (recipe ranking, reagent pressure), C (price trend — needs the dated series), D (the Ledger
-views, nearly free now), A5/A6 (listing lifetime, undercut churn).
+B2/B3 (recipe ranking, reagent pressure), C (price trend — needs the dated series), A5/A6
+(listing lifetime, undercut churn).
 
 ### Original v1 suggestion, for the record
 
@@ -2449,13 +2493,13 @@ real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is u
 is left is follow-on work inside shipped items, two standing deferrals, and two questions that
 need no code at all. In order:
 
-1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1 and E2. Left, cheapest
-   first: **D** (the Ledger views, nearly free now that the Ledger holds the data), then **A5/A6**
-   (listing lifetime, undercut churn) and **B2/B3** (recipe ranking, reagent pressure), which are
-   arithmetic over data the scan already produces. **C** (price trend) ranks last of the four —
-   it needs a dated series that does not exist, so it is a writer plus a retention rule, and it
-   must be watchlist-scoped: the naive all-names version is several megabytes, immediately after
-   item 13 clawed back 384 KB.
+1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
+   all of **D**. Left: **A5/A6** (listing lifetime, undercut churn) and **B2/B3** (recipe ranking,
+   reagent pressure), which are arithmetic over data the scan already produces — B2 in particular
+   is `Atr_ProfSort_BuildOrder` surfaced rather than built. **C** (price trend) ranks last of the
+   three — it needs a dated series that does not exist, so it is a writer plus a retention rule,
+   and it must be watchlist-scoped: the naive all-names version is several megabytes, immediately
+   after item 13 clawed back 384 KB.
 2. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.

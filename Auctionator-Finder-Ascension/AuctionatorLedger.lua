@@ -21,10 +21,12 @@
 --                    (Auctionator.lua).  Carries the deposit, which has to be
 --                    read at CLICK time -- see Atr_Ledger_NotePostIntent.
 --
--- Still to come: the mail side (sale / expiry / cancellation), which needs the
--- mailbox, and the Ledger tab itself.  Rows accumulate from now regardless,
--- which is the point of landing the record first: a row written under the wrong
--- schema cannot be back-filled, and a row not written at all is gone.
+-- Both of those landed the same day: the mail side (sale / expiry / cancellation,
+-- swept off the mailbox) and the Ledger tab.  Rows accumulated from the first
+-- stage regardless, which was the point of landing the record before either of
+-- them: a row written under the wrong schema cannot be back-filled, and a row not
+-- written at all is gone.  What reads the rows back as money is
+-- Atr_Ledger_ItemTotals below, for the Analysis tab's second view (item 8, D).
 --
 -- THE ROW SHAPE is the expensive decision here, so it follows the four rules the
 -- backlog settled before any of this was written:
@@ -259,6 +261,151 @@ function Atr_Ledger_Summary (limit)
 	end
 
 	return n;
+end
+
+-- WHAT YOU ACTUALLY MADE, PER ITEM -----------------------------------------
+--
+-- BACKLOG item 8, group D.  Everything else the Analysis tab shows is inferred
+-- from listings that vanished between two scans; these are the only numbers on
+-- it that are not estimates, because they are money that actually moved.
+--
+-- AGGREGATED PER ITEM NAME, deliberately, and never per transaction.  A
+-- per-transaction margin needs each purchase paired to its delivery, and the
+-- mail carries no reference to the auction it came from -- that is item 9's
+-- unsolved problem, and a Postal "open all" delivers a batch at once, which is
+-- exactly when the ordering is least reliable.  Total paid for X against total
+-- received for X needs no pairing at all, so this sidesteps it rather than
+-- waiting on it.
+--
+-- WHERE EACH NUMBER COMES FROM, and why not the obvious field:
+--
+--   GOT      the invoice's bid MINUS the auction house's cut, not the mail's
+--            `money`.  The header money is what lands in your bags, which on a
+--            successful auction also carries the returned deposit -- counting
+--            that as proceeds would report your own deposit back as profit.
+--            `money` is the fallback, for a mail that carried no invoice.
+--   PAID     `won` rows, which are deliveries carrying a BUYER invoice, so a
+--            purchase made by hand in the auction house window is counted too
+--            and not just the ones the buy loop drove.  An item with no priced
+--            `won` row falls back to its `buy` rows -- what the loop intended --
+--            so a mail sweep that missed its window understates rather than
+--            disappears.  The two are never summed: an addon purchase writes
+--            BOTH a buy and a won row, and adding them would double it.
+--   DEPOSITS never netted into the margin.  Whether a sale's mail hands the
+--            deposit back inside `money` is exactly the question the
+--            bid-minus-cut rule above avoids having to answer, and a deposit on
+--            a listing that is still up is not lost yet either way.
+--
+-- SELL-THROUGH counts sold against sold + expired.  A cancelled listing is not
+-- the market's verdict on your price, it is yours, so it is not in the
+-- denominator.
+--
+-- The window is whatever the ledger still holds: rows are pruned oldest-first at
+-- ATR_LEDGER_MAX_ROWS, so `from` is returned with the totals and the tab says so
+-- rather than presenting a window as an all-time figure.
+function Atr_Ledger_ItemTotals ()
+
+	local db   = Atr_Ledger_DB ();
+	local rows = db.rows;
+
+	local byName = {};
+	local list   = {};
+
+	local function rec (name)
+
+		if (name == nil or name == "") then return nil; end
+
+		local r = byName[name];
+		if (r == nil) then
+			r = { name = name,
+				  boughtQty = 0, paid = 0, intentQty = 0, intentPaid = 0,
+				  soldQty = 0, got = 0,
+				  postedQty = 0, deposits = 0, expiredQty = 0, cancelledQty = 0 };
+			byName[name] = r;
+			tinsert (list, r);
+		end
+		return r;
+	end
+
+	local i;
+	for i = 1, #rows do
+
+		local row = rows[i];
+		local r   = rec (row.name);
+
+		if (r) then
+
+			local qty = tonumber (row.qty) or 0;
+
+			if (row.src == "buy") then
+				r.intentQty  = r.intentQty + qty;
+				r.intentPaid = r.intentPaid + (tonumber (row.unit) or 0) * qty;
+				if (r.link == nil) then r.link = row.link; end
+
+			elseif (row.src == "won") then
+				r.boughtQty = r.boughtQty + qty;
+				r.paid      = r.paid + (tonumber (row.bid) or 0);
+				if (r.link == nil) then r.link = row.link; end
+
+			elseif (row.src == "post") then
+				r.postedQty = r.postedQty + qty;
+				r.deposits  = r.deposits + (tonumber (row.deposit) or 0);
+				if (row.unit) then r.lastPostUnit = tonumber (row.unit); end
+				if (r.link == nil) then r.link = row.link; end
+
+			elseif (row.src == "sale") then
+				r.soldQty = r.soldQty + qty;
+				if (row.bid and row.cut) then
+					r.got = r.got + (row.bid - row.cut);
+				else
+					r.got = r.got + (tonumber (row.money) or 0);
+				end
+				if (r.link == nil) then r.link = row.link; end
+
+			elseif (row.src == "expire") then
+				r.expiredQty = r.expiredQty + qty;
+
+			elseif (row.src == "cancel") then
+				r.cancelledQty = r.cancelledQty + qty;
+			end
+		end
+	end
+
+	local tot = { paid = 0, got = 0, margin = 0, deposits = 0, tied = 0, tiedQty = 0,
+				  rows = #rows, items = #list, from = rows[1] and rows[1].t or nil };
+
+	for i = 1, #list do
+
+		local r = list[i];
+
+		-- a won row with no invoice prices at nothing, so "we saw a delivery" is
+		-- not on its own a reason to believe the intent record is the worse one
+		if (r.paid <= 0 and r.intentPaid > 0) then
+			r.paid			= r.intentPaid;
+			r.boughtQty		= r.intentQty;
+			r.paidFromIntent = true;
+		end
+
+		r.margin = r.got - r.paid;
+
+		local resolved = r.soldQty + r.expiredQty;
+		if (resolved > 0) then r.sellThrough = r.soldQty / resolved; end
+
+		r.outstandingQty = r.postedQty - r.soldQty - r.expiredQty - r.cancelledQty;
+		if (r.outstandingQty < 0) then r.outstandingQty = 0; end
+		r.tied = r.outstandingQty * (r.lastPostUnit or 0);
+
+
+		tot.paid		= tot.paid + r.paid;
+		tot.got			= tot.got + r.got;
+		tot.deposits	= tot.deposits + r.deposits;
+		tot.tied		= tot.tied + r.tied;
+		tot.tiedQty		= tot.tiedQty + r.outstandingQty;
+	end
+
+	tot.margin = tot.got - tot.paid;
+
+	return list, tot;
 end
 
 -- Global so it is macro-able, and because the tab will want it later.

@@ -42,7 +42,17 @@
 --     numNilOwners for this reason), so unknown sellers are tracked apart rather
 --     than collapsed into one.
 --
--- Storage: AUCTIONATOR_ANALYSIS, account-wide, declared in the .toc.
+-- TWO VIEWS OVER ONE TABLE (group D, 2026-08-20).  Everything above is an
+-- ESTIMATE inferred from listings that vanished.  The second view -- "My trades"
+-- -- is the opposite kind of number: your own paid, got, margin and sell-through
+-- per item, aggregated out of the Ledger by Atr_Ledger_ItemTotals, which is money
+-- that actually moved.  They are deliberately two tables rather than extra
+-- columns on one: a fact printed in the same row as an estimate reads as an
+-- estimate.  This file owns only the view; the arithmetic and the reasoning
+-- behind each figure live with the rows, in AuctionatorLedger.lua.
+--
+-- Storage: AUCTIONATOR_ANALYSIS, account-wide, declared in the .toc.  The Ledger
+-- view adds none of its own -- it is a reader of AUCTIONATOR_LEDGER.
 
 local addonName, addonTable = ...;
 local zc = addonTable and addonTable.zc or _G.zc;
@@ -406,23 +416,60 @@ local AN_COLS = {
 	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise." },
 };
 
+-- THE SECOND VIEW (BACKLOG item 8, group D): the same table, over the Ledger.
+--
+-- Every column above is inferred from listings that vanished between two scans.
+-- Every column here is money that actually moved, which is why the two are not
+-- mixed into one table: a row of estimates beside a row of facts, in matching
+-- type, invites reading them as the same kind of number.  The panel, the scroll
+-- frame and the rows are shared because they are the expensive part; only the
+-- columns and the row builder differ.
+--
+-- Keys are distinct from the market view's on purpose -- each row Button carries
+-- BOTH sets of FontStrings and shows one of them -- so nothing has to be
+-- re-anchored when the view changes.
+local AN_TCOLS = {
+	{ key = "titem",	head = "Item",		w = 184, grow = 3					},
+	{ key = "tbought",	head = "Bought",	w = 54,  grow = 0, just = "CENTER"	},
+	{ key = "tpaid",	head = "Paid",		w = 84,  grow = 1, just = "RIGHT",
+	  tip = "What you paid, from the delivery's own invoice -- so a purchase made by hand in the auction house counts too, not just ones the Buy tab drove. A * marks an item priced from what the buy loop intended, because no delivery invoice was seen for it." },
+	{ key = "tsold",	head = "Sold",		w = 54,  grow = 0, just = "CENTER"	},
+	{ key = "tgot",		head = "Got",		w = 84,  grow = 1, just = "RIGHT",
+	  tip = "The gold the sale actually earned: the invoice's winning bid less the auction house's cut. A returned deposit is not counted as profit." },
+	{ key = "tmargin",	head = "Margin",	w = 96,  grow = 3, just = "RIGHT",
+	  tip = "Got minus Paid, over the rows the ledger still holds -- not an estimate. Deposits are not netted in; they are in the totals line below, because a deposit on a listing that is still up is not lost yet." },
+	{ key = "tthru",	head = "Sell-through", w = 78, grow = 1, just = "CENTER",
+	  tip = "Of the items whose listings resolved, how many sold rather than expired. Cancelling your own listing is your verdict, not the market's, so it counts on neither side." },
+};
+
+-- "market" (the watchlist, above) or "trades" (the Ledger, below).
+local gAn_View = "market";
+
+-- Widgets that belong to the market view only, filled in by Atr_An_Init and
+-- hidden wholesale when the other view is up.
+local gAn_MarketOnly = {};
+
 -- Spread the columns over a row `rowW` wide: each keeps its minimum width and
 -- the slack is handed out by `grow`, with the rounding remainder going to the
 -- last growing column so the right edge lands exactly on the delete lane.
-local function An_LayoutCols (rowW)
+--
+-- It takes the column table rather than reading AN_COLS because there are two of
+-- them now (item 8 group D), laid out against the same row width so the two
+-- views' right edges land in the same place.
+local function An_LayoutCols (cols, rowW)
 
 	local base, grow, last = 0, 0, nil;
 	local i, c;
-	for i, c in ipairs (AN_COLS) do
+	for i, c in ipairs (cols) do
 		base = base + c.w;
 		if ((c.grow or 0) > 0) then grow = grow + c.grow; last = i; end
 	end
 
-	local slack = rowW - AN_LEAD - AN_DEL_LANE - AN_COL_GAP * (#AN_COLS - 1) - base;
+	local slack = rowW - AN_LEAD - AN_DEL_LANE - AN_COL_GAP * (#cols - 1) - base;
 	if (slack < 0 or grow == 0) then slack = 0; end		-- narrow window: minimums win
 
 	local x, handed = AN_LEAD, 0;
-	for i, c in ipairs (AN_COLS) do
+	for i, c in ipairs (cols) do
 		local add = 0;
 		if (slack > 0 and (c.grow or 0) > 0) then
 			if (i == last) then
@@ -496,9 +543,186 @@ local function An_Rows ()
 	return out;
 end
 
+-- THE LEDGER VIEW (BACKLOG item 8, group D) --------------------------------
+
+-- A margin with its sign kept.  An_Money prints a grey dash for zero, which is
+-- right for "no price known" and wrong for "these came out exactly even", so a
+-- real zero is printed as a zero.
+local function An_Signed (v)
+
+	if (v == nil) then return "|cff666666--|r"; end
+	if (v == 0) then return "|cffffffff0|r"; end
+	if (v > 0) then return "|cff40ff40"..An_Money (v).."|r"; end
+	return "|cffff6060-"..An_Money (-v).."|r";
+end
+
+-- Best margin first.  Items that have only ever been LISTED sort under the ones
+-- that have actually traded: their margin is a true zero rather than an unknown,
+-- but ranking them among real results would push what you made off the top of
+-- the table.
+local function An_TradeRows ()
+
+	if (type (Atr_Ledger_ItemTotals) ~= "function") then return {}, nil; end
+
+	local list, tot = Atr_Ledger_ItemTotals ();
+
+	table.sort (list, function (a, b)
+		local ta = (a.boughtQty > 0 or a.soldQty > 0);
+		local tb = (b.boughtQty > 0 or b.soldQty > 0);
+		if (ta ~= tb) then return ta; end
+		if (a.margin ~= b.margin) then return a.margin > b.margin; end
+		return a.name < b.name;
+	end);
+
+	return list, tot;
+end
+
+local function An_TradeSummary (tot)
+
+	if (tot == nil or tot.rows == 0) then
+		return AZT("The ledger is empty. It fills itself from your auction house buys, posts and mail.");
+	end
+
+	local s = string.format (AZT("%d items -- paid %s, got %s, margin %s"),
+				tot.items, An_Money (tot.paid), An_Money (tot.got), An_Signed (tot.margin));
+
+	if (tot.tiedQty > 0) then
+		s = s..string.format (AZT("  |  %s still listed (%d)"), An_Money (tot.tied), tot.tiedQty);
+	end
+
+	if (tot.deposits > 0) then
+		s = s..string.format (AZT("  |  deposits %s"), An_Money (tot.deposits));
+	end
+
+	-- The ledger prunes oldest-first, so these are totals over a WINDOW. Saying
+	-- when it starts is the difference between a number and a claim.
+	if (tot.from and date) then
+		s = s..string.format (AZT("  |  since %s"), date ("%b %d", tot.from));
+	end
+
+	return s;
+end
+
+local function An_RedisplayTrades ()
+
+	local rows, tot = An_TradeRows ();
+	local n = #rows;
+
+	if (FauxScrollFrame_Update) then
+		FauxScrollFrame_Update (Atr_An_ScrollFrame, n, AN_NUM_ROWS, AN_ROW_H);
+	end
+
+	local offset = (FauxScrollFrame_GetOffset and FauxScrollFrame_GetOffset (Atr_An_ScrollFrame)) or 0;
+
+	local i;
+	for i = 1, AN_NUM_ROWS do
+
+		local line = _G["Atr_An_Row"..i];
+		if (line) then
+
+			local r = rows[offset + i];
+
+			if (r == nil) then
+				line:Hide();
+			else
+				line.titem:SetText (r.name);
+
+				line.tbought:SetText (r.boughtQty > 0 and tostring (r.boughtQty) or "|cff666666--|r");
+				line.tsold:SetText   (r.soldQty   > 0 and tostring (r.soldQty)   or "|cff666666--|r");
+
+				-- the star is the fallback saying so: priced from what the buy
+				-- loop intended, because no delivery invoice was ever seen
+				if (r.paid > 0) then
+					line.tpaid:SetText (An_Money (r.paid)..(r.paidFromIntent and "|cff888888*|r" or ""));
+				else
+					line.tpaid:SetText ("|cff666666--|r");
+				end
+
+				line.tgot:SetText (r.got > 0 and An_Money (r.got) or "|cff666666--|r");
+
+				if (r.paid == 0 and r.got == 0) then
+					line.tmargin:SetText ("|cff666666--|r");
+				else
+					line.tmargin:SetText (An_Signed (r.margin));
+				end
+
+				if (r.sellThrough == nil) then
+					line.tthru:SetText ("|cff666666--|r");
+				else
+					line.tthru:SetText (string.format ("%d%%|cff888888 %d/%d|r",
+						math.floor (r.sellThrough * 100 + 0.5),
+						r.soldQty, r.soldQty + r.expiredQty));
+				end
+
+				line.rec = r;
+				line:Show();
+			end
+		end
+	end
+
+	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_TradeSummary (tot)); end
+end
+
+-- Swap the two views over the shared table.  Nothing is re-anchored: every row
+-- already carries both sets of cells and each header set has its own container,
+-- so this is Show and Hide only.
+function Atr_An_SetView (view)
+
+	if (view ~= "trades") then view = "market"; end
+	gAn_View = view;
+
+	local market = (view == "market");
+
+	local function vis (f, on)
+		if (f == nil) then return; end
+		if (on) then f:Show(); else f:Hide(); end
+	end
+
+	vis (Atr_An_HeadMarket, market);
+	vis (Atr_An_HeadTrades, not market);
+
+	local i;
+	for i = 1, #gAn_MarketOnly do vis (gAn_MarketOnly[i], market); end
+
+	for i = 1, AN_NUM_ROWS do
+		local line = _G["Atr_An_Row"..i];
+		if (line) then
+			local _, c;
+			for _, c in ipairs (AN_COLS)  do vis (line[c.key], market); end
+			for _, c in ipairs (AN_TCOLS) do vis (line[c.key], not market); end
+			vis (line.del, market);
+		end
+	end
+
+	-- the active view's button is the disabled one: the other is the thing left
+	-- to press, which is what a button should be
+	if (Atr_An_ViewMarket and Atr_An_ViewMarket.Enable) then
+		if (market) then Atr_An_ViewMarket:Disable(); else Atr_An_ViewMarket:Enable(); end
+	end
+	if (Atr_An_ViewTrades and Atr_An_ViewTrades.Enable) then
+		if (market) then Atr_An_ViewTrades:Enable(); else Atr_An_ViewTrades:Disable(); end
+	end
+
+	-- a rescan run belongs to the watchlist, and its Stop button has just gone
+	if (not market) then Atr_An_RefreshStop (true); end
+
+	-- Back to the top.  The two views are different lengths, and an offset left
+	-- over from a scrolled watchlist lands past the end of a shorter ledger --
+	-- every row then draws empty, which reads as "no trades" rather than as a
+	-- scroll position.  The bar has to be moved as well as the offset: it is what
+	-- the offset is read back from.
+	if (FauxScrollFrame_SetOffset) then FauxScrollFrame_SetOffset (Atr_An_ScrollFrame, 0); end
+	local bar = _G["Atr_An_ScrollFrameScrollBar"];
+	if (bar and bar.SetValue) then bar:SetValue (0); end
+
+	Atr_An_Redisplay ();
+end
+
 function Atr_An_Redisplay ()
 
 	if (not Atr_An_Panel or not Atr_An_Panel:IsShown()) then return; end
+
+	if (gAn_View == "trades") then return An_RedisplayTrades (); end
 
 	local rows = An_Rows ();
 	local n    = #rows;
@@ -1251,7 +1475,8 @@ function Atr_An_Init ()
 	-- beyond it, and 4 more keeps it off the backdrop's edge.
 	local scrollW = panelW - AN_HEAD_X0 - AN_SB_LANE - 4;
 	AN_ROW_W = scrollW;
-	An_LayoutCols (AN_ROW_W);
+	An_LayoutCols (AN_COLS,  AN_ROW_W);
+	An_LayoutCols (AN_TCOLS, AN_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
 	bg:SetTexture (0, 0, 0, 0.85);
@@ -1330,35 +1555,50 @@ function Atr_An_Init ()
 	-- Headers: same x, width and justification as the cells beneath them.  They
 	-- sit at -84, not -74: the group dropdown's frame art hangs well below its
 	-- own anchor and was all but touching them.
-	local c;
-	for _, c in ipairs (AN_COLS) do
+	--
+	-- Each view's headers go in a container of their own, laid over the panel so
+	-- the offsets below are unchanged, and the view switch is then one Show and
+	-- one Hide rather than a walk over two lists of FontStrings and hit frames.
+	local function headerSet (name, cols)
 
-		local fs = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
-		fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.cx, -84);
-		fs:SetWidth (c.cw);
-		fs:SetJustifyH (c.just or "LEFT");
-		fs:SetText (AZT (c.head));
+		local box = CreateFrame ("Frame", name, panel);
+		box:SetAllPoints (panel);
 
-		-- A FontString cannot take scripts, so a column with something to explain
-		-- gets an invisible hit frame over its header.  It stops above the scroll
-		-- frame (-102) so it cannot eat a click meant for a row.
-		if (c.tip) then
-			local col = c;
-			local hit = CreateFrame ("Frame", nil, panel);
-			hit:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.cx, -82);
-			hit:SetSize (col.cw, 16);
-			hit:EnableMouse (true);
-			hit:SetScript ("OnEnter", function (self)
-				if (GameTooltip) then
-					GameTooltip:SetOwner (self, "ANCHOR_BOTTOMRIGHT");
-					GameTooltip:SetText (AZT (col.head), 1, 1, 1);
-					GameTooltip:AddLine (AZT (col.tip), 0.8, 0.8, 0.8, true);
-					GameTooltip:Show();
-				end
-			end);
-			hit:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+		local c;
+		for _, c in ipairs (cols) do
+
+			local fs = box:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+			fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.cx, -84);
+			fs:SetWidth (c.cw);
+			fs:SetJustifyH (c.just or "LEFT");
+			fs:SetText (AZT (c.head));
+
+			-- A FontString cannot take scripts, so a column with something to explain
+			-- gets an invisible hit frame over its header.  It stops above the scroll
+			-- frame (-102) so it cannot eat a click meant for a row.
+			if (c.tip) then
+				local col = c;
+				local hit = CreateFrame ("Frame", nil, box);
+				hit:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.cx, -82);
+				hit:SetSize (col.cw, 16);
+				hit:EnableMouse (true);
+				hit:SetScript ("OnEnter", function (self)
+					if (GameTooltip) then
+						GameTooltip:SetOwner (self, "ANCHOR_BOTTOMRIGHT");
+						GameTooltip:SetText (AZT (col.head), 1, 1, 1);
+						GameTooltip:AddLine (AZT (col.tip), 0.8, 0.8, 0.8, true);
+						GameTooltip:Show();
+					end
+				end);
+				hit:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+			end
 		end
+
+		return box;
 	end
+
+	headerSet ("Atr_An_HeadMarket", AN_COLS);
+	headerSet ("Atr_An_HeadTrades", AN_TCOLS);
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
 	scroll:SetPoint ("TOPLEFT", AN_HEAD_X0, -102);
@@ -1380,8 +1620,18 @@ function Atr_An_Init ()
 		line:SetSize (AN_ROW_W, AN_ROW_H);
 		line:SetPoint ("TOPLEFT", 0, -(i - 1) * AN_ROW_H);
 
+		-- both views' cells, on every row: the keys do not collide and only one
+		-- set is ever shown, which is what makes the switch free of re-anchoring
 		local cc;
 		for _, cc in ipairs (AN_COLS) do
+			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+			fs:SetPoint ("LEFT", cc.cx, 0);
+			fs:SetWidth (cc.cw);
+			fs:SetJustifyH (cc.just or "LEFT");
+			line[cc.key] = fs;
+		end
+
+		for _, cc in ipairs (AN_TCOLS) do
 			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
 			fs:SetPoint ("LEFT", cc.cx, 0);
 			fs:SetWidth (cc.cw);
@@ -1396,13 +1646,17 @@ function Atr_An_Init ()
 		del:SetScript ("OnClick", function ()
 			if (line.rec) then Atr_An_Unwatch (line.rec.name); Atr_An_Redisplay (); end
 		end);
+		line.del = del;		-- unwatching is the market view's action, not the Ledger's
 
 		-- the item's own tooltip, the way the Ledger's rows do it.  A watch entry
 		-- stores only a name, so the link comes from the shared cache -- which
 		-- means no tooltip until something has seen the item, and that is better
 		-- than inventing a link from a name.
 		line:SetScript ("OnEnter", function (self)
-			local link = self.rec and Atr_GetItemLink and Atr_GetItemLink (self.rec.name);
+			-- a ledger row carries the real link, which on a same-name variant is
+			-- the exact item; a watch entry stores only a name, so that one still
+			-- goes through the shared cache
+			local link = self.rec and (self.rec.link or (Atr_GetItemLink and Atr_GetItemLink (self.rec.name)));
 			if (link and GameTooltip) then
 				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
 				GameTooltip:SetHyperlink (link);
@@ -1414,10 +1668,16 @@ function Atr_An_Init ()
 		line:Hide();
 	end
 
-	-- One short line -- the watched count -- so it no longer needs a wrap width
-	-- to keep it out from under the Rescan button.
+	-- The market view puts one short line here -- the watched count -- and needed
+	-- no wrap width for it.  The Ledger view's totals line is long (paid, got,
+	-- margin, what is still listed, deposits, and the window they cover), so the
+	-- width is back: without it a wide total runs off the panel's right edge
+	-- rather than wrapping.  It cannot collide with the Rescan button the way the
+	-- original wall of text did, because that button is hidden in the view that
+	-- writes the long line.
 	local summary = panel:CreateFontString ("Atr_An_Summary", "ARTWORK", "GameFontNormalSmall");
 	summary:SetPoint ("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 34);
+	summary:SetWidth (panelW - 60);
 	summary:SetJustifyH ("LEFT");
 	summary:SetText ("");
 
@@ -1441,6 +1701,56 @@ function Atr_An_Init ()
 	progress:SetPoint ("RIGHT", refresh, "LEFT", -8, 0);
 	progress:SetJustifyH ("RIGHT");
 	progress:SetText ("");
+
+	-- THE VIEW TOGGLE (BACKLOG item 8, group D).
+	--
+	-- Top right, which is the one part of the control row that is empty: the add
+	-- box, the group dropdown and the new-group box already run from x=72 to
+	-- x=550, and the panel is wider than that on every window this addon has
+	-- been measured on.  Anchored to the panel's own TOPRIGHT rather than a fixed
+	-- x for the reason the panel width itself is measured -- 768 is not the only
+	-- auction house.
+	local function viewButton (name, label, view, tipTitle, tipBody)
+
+		-- 72 and not 80: on Blizzard's 768 window the panel is 746 wide, so the
+		-- pair starts at x=572 against the new-group box's right edge at 550.
+		-- At 80 apiece that clearance is 6px, which is a collision on the first
+		-- window that is narrower than the one it was measured on.
+		local b = CreateFrame ("Button", name, panel, "UIPanelButtonTemplate");
+		b:SetSize (72, 22);
+		b:SetText (AZT (label));
+		b:SetNormalFontObject ("GameFontNormalSmall");
+		b:SetHighlightFontObject ("GameFontHighlightSmall");
+		b:SetScript ("OnClick", function () Atr_An_SetView (view); end);
+		b:SetScript ("OnEnter", function (self)
+			if (GameTooltip) then
+				GameTooltip:SetOwner (self, "ANCHOR_LEFT");
+				GameTooltip:SetText (AZT (tipTitle), 1, 1, 1);
+				GameTooltip:AddLine (AZT (tipBody), 0.8, 0.8, 0.8, true);
+				GameTooltip:Show();
+			end
+		end);
+		b:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+		return b;
+	end
+
+	local vTrades = viewButton ("Atr_An_ViewTrades", "My trades", "trades",
+		"What you actually made",
+		"Your own buys and sales out of the ledger: paid, got, margin and sell-through, per item. The only numbers on this tab that are not estimates.");
+	vTrades:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -26, -50);
+
+	local vMarket = viewButton ("Atr_An_ViewMarket", "Market", "market",
+		"What the market is doing",
+		"The watched items: how many sellers, how fast listings disappear, and what that is worth per day. Estimates, from scanning.");
+	vMarket:SetPoint ("RIGHT", vTrades, "LEFT", -4, 0);
+
+	-- Everything that only makes sense against the watchlist.  The Ledger view
+	-- has nothing to add an item to, no groups to filter by and nothing to
+	-- rescan, so these go away wholesale rather than sitting there inert.
+	gAn_MarketOnly = { addLabel, addBox, addBtn, grpLabel, newGrp, refresh, progress, _G["Atr_An_GroupDD"] };
+
+	Atr_An_SetView ("market");
 
 	-- BUY TAB (BACKLOG item 18, corrected in 19): two buttons on the item view.
 	--
@@ -1527,6 +1837,11 @@ if (SlashCmdList) then
 			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
 		elseif (cmd == "group" and rest ~= "") then
 			Atr_An_AddGroup (rest);
+		elseif (cmd == "trades" or cmd == "market") then
+			-- the two buttons do this; the command exists because a button on this
+			-- tab has been reported dead three times (item 22) and a second way in
+			-- costs two lines
+			Atr_An_SetView (cmd);
 		elseif (cmd == "diag") then
 
 			-- THE LAST RESORT, and the reason is on the record: the Buy tab's
@@ -1584,7 +1899,7 @@ if (SlashCmdList) then
 			end
 		else
 			if (zc and zc.msg_atr) then
-				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  menu [item name]  |  diag"));
+				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  menu [item name]  |  diag"));
 			end
 		end
 		Atr_An_Redisplay ();
