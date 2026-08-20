@@ -2929,7 +2929,7 @@ most open questions and needs no code. The file is the **account-level** one —
 copy; `tools/README.md` explains why and how to take one cleanly (fully exit the client first,
 or the last session's learning is missing).
 
-> **Take the file named after the addon folder, and no other.** This fork declares all 35 of its
+> **Take the file named after the addon folder, and no other.** This fork declares all 38 of its
 > saved variables in one `.toc`, so **everything it owns is in `Auctionator-Finder-Ascension.lua`**
 > — there is no companion file. A `SavedVariables` folder that has been through a few installs
 > can also hold `Auctionator.lua`, `Auctionator_Price_Database.lua` and

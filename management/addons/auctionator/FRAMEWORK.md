@@ -137,22 +137,29 @@ Everything awkward about the SELL tab follows from this:
   zone and the Ignore button are built in Lua rather than XML (`:2443`, `:1652`) — both say so.
 - `Atr_Sell_ReflowControls` exists because a *hidden* frame still occupies its anchor.
 
-### World 2 — own panel (local: Finder, Bazaar)
+### World 2 — own panel (local: Finder, Bazaar, Ledger, Analysis)
 
-`AuctionatorFinder.lua:3869` and `AuctionatorBazaar.lua:1382` each `CreateFrame` their **own**
-panel parented to `AuctionFrame`, and build every widget in Lua. They share nothing with the
-upstream tabs and need no save/restore dance.
+`AuctionatorFinder.lua:3869`, `AuctionatorBazaar.lua:1382`, `AuctionatorLedger.lua` and
+`AuctionatorAnalysis.lua` each `CreateFrame` their **own** panel parented to `AuctionFrame`, and
+build every widget in Lua. They share nothing with the upstream tabs and need no save/restore
+dance.
 
 > **Rule for new work: build in World 2.** New UI gets its own panel, created in Lua, in its own
-> file. The two biggest local features both did this and neither has the SELL tab's problems.
+> file. The four local tabs all did this and none has the SELL tab's problems.
 > Only touch World 1 when the change is *to* an upstream tab — which, in the backlog, is item 1
 > and nothing else.
+
+The Analysis tab is the furthest this has been taken: **one panel, one table, three views** over
+different data (market estimates, the Ledger, the crafting ranking), swapped by Show/Hide rather
+than rebuilt. §8 has the recipe.
 
 ---
 
 ## 5. Where the data lives
 
-17 account-wide saved variables and 18 per-character. The ones that matter:
+19 account-wide saved variables and 19 per-character — every one declared in this fork's own
+`.toc`, which is why a dump is a single file (`BACKLOG.md` says why that matters). The ones that
+matter:
 
 | Variable | Shape | Written by |
 |---|---|---|
@@ -165,11 +172,23 @@ upstream tabs and need no save/restore dance.
 | `AUCTIONATOR_FINDER_SETTINGS` | Finder options, plus `statKeys` = set of every stat key ever seen on gear | Finder + options panel |
 | `AUCTIONATOR_ITEM_LOCATIONS` | who owns what, where | `FinderItemCount` |
 | `AUCTIONATOR_LEDGER` | `{ ver, rows = { {t, src, who, name, link, id, qty, unit, …} } }` — what you bought and listed | `AuctionatorLedger` (BACKLOG item 7) |
+| `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, low, id, …}}, ids = {[name]=itemID} }` — the watchlist and what scanning has learned about it | `AuctionatorAnalysis` (BACKLOG item 8) |
+
+`ids` is the odd one and worth knowing about: a **name → item ID** map, because a tooltip needs an
+ID and this tab is full of rows that only have a name (a watch entry, and every enchant recipe,
+which is filed under the scroll it sells as). It is *gated* to names the tab can draw, and most
+answers never reach it at all — see §6.
 
 ### The finding that matters most: there is no market price series
 
-This settles the open question hanging over backlog item 8 (Advisor), and it is worth stating
+This settled the open question hanging over backlog item 8 (Advisor), and it is worth stating
 flatly because three different variables *look* like they might answer it.
+
+**What item 8 did about it: it stopped asking.** The Analysis tab ships without a price series and
+without waiting for one — it counts what *disappears* between two scans instead, which is a
+question the existing data can answer, and it says out loud that the answer is an estimate. The
+series remains unbuilt and remains the blocker for the price-trend features (group C in the
+item); everything else in that item was built around it.
 
 **Confirmed on real data, 2026-08-19.** The first genuine dump of this addon's saved variables
 holds 5267 price rows of one plain number each, and 5267 mean rows carrying 8898 samples — every
@@ -240,6 +259,31 @@ historical lines, and the split is coherent rather than random:
 campaign to fix, but **new subsystems should take the `F`-surface route**, which the four newest
 files already model.
 
+### One function per view — how the Analysis tab reads everyone else's data
+
+The newest surface, and the cheapest one to copy. The Analysis tab owns **no data of its own**
+beyond its watchlist: each of its three views is one call into the subsystem that already holds
+the answer.
+
+| View | Call | Lives in |
+|---|---|---|
+| My trades | `Atr_Ledger_ItemTotals()` | `AuctionatorLedger.lua` |
+| Crafting | `Atr_Craft_ProfitRanking()` | `AuctionatorFinderProfession.lua` |
+| Market | `Atr_An_Stats(name)` | its own file — the one thing it does own |
+
+**The arithmetic lives with the data, not with the table that draws it.** That is what keeps the
+crafting view and the trade skill window's own profit sort from disagreeing: both go through
+`Atr_Craft_GetCraftCost` and the one reagent cascade above. A view that computed its own figures
+would be a second opinion nobody asked for.
+
+Two more globals belong to that tab and are worth knowing before adding anything that needs an
+item ID from a name: `Atr_An_IdForName(name)` and `Atr_An_LearnId(name, id)`
+(`AuctionatorAnalysis.lua`). The index behind them is assembled once per session out of tables the
+addon already keeps for other reasons — **every reagent of every harvested recipe carries an `id`
+and a `name`**, every ledger row carries both, and every observed watched item carries one — so
+most lookups cost nothing and need no capture. Only what cannot be answered that way is learned
+from a live link and saved (BACKLOG item 27).
+
 ### Localization
 
 `ZT()` (`AuctionatorLocalize.lua:32`) is the upstream wrapper. The Finder cluster uses `FT()`,
@@ -284,6 +328,27 @@ The Bazaar author tagged every one with `-- BAZAAR_TAB`, so the census is exact:
 
 Mechanical, but skip one and the symptom is remote from the cause. `grep -n BAZAAR_TAB
 Auctionator.lua` is the checklist; **tag the new sites the same way.**
+
+Two later tabs followed it exactly and are the worked examples to copy from: `-- LEDGER_TAB`
+(item 7) and `-- ANALYSIS_TAB` (item 8, 15 sites). `grep -n ANALYSIS_TAB Auctionator.lua` is the
+most recent census.
+
+### Adding a view to an existing own-panel tab
+
+The Analysis tab carries three views over one table and the panel, scroll frame and rows are
+shared, because they are the expensive part. What differs per view is a **column table** and a
+**row builder**, and adding a fourth would be:
+
+1. A `AN_*COLS` table: one entry per column with `key` (unique across every view — each row
+   Button carries every view's FontStrings and shows one set), `head`, a minimum width `w` and a
+   `grow` weight, an optional `tip`, and `val` for the sort.
+2. `An_LayoutCols(YOUR_COLS, AN_ROW_W)` in `Atr_An_Init`, plus a `headerSet` call and the cell
+   loop — all three already iterate a list of column tables.
+3. A `An_RedisplayYours()` and a branch in `Atr_An_Redisplay`.
+4. A view button, and the view's name added to `Atr_An_SetView`'s Show/Hide walk.
+
+Nothing is re-anchored on a switch: every row already holds every view's cells. That is the whole
+trick, and it is why the switch is Show and Hide only.
 
 ### Adding a sub-tab (the Current / Ledger strip)
 
@@ -384,6 +449,11 @@ a namespace, or touching upstream files that no backlog item needs.
 
 ## 11. Where the backlog lands
 
+**Snapshot, 2026-08-19, kept as the structural map rather than the status board.** Items 7 and 8
+have both shipped since — the Ledger and then the Analysis tab, the latter growing a crafting view
+(item 8's B2) and everything in items 24–27 on top. `BACKLOG.md`'s "Suggested order" is the live
+view of what is left; what this table is still good for is the *world* column and the file map.
+
 | # | Item | Files | World | Notes |
 |---|---|---|---|---|
 | 1 | SELL header icon → title hover | `Auctionator.lua:2335-2600`, `Auctionator.xml:768` | **1** | Only World 1 item. Easier after extraction #3 above. |
@@ -399,3 +469,8 @@ a namespace, or touching upstream files that no backlog item needs.
 Item 7 is the only one needing a genuinely new home, and the pattern for it is fully
 established: `AuctionatorLedger.lua`, own panel in Lua, `F` surface, own event frame, tagged
 `-- LEDGER_TAB` at every core touch-point.
+
+**That prediction held, twice.** Item 7 shipped exactly that way, and item 8 followed it again as
+`AuctionatorAnalysis.lua` — own panel, own file, tagged `-- ANALYSIS_TAB`, no upstream file
+edited. Item 8's "blocked on §5" note was the one thing that did not hold, and §5 above says why:
+it shipped by asking a different question rather than by waiting for the series.
