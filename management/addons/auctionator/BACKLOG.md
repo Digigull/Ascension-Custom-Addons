@@ -8,10 +8,13 @@ its findings go in a proper per-topic doc (the way `VENDOR-PRICE-RESEARCH.md` an
 Anchors are `file:line` at the time of writing and will drift; the symbol names next to them are
 the durable part.
 
-**Recorded 2026-08-21, seven items, nothing built yet.** Items 1, 4 and 7 are features with real
-depth; 2, 3, 5 and 6 are layout and wiring. Item 4 is the only one that may be a bug rather than a
-request, and it is written up as a diagnosis rather than a fix, because the write path it doubts
-turns out to exist.
+**Recorded 2026-08-21, seven items.** Items 1, 4 and 7 are features with real depth; 2, 3, 5 and 6
+are layout and wiring. Item 4 is the only one that may be a bug rather than a request, and it is
+written up as a diagnosis rather than a fix, because the write path it doubts turns out to exist.
+
+**Built 2026-08-21: items 1, 2, 3, 5, 6 and 7**, in three branches. **Item 4 is the one left**, and
+it is not blocked on code — it needs one `/atrpricedb status` reading from the owner to say whether
+the Buy tab's feed is switched off or arriving empty. None of the six has been seen in game.
 
 ---
 
@@ -228,7 +231,7 @@ and that comment needs updating in the same edit rather than left arguing for th
 
 ---
 
-## 6. "Full Scan..." and "Options" into the top-right corner
+## 6. "Full Scan..." and "Options" into the top-right corner — DONE
 
 **Asked (owner, 2026-08-21):** *"The Buy, Sell, and My Auctions tabs each have two small buttons in
 the upper right section, 'Full Scan...' and 'Options', I want to squeeze those buttons in the upper
@@ -252,9 +255,40 @@ restores widget geometry (`Atr_Sell_SaveGeom`), and anything moved into that reg
 checked against it. Also check `AuctionFrameCloseButton` and the money frame for collisions, and
 item 3 puts the Ledger's Clear button in the same corner on a different tab.
 
+### Built 2026-08-21
+
+`Atr_Sell_PlaceTopRightButtons` (`Auctionator.lua`), called from `Atr_Init` once the panel exists.
+Options sits at `("TOPRIGHT", AuctionFrame, "TOPRIGHT", -28, -46)` and Full Scan keeps its anchor to
+Options' left edge, so the pair travels together.
+
+**Three decisions, and the first is the one that would have gone wrong silently.**
+
+**It is placed in Lua, not in the XML.** The buttons anchor to `AuctionFrame`, which **does not
+exist when `Auctionator.xml` is parsed** — it arrives with `Blizzard_AuctionUI`, which is what calls
+`Atr_Init` in the first place. An XML anchor naming it would resolve against nothing. The XML
+anchors stay in place, with a comment saying they are overwritten, so the buttons are never
+unanchored in between.
+
+**Anchored to the window, not to the panel**, for the same reason item 5 had to measure the Bazaar:
+the shared panel carries Blizzard's 768px width and Ascension's window is wider, so the panel's
+right edge is not the window's.
+
+**`ATR_SELL_GEOM` was checked and neither button is in it**, which is the concern this item raised:
+the SELL tab's expanded layout neither saves nor restores them, so it cannot undo the placement, and
+one placement genuinely serves all three tabs — they are the same widget objects (`FRAMEWORK.md`
+§4).
+
+`(-28, -46)` is item 3's line for the Ledger's Clear button, so the two land on the same rule: clear
+of Blizzard's 32px close button above, short of the headings bar below. The visible label is still
+"Scan Categories...", which `AuctionatorFinderFullScan.lua` sets at load and this does not touch.
+
+**Verified:** `luac5.1 -p` and `ET.parse` clean, the four Auctionator suites still pass. **Not
+verified in game** — whether `(-28, -46)` clears the money frame on the Buy tab is the thing to look
+at first.
+
 ---
 
-## 7. Analysis right-click: "Add reagents list"
+## 7. Analysis right-click: "Add reagents list" — DONE
 
 **Asked (owner, 2026-08-21):** *"On the analysis tab, if you right click a craftable item, i want to
 have a new context option under Shopping with blue text that says 'Add reagents list' so that you
@@ -291,3 +325,46 @@ reagents will be added automatically."*
 reagents the plan says you are **short of** — the Reagents view already computes Need vs Have. The
 request says reagents, and reagents is the smaller, more predictable thing; note it here so the
 question is not rediscovered later.
+
+### Built 2026-08-21
+
+**A blue "Add reagents list" under Shopping**, and one new reader in the file that owns the recipes.
+
+**`Atr_Craft_ReagentList(link, name)`** (`AuctionatorFinderProfession.lua`) returns
+`{ {name, count}, ... }`, the yield, and a count of what it had to drop. It lives there rather than
+beside the menu for `FRAMEWORK.md` §6's reason: **the two harvests write two different record
+shapes** into `AUCTIONATOR_CRAFT_RECIPES` — the window harvest keys by the made item's ID with
+reagents carrying both an id and a name, the tooltip harvest keys by NAME with names only — and a
+caller reading that table itself would work against one and silently return nothing for the other.
+It resolves ID first then name, the same order `Atr_Craft_HasRecipe` uses, so the menu entry can
+never be offered for a recipe the action then cannot read.
+
+**On the four open decisions:**
+
+1. **No new row kind was needed.** The colour is embedded in the entry's own text
+   (`|cff40a0ff...|r`), which a FontString renders directly — so the renderer is untouched and no
+   fourth boolean joins `header`/`disabled`. The blue earns itself: every other entry in that
+   section files ONE item onto a list, and this one creates a list and fills it with several OTHER
+   items.
+2. **Omitted, not disabled**, exactly as the item argued — the entry is only built when
+   `Atr_Craft_ReagentList` actually returns something.
+3. **A second click tops up the existing list** and says so ("Topped up X: 2 added, 1 already on
+   it") rather than making a second list of the same name. Nothing is ever removed.
+4. **A reagent with no resolvable name is dropped and counted**, never left as an ID — a shopping
+   list is searched by name, so an ID entry is a row that can never match anything.
+
+**The trap that offline testing caught:** `Atr_SList.create` **sorts** the list table it inserts
+into, so the index a new list ends up at is not the end of the array. The action re-reads
+`Atr_Shop_UserLists()` after creating rather than assuming — without that, the reagents file into
+whichever list happened to sort into that slot.
+
+**Quantities are lost, and it is the shopping list's shape rather than a shortcut**: `Atr_SList`
+holds names, with nowhere to put "x12". The Reagents view is where counts live and it prices them;
+this is the shopping trip. On the question the item flagged for deciding early — reagents, or only
+what you are short of — this ships **reagents**, as asked.
+
+**Verified** offline: the existing `analysis-feed-smoke` harness plus 8 throwaway assertions over
+the new path — the entry appears for a craftable item and not otherwise, it is blue, the list is
+named after the item, it holds the three reagents rather than the item, and a second click neither
+duplicates the list nor doubles its contents (39 passed). The four shipped suites still pass and
+`luac5.1 -p` is clean. **Not verified in game.**

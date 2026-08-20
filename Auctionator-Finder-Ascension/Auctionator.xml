@@ -457,6 +457,13 @@
 				</Scripts>
 			</Button>
 
+			<!-- Options and Full Scan are PLACED IN LUA, by
+			     Atr_Sell_PlaceTopRightButtons (Auctionator.lua). They belong in the
+			     window's top-right corner (BACKLOG item 6), and AuctionFrame does not
+			     exist when this file is parsed, so an anchor naming it here would
+			     resolve against nothing. The anchors below are what the buttons are
+			     built with and are overwritten the moment the panel is created; they
+			     stay so the buttons are never unanchored. -->
 			<Button name="Auctionator1Button" inherits="UIPanelButtonTemplate" text="Options">
 				<Size><AbsDimension x="70" y="18"/>	</Size>
 				<Anchors><Anchor point="LEFT" relativeTo="Atr_Search_Button" relativePoint="RIGHT"><Offset><AbsDimension x="165" y="0"/></Offset></Anchor></Anchors>

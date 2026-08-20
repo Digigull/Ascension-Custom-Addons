@@ -620,6 +620,66 @@ function Atr_Craft_HasRecipe(link, name)
     return false;
 end
 
+-- THE REAGENTS FOR ONE ITEM, BY NAME (BACKLOG item 7, 2026-08-21).
+--
+-- Returns { {name=, count=}, ... } and the recipe's yield, or nil when nothing
+-- here makes this item.  The Analysis tab's "Add reagents list" is the caller:
+-- it turns the answer into a shopping list, so it wants NAMES -- the shopping
+-- list is name-keyed like every other price store in this addon.
+--
+-- Lives here rather than in the menu that uses it for the reason FRAMEWORK.md
+-- section 6 gives: the two harvests write two different record shapes into
+-- AUCTIONATOR_CRAFT_RECIPES and only this file should know that.  The window
+-- harvest keys by the made item's ID and stores reagents with an id AND a name;
+-- the tooltip harvest keys by the made item's NAME and stores names only.  A
+-- caller reading the table directly would work against one and silently return
+-- nothing for the other.
+--
+-- A REAGENT WITH NO NAME IS DROPPED, not guessed at and not left as an ID.  The
+-- window harvest only stores a reagent it could name at the time, so this is the
+-- rare case of a record written before the client had the item cached -- and a
+-- shopping list is searched by name, so an entry that is not one is a row that
+-- can never match anything.  The count comes back so the caller can say how many
+-- it lost rather than quietly shortening the list.
+function Atr_Craft_ReagentList(link, name)
+
+    if (AUCTIONATOR_CRAFT_RECIPES == nil) then return nil; end
+
+    local itemID;
+    if (type(link) == "number") then
+        itemID = link;
+    elseif (link and zc and zc.ItemIDfromLink) then
+        itemID = tonumber((zc.ItemIDfromLink(link)));   -- extra parens: returns 3 values
+    end
+
+    if (name == nil and link and type(link) ~= "number" and GetItemInfo) then
+        name = GetItemInfo(link);
+    end
+
+    -- ID first, then name: the same order Atr_Craft_HasRecipe resolves in, so
+    -- the menu entry can never offer a list for a recipe this cannot then read.
+    local rec = (itemID and AUCTIONATOR_CRAFT_RECIPES[itemID]) or (name and AUCTIONATOR_CRAFT_RECIPES[name]) or nil;
+
+    if (type(rec) ~= "table" or type(rec.reagents) ~= "table") then return nil; end
+
+    local out, dropped = {}, 0;
+
+    for _, r in ipairs(rec.reagents) do
+        local rname = r.name;
+        if (rname == nil and r.id and GetItemInfo) then rname = GetItemInfo(r.id); end
+
+        if (type(rname) == "string" and rname ~= "") then
+            table.insert(out, { name = rname, count = tonumber(r.count) or 1 });
+        else
+            dropped = dropped + 1;
+        end
+    end
+
+    if (#out == 0) then return nil, nil, dropped; end
+
+    return out, (tonumber(rec.made) or 1), dropped;
+end
+
 -- Split a tooltip line into reagent {name, count} pairs, or nil if the line is
 -- not a reagent list.  Recipe tooltips end with a line like
 -- "Frostweave Cloth (4), Infinite Dust (1)"; every comma-segment is

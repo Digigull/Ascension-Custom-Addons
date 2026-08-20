@@ -899,6 +899,53 @@ function Atr_LSW_itemPriceGetAuctionBuyout(link)
  
 -----------------------------------------
 
+-- OPTIONS AND FULL SCAN, IN THE TOP-RIGHT CORNER (BACKLOG item 6, owner
+-- 2026-08-21: "I want to squeeze those buttons in the upper right section of
+-- each tab").
+--
+-- Both are children of the shared panel, so ONE placement serves the Buy, Sell
+-- and My Auctions tabs -- they are the same widget objects on all three
+-- (FRAMEWORK.md section 4, World 1), and neither is in ATR_SELL_GEOM, so the
+-- SELL tab's expanded layout neither saves nor restores them and cannot undo
+-- this.
+--
+-- IN LUA RATHER THAN IN THE XML, and that is not a style choice: they anchor to
+-- AuctionFrame, which does not exist when Auctionator.xml is parsed -- it
+-- arrives with Blizzard_AuctionUI, which is what calls Atr_Init in the first
+-- place. An XML anchor naming it would resolve against nothing. The same
+-- reasoning already keeps the SELL drop zone and Ignore button in Lua.
+--
+-- ANCHORED TO THE WINDOW, NOT TO THE PANEL, because the panel is Blizzard's
+-- 768px width and Ascension's auction house is wider -- the panel's own right
+-- edge is not the window's, which is the bug the Analysis tab, the Ledger and
+-- the Bazaar each had to fix for themselves.
+--
+-- (-28, -46) is the Ledger's Clear button's line, so the two land on the same
+-- rule: clear of the 32px close button above, and stopping short of the
+-- headings bar below.
+function Atr_Sell_PlaceTopRightButtons ()
+
+	if (AuctionFrame == nil) then return; end
+
+	local opts = _G["Auctionator1Button"];
+	local full = _G["Atr_FullScanButton"];
+
+	if (opts and opts.ClearAllPoints) then
+		opts:ClearAllPoints();
+		opts:SetPoint ("TOPRIGHT", AuctionFrame, "TOPRIGHT", -28, -46);
+	end
+
+	-- Full Scan keeps its XML anchor to Options' left and follows it across; it
+	-- is the wider of the two once AuctionatorFinderFullScan.lua retitles it
+	-- "Scan Categories...", so it takes the inboard slot where there is room.
+	if (full and full.ClearAllPoints and opts) then
+		full:ClearAllPoints();
+		full:SetPoint ("RIGHT", opts, "LEFT", -4, 0);
+	end
+end
+
+-----------------------------------------
+
 function Atr_Init()
 
 	if (AuctionatorInited) then
@@ -949,6 +996,8 @@ function Atr_Init()
 	if (Atr_Ledger_Init) then Atr_Ledger_Init(); end		-- LEDGER_TAB
 	if (Atr_An_Init) then Atr_An_Init(); end		-- ANALYSIS_TAB
 	if (Atr_Advisor_Init) then Atr_Advisor_Init(); end		-- ADVISOR_TAB
+
+	Atr_Sell_PlaceTopRightButtons ();		-- BACKLOG item 6
 
 	Atr_SetupHookFunctions ();
 

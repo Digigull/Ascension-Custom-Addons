@@ -2940,6 +2940,81 @@ function Atr_An_AddToShoppingList (itemName, listIndex, listName)
 	return ok;
 end
 
+-- A SHOPPING LIST OF WHAT IT TAKES TO MAKE THIS (BACKLOG item 7, owner
+-- 2026-08-21: "you can make a new shopping list with the name of that item as
+-- the name and the reagents will be added automatically").
+--
+-- THE LIST IS NAMED AFTER THE ITEM, and an existing list of that name is FILLED
+-- rather than duplicated.  Two lists called "Flask of the North" is the state
+-- nobody wants and the one a second right-click would otherwise reach in a
+-- keystroke -- so the second click tops up the first list and says so.  Nothing
+-- is ever removed from a list here.
+--
+-- QUANTITIES ARE LOST, and that is the shopping list's shape rather than a
+-- shortcut taken here: Atr_SList holds NAMES, and there is nowhere to put "x12".
+-- The Reagents view is where the counts live, and it prices them; this is the
+-- shopping trip. Said plainly in the tooltip rather than hidden.
+function Atr_An_AddReagentList (itemName)
+
+	if (itemName == nil or itemName == "") then return false; end
+
+	local reagents = (type (Atr_Craft_ReagentList) == "function")
+					 and Atr_Craft_ReagentList (nil, itemName) or nil;
+
+	if (reagents == nil or #reagents == 0) then
+		if (zc and zc.msg_atr) then
+			zc.msg_atr (string.format (AZT("No harvested recipe makes %s -- open the profession window that does and try again."), tostring (itemName)));
+		end
+		return false;
+	end
+
+	-- reuse a list of the same name if there is one
+	local lists = (type (Atr_Shop_UserLists) == "function") and Atr_Shop_UserLists() or {};
+
+	local idx, i;
+	for i = 1, #lists do
+		if (lists[i].name == itemName) then idx = lists[i].index; break; end
+	end
+
+	local existed = (idx ~= nil);
+
+	if (idx == nil) then
+		if (type (Atr_SList) ~= "table" or type (Atr_SList.create) ~= "function") then return false; end
+		Atr_SList.create (itemName);
+
+		-- create() SORTS the table it inserts into, so the index it would have
+		-- returned is not the index it ends up at.  Ask for the lists again
+		-- rather than assuming the end.
+		lists = Atr_Shop_UserLists();
+		for i = 1, #lists do
+			if (lists[i].name == itemName) then idx = lists[i].index; break; end
+		end
+	end
+
+	if (idx == nil) then return false; end
+
+	local added, already, full = 0, 0, 0;
+
+	for i = 1, #reagents do
+		local ok, why = Atr_Shop_AddNameToList (idx, reagents[i].name);
+		if (ok) then added = added + 1;
+		elseif (why == "already") then already = already + 1;
+		elseif (why == "full") then full = full + 1; end
+	end
+
+	if (zc and zc.msg_atr) then
+		local what = existed and AZT("Topped up %s: %d added") or AZT("New list %s: %d reagents");
+		local msg  = string.format (what, tostring (itemName), added);
+
+		if (already > 0) then msg = msg..string.format (AZT(", %d already on it"), already); end
+		if (full > 0)    then msg = msg..string.format (AZT(", %d did not fit (50 max)"), full); end
+
+		zc.msg_atr (msg);
+	end
+
+	return (added > 0);
+end
+
 -- WHAT IS ON THE MENU -- a pure function, and the half worth testing.
 --
 -- `mode` is "groups", "lists", or "both" (the Finder's row menu, which shows both
@@ -2978,6 +3053,21 @@ function Atr_An_MenuEntries (itemName, mode)
 			gAn_PendingItem = itemName;
 			if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_SLIST"); end
 		end });
+
+		-- ADD REAGENTS LIST (BACKLOG item 7).  Only when something actually makes
+		-- this item: an entry that explains itself by failing is worse than one
+		-- that is not there, and "is there a recipe" is the same question the
+		-- craft-cost tooltip already asks.
+		--
+		-- BLUE, as asked, and it earns the colour -- every other entry in this
+		-- section files ONE item onto a list, and this one creates a list and
+		-- fills it with several OTHER items.  It is a different kind of action
+		-- sharing a section, which is exactly when a colour is doing work.
+		if (type (Atr_Craft_ReagentList) == "function" and Atr_Craft_ReagentList (nil, itemName)) then
+			tinsert (out, {
+				text = "|cff40a0ff"..AZT("Add reagents list").."|r",
+				func = function () Atr_An_AddReagentList (itemName); end });
+		end
 	end
 
 	if (both or mode == "groups") then
