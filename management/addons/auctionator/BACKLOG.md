@@ -1986,9 +1986,85 @@ AH query per item — cancellable, but not quick.
 
 ---
 
+## 18. Getting items onto the watchlist (and the shopping list) from where you find them — DONE
+
+**Asked 2026-08-20:** a plain "this is an estimate" tooltip on **Sold/day** and **Gold/day**; a
+**right-click menu on the Finder** to add an item to a shopping list or an Analysis group; and a
+**button under the item icon on the Buy tab** to add it to an Analysis group.
+
+### The tooltips
+
+Two lines, on the column headers. A `FontString` cannot take scripts, so a column carrying a `tip`
+in `AN_COLS` gets an invisible hit frame over its header — 16px tall, stopping above the scroll
+frame at -92 so it cannot swallow a click meant for a row.
+
+- **Sold/day** — *An estimate. Counted from listings that disappeared between two scans, so it is
+  a floor, not an exact count.*
+- **Gold/day** — *An estimate: Sold/day valued at the current lowest price. A rate, not a promise.*
+
+### The right-click menu — which is also a bug fix
+
+Finder rows have always called `RegisterForClicks ("LeftButtonUp", "RightButtonUp")`, and
+`Fdr_Row_OnClick (self, button)` has always **ignored `button`**. So a right-click ran the entire
+left-click path: jump to the Buy tab, open the group window, or **ask to buy that listing**.
+Giving the button a meaning of its own removes that.
+
+The menu offers *Add to shopping list* and *Add to Analysis group*, each as a submenu. Both are
+"remember this"; neither is "buy it now", which is what makes them the right pair for a right-click
+on a row whose left-click buys. It is also safe mid-scan — nothing it does changes tabs or cancels
+a scan, which the left-click path has to refuse.
+
+The **group window**'s rows (opened from a multi-listing row) got the same menu. They only
+registered `LeftButtonUp`, so right-click there did nothing at all; every listing in that window is
+the same item, so filing it works exactly as it does outside.
+
+### Where the code lives, and why
+
+One menu serves the Finder and the Buy tab: `Atr_An_ShowItemMenu (anchor, itemName, withShoppingList)`
+in `AuctionatorAnalysis.lua`. It is there because the **groups** are there, and it reaches the
+shopping lists through two new functions in `AuctionatorShop.lua` — guarded by name, so neither
+feature depends on the other:
+
+- `Atr_Shop_UserLists()` — the lists a user can actually file into. **"Recent Searches" is excluded
+  on purpose**: it is a rolling log this addon rewrites, so anything filed there would not survive.
+- `Atr_Shop_AddNameToList (index, name)` — enforces the same 50-item cap the *Add Item To List*
+  button does, and reports *why* it declined (`already`, `full`) so the menu can say so instead of
+  failing silently.
+- `Atr_Shop_CreateListWithItem` backs a **New list...** entry, without which the branch is useless
+  to anyone who has no custom lists yet. **New group...** does the same on the other side.
+
+Picking a group for an item that is **already watched moves it** — `Atr_An_Watch` updates the group
+and reports that it added nothing — which is what picking a group off a menu ought to do.
+
+### The Buy tab button
+
+A small **Watch** button under `Atr_RecommendItem_Tex`, opening the group half of the same menu.
+
+It is created in `Atr_An_Init` but parented to the icon's own parent and anchored to the icon, so
+it stays put if that strip ever moves. The band below the icon is empty: the recommend text and
+prices all sit at x >= 109, and the auction list starts at y -213.
+
+Show/hide is the part worth knowing. It is `recommendElements[8]`, so it hides everywhere that
+strip hides. What membership cannot express is **"Buy tab only"** — the strip is shown on SELL as
+well — so `Atr_An_UpdateBuyButton` runs immediately after `Atr_ShowElems (recommendElements)` in
+`Atr_ShowCurrentAuctions` and takes it back unless we are on Buy with an item. Ordering matters:
+show first, then correct, inside the one call.
+
+**Verified** by `luac5.1 -p` and by the two existing offline tests still passing (17 + 27), which
+cover the batch loop and the analysis feed this touches around. The menu itself is UI and the two
+list rules are three lines each, so **no new harness** — the house rule, deliberately applied.
+**Not verified in game.**
+
+**What to watch:** dropdown menus are the one bit of 3.3.5 API here that cannot be checked offline
+— `ToggleDropDownMenu (1, nil, frame, "cursor", 0, 0)` for the right-click and the button frame as
+the anchor for the Buy tab. And the Watch button's position is reasoned from the XML offsets, not
+seen.
+
+---
+
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16 and 17 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16, 17 and 18 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was

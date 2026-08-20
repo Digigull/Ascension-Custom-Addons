@@ -2242,10 +2242,18 @@ function FdrGrp_BuildFrame ()
 			row.cells[CELLKEYS[hj]] = fs;
 		end
 
-		row:RegisterForClicks ("LeftButtonUp");
-		row:SetScript ("OnClick", function (self)
+		row:RegisterForClicks ("LeftButtonUp", "RightButtonUp");
+		row:SetScript ("OnClick", function (self, button)
 			local m = self.member;
 			if (not m) then return; end
+			-- same menu as a Finder row (BACKLOG item 18): every listing here is
+			-- the same item, so filing it works exactly as it does out there
+			if (button == "RightButton") then
+				if (m.name and m.name ~= "" and type (Atr_An_ShowItemMenu) == "function") then
+					Atr_An_ShowItemMenu ("cursor", m.name, true);
+				end
+				return;
+			end
 			Atr_Finder_CancelGroup ();
 			Atr_Finder_RequestBuy (m);
 		end);
@@ -3613,7 +3621,7 @@ local function Fdr_Row_OnEnter (self)
 		else
 			GameTooltip:AddLine (FT("Click to buy this exact listing"), 0.5, 0.7, 1.0);
 		end
-		GameTooltip:AddLine (FT("Shift: link   Ctrl: dressing room"), 0.6, 0.6, 0.6);
+		GameTooltip:AddLine (FT("Shift: link   Ctrl: dressing room   Right-click: watch or shop"), 0.6, 0.6, 0.6);
 		GameTooltip:Show();
 
 		if (AUCTIONATOR_FINDER_SETTINGS and AUCTIONATOR_FINDER_SETTINGS.autoCompare
@@ -3638,6 +3646,22 @@ end
 local function Fdr_Row_OnClick (self, button)
 
 	if (not self.rec) then
+		return;
+	end
+
+	-- RIGHT-CLICK: file this item somewhere (BACKLOG item 18).  The row has always
+	-- registered RightButtonUp, but the handler ignored `button` entirely -- so a
+	-- right-click ran the whole left-click path and could ASK TO BUY the listing.
+	-- Giving the button a meaning of its own is a fix as much as a feature.
+	--
+	-- The menu is the Analysis tab's (it owns the groups) and offers the shopping
+	-- list too, which is the other thing you want when you have just found
+	-- something: both are "remember this", neither is "buy it now".
+	if (button == "RightButton") then
+		local nm = self.rec.name;
+		if (nm and nm ~= "" and type (Atr_An_ShowItemMenu) == "function") then
+			Atr_An_ShowItemMenu ("cursor", nm, true);
+		end
 		return;
 	end
 

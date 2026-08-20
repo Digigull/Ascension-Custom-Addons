@@ -369,6 +369,74 @@ end
 
 -----------------------------------------
 
+-- SHOPPING LISTS FROM ELSEWHERE (BACKLOG item 18) -------------------------
+--
+-- The Finder's right-click menu offers "add to shopping list", and it cannot do
+-- that by hand: gCurrentSList and the 50-item cap live in this file, and the
+-- "Recent Searches" list is not a place a user can file anything (it is a rolling
+-- log this addon rewrites).  So the choosing happens out there and the RULES stay
+-- here -- which is also why this returns real lists rather than names alone.
+
+-- The lists a user can actually add to, in dropdown order, with their index into
+-- AUCTIONATOR_SHOPPING_LISTS.
+function Atr_Shop_UserLists ()
+
+	local out = {};
+
+	if (type (AUCTIONATOR_SHOPPING_LISTS) ~= "table") then return out; end
+
+	local n;
+	for n = 1, #AUCTIONATOR_SHOPPING_LISTS do
+		local sl = AUCTIONATOR_SHOPPING_LISTS[n];
+		if (sl and not sl.isRecents) then
+			tinsert (out, { index = n, name = sl.name, list = sl });
+		end
+	end
+
+	return out;
+end
+
+-- Add one item to one list, enforcing the same cap the Add Item To List button
+-- does.  Returns true when the list changed, plus a reason when it did not, so a
+-- caller can say what happened instead of failing quietly.
+function Atr_Shop_AddNameToList (listIndex, itemName)
+
+	if (itemName == nil or itemName == "") then return false, "noitem"; end
+
+	local sl = (type (AUCTIONATOR_SHOPPING_LISTS) == "table") and AUCTIONATOR_SHOPPING_LISTS[listIndex or 0];
+	if (sl == nil or sl.isRecents) then return false, "nolist"; end
+
+	if (sl:IsItemOnList (itemName)) then return false, "already"; end
+
+	if (#sl.items >= 50) then return false, "full"; end
+
+	sl:AddItem (itemName);
+
+	if (Atr_SetUINeedsUpdate) then Atr_SetUINeedsUpdate(); end
+
+	return true;
+end
+
+-- Make a list and put one item on it -- the "New list..." branch of that menu,
+-- which is what makes it usable for someone who has no lists yet.
+function Atr_Shop_CreateListWithItem (listName, itemName)
+
+	if (listName == nil or listName == "") then return false; end
+
+	FinishCreateNewSList (listName);
+
+	local n;
+	for n = 1, #AUCTIONATOR_SHOPPING_LISTS do
+		if (AUCTIONATOR_SHOPPING_LISTS[n].name == listName) then
+			return Atr_Shop_AddNameToList (n, itemName);
+		end
+	end
+
+	return false;
+end
+
+-----------------------------------------
+
 StaticPopupDialogs["ATR_NEW_SHOPPING_LIST"] = {
 	text = "",
 	button1 = ACCEPT,
