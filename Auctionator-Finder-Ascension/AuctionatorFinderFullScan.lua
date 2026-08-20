@@ -491,7 +491,17 @@ end
 
 -- "Full Scan..." is a misnomer once gear is excluded and the scan is
 -- category-driven, so relabel the More... entry to match what it does.
-if (Atr_FullScanButton and Atr_FullScanButton.SetText) then
-	Atr_FullScanButton:SetText (FT("Scan Categories..."));
+--
+-- A FUNCTION, CALLED FROM Atr_Init, AND IT USED TO BE NEITHER.  This was a bare
+-- `if` at file scope, and at file scope Atr_FullScanButton DOES NOT EXIST: the
+-- button is created with Atr_Main_Panel from the Atr_Sell_Template, inside
+-- Atr_Init, which does not run until Blizzard_AuctionUI loads -- long after this
+-- file is parsed.  So the guard was always false and the button has been reading
+-- "Full Scan..." ever since, which is exactly what the owner called it when
+-- asking for BACKLOG item 6.  Found 2026-08-22 while moving the button.
+function Fdr_FS_RelabelButton ()
+	if (Atr_FullScanButton and Atr_FullScanButton.SetText) then
+		Atr_FullScanButton:SetText (FT("Scan Categories..."));
+	end
 end
 -- FINDER_TAB end: full scan replacement

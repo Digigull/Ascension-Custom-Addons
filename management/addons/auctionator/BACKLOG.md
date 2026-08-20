@@ -336,6 +336,51 @@ of Blizzard's 32px close button above, short of the headings bar below. The visi
 verified in game** — whether `(-28, -46)` clears the money frame on the Buy tab is the thing to look
 at first.
 
+### Reopened and finished 2026-08-22 — "each tab" meant ALL of them
+
+**Owner, in game:** *"Are the options and full scan small buttons supposed to be in yet? Because I
+only see them on the original 3 tabs still."*
+
+**The request was read too narrowly and the build above is half the item.** "Squeeze those buttons
+in the upper right section of each tab **also**" means all eight Auctionator tabs; what shipped
+moved them within the three they were already on. The owner's own diagnosis was right: *"something
+about the old tabs and new not functioning the same with ui elements"* — `Atr_AuctionFrameTab_OnClick`
+calls `Atr_Main_Panel:Hide()` and shows a World 2 panel in its place, and both buttons are children
+of that shared panel, so they leave with it. Nothing was wrong with the placement; they were inside
+the thing that gets hidden.
+
+**Reparented to `AuctionFrame`, and shown by tab.** `Atr_Sell_SyncTopRightButtons(index)` shows them
+when `Atr_IsAuctionatorTab(index)` and hides them otherwise — every path that changes tab, including
+`Atr_SelectPane` and the hooked original, runs through that one function, so opening the window, a
+tab click and the saved default tab are all covered. Without the hide they would appear over
+Blizzard's own Browse / Bid / Auctions.
+
+**The frame level is load-bearing.** The World 2 panels are also `AuctionFrame`'s children and are
+created *after* this pair, so at equal level they draw over the buttons and eat the clicks. That is
+the old queue's item 22 — the Buy tab's buttons dead for three rounds over exactly this — and +20 is
+the margin that fixed them.
+
+**They moved up one line, because the line item 6 chose is already taken on four of the five newer
+tabs**: the Ledger's Clear `(-16, -46)`, the Advisor's Ignored `(-20, -46)`, the Analysis view strip
+`(-26, -50)` and the Finder's Search `(-18, -49)`. One shared pair cannot own a line four tabs
+already use, so it sits at `(-40, -20)` — between the close button and that row, level with the
+centred title, which is empty out to the right edge on every tab.
+
+**A separate bug, found while moving them, and the owner's own wording is the evidence.**
+`AuctionatorFinderFullScan.lua`'s relabel to "Scan Categories..." was a bare `if` at **file scope**,
+and at file scope `Atr_FullScanButton` does not exist — the button is created with `Atr_Main_Panel`
+inside `Atr_Init`, which does not run until `Blizzard_AuctionUI` loads, long after that file is
+parsed. The guard was always false, so the button has read "Full Scan..." all along, which is what
+the owner called it when asking for this item. It is now `Fdr_FS_RelabelButton()`, called once the
+button exists. **The claim in the Built section above that the visible label is "Scan Categories..."
+was wrong.**
+
+**Known rough edge, not fixed:** `Atr_UpdateUI_SellPane` disables both buttons while a Sell search is
+processing and re-enables when it finishes. Switch tabs mid-scan and they stay greyed on every tab
+until it completes. Transient and self-correcting, so it is recorded rather than worked around.
+
+**Verified:** `luac5.1 -p` and `ET.parse` clean, the four suites pass. **Not verified in game.**
+
 ---
 
 ## 7. Analysis right-click: "Add reagents list" — DONE
