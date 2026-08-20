@@ -149,7 +149,7 @@ asymmetry is the intermittency the owner reported.
 ## analysis-feed-smoke.lua — also not vendor-seed tooling
 
 ```
-lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua    # 17 assertions
+lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua    # 27 assertions
 ```
 
 Covers the Analysis tab's feed (BACKLOG item 17): the sold-vs-expired attribution end to end, and
@@ -160,5 +160,9 @@ so a half-fetched result set reports every listing it never fetched as bought �
 lands in a saved database where nothing afterwards can tell it from a real sale. In game the
 numbers would simply be wrong, with no symptom to notice. Removing either the completeness guard
 or the level-filter guard fails this test, which is how we know they still do something.
+
+It also covers the item menu's **contents** (item 21) — which became testable when that menu stopped
+being a Blizzard dropdown: what goes on the menu is now a pure function returning a table, and only
+the frame that draws it is beyond reach here.
 
 Same rule as the other one: stubs what the batch loop and the observer touch, and stops there.

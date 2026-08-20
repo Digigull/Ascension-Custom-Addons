@@ -222,6 +222,54 @@ eq (srch.anListings, nil, "nothing is banked when nothing is watched")
 eq (obs (WATCHED), nil,   "... and nothing is recorded")
 
 --------------------------------------------------------------------
+-- 7.  The item menu's CONTENTS (BACKLOG item 21).
+--
+--     The menu's frame cannot be tested here, but what goes ON it is now a pure
+--     function -- which is half the point of dropping the Blizzard dropdown.
+--     Atr_Shop_UserLists is not loaded in this harness, so the list section
+--     takes its no-lists path, which is also the path a new player sees.
+--------------------------------------------------------------------
+
+reset ()
+Atr_An_AddGroup ("Cloth")
+Atr_An_AddGroup ("Ore")
+
+local function texts (entries)
+	local out = {}
+	for i = 1, #entries do out[i] = entries[i].text end
+	return table.concat (out, " | ")
+end
+
+local function findEntry (entries, text)
+	for i = 1, #entries do if (entries[i].text == text) then return entries[i] end end
+	return nil
+end
+
+local groups = Atr_An_MenuEntries (WATCHED, "groups")
+eq (texts (groups), "(no group) | Cloth | Ore | New group...", "groups mode lists every group")
+
+local lists = Atr_An_MenuEntries (WATCHED, "lists")
+eq (texts (lists), "no lists yet | New list...", "lists mode still offers a way in with no lists")
+eq (findEntry (lists, "no lists yet").disabled, true, "... and says so as a disabled line")
+
+local both = Atr_An_MenuEntries (WATCHED, "both")
+eq (findEntry (both, "Shopping list").header, true,  "both mode heads the shopping section")
+eq (findEntry (both, "Analysis group").header, true, "both mode heads the group section")
+eq (#both, #groups + #lists + 2, "both mode is the two sections plus their headers")
+
+eq (#Atr_An_MenuEntries (nil, "both"), 0, "no item, no menu")
+
+-- the entries DO something: picking a group watches the item in it
+Atr_An_Unwatch (WATCHED)
+findEntry (groups, "Cloth").func ()
+eq (Atr_An_IsWatched (WATCHED), true, "picking a group watches the item")
+eq (Atr_An_DB().watch[WATCHED].group, "Cloth", "... in that group")
+
+-- and picking another MOVES it rather than refusing
+findEntry (groups, "Ore").func ()
+eq (Atr_An_DB().watch[WATCHED].group, "Ore", "picking a second group moves it")
+
+--------------------------------------------------------------------
 
 print (string.format ("%d passed, %d failed", passed, failed))
 os.exit (failed == 0 and 0 or 1)
