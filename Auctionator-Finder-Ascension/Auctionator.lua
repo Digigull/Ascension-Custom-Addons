@@ -4262,8 +4262,50 @@ local gPrevSellItemLink;
 
 -----------------------------------------
 
+-- Keep the sell pane's scan pointed at the item ACTUALLY in the sell slot.
+--
+-- BACKLOG item 15.  Item 12 part 2 already corrected this, but only inside the
+-- block below guarded by `gPrevSellItemLink ~= auctionLink` -- and that block
+-- does not always run.  This handler consumes `gAtr_ClickAuctionSell` on the
+-- FIRST NEW_AUCTION_UPDATE and early-returns on every later one, and both how
+-- many the client fires and which of them carries the flag differ between
+-- dropping an item into the box and clicking a tile in the inventory browser --
+-- and, as the owner found, between attempts on the same path.
+--
+-- That is what made the symptom FLIP: the click path picked the rare, then after
+-- a few tries the drag path did instead.  **A bug that swaps sides is not one
+-- path being wrong, it is an ordering race**, and the first write-up of this
+-- item chased the wrong thing because it only had one direction to look at.
+--
+-- So the correction is unconditional and idempotent rather than guarded.  It is
+-- NAME-GUARDED, which is the part that makes it safe to call at any moment: when
+-- this runs the active scan may still be the PREVIOUS item's, and pushing this
+-- item's link into that one would corrupt it.
+local function Atr_Sell_SyncScanIdentity ()
+
+	if (gSellPane == nil) then return false; end
+
+	local scn = gSellPane.activeScan;
+	if (scn == nil or scn.UpdateItemLink == nil) then return false; end
+
+	local name, _, link = Atr_GetSellItemInfo();
+
+	if (link == nil or name == nil or name == "") then return false; end
+	if (scn.itemName ~= name) then return false; end		-- not this item's scan: leave it
+	if (scn.itemLink == link) then return false; end		-- already right
+
+	scn:UpdateItemLink (link);
+	gSellPane.UINeedsUpdate = true;
+
+	return true;
+end
+
 function Atr_OnNewAuctionUpdate()
-	
+
+	-- BEFORE the flag check on purpose: this has to run on every one of these
+	-- events, not only on whichever one happens to carry the click flag.
+	Atr_Sell_SyncScanIdentity ();
+
 	if (not gAtr_ClickAuctionSell) then
 		gPrevSellItemLink = nil;
 		return;

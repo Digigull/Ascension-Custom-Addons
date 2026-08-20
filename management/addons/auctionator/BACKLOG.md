@@ -1733,72 +1733,69 @@ The 95 new rows are the window harvest working for the first time: ten `made = 3
 
 ---
 
-## 15. SELL tab — clicking an item from the inventory browser picks the wrong variant
+## 15. SELL tab — the sell pane could keep the wrong same-name variant — DONE
 
-**Reported 2026-08-19, and it is a clean differential:** dragging a Bloodforged item into the
-sell box gets the **epic** correctly; clicking the *same item* in the SELL tab's inventory
-browser, with the box empty, loads the **blue** one instead.
+**Reported 2026-08-19** as a clean differential: dragging a Bloodforged item into the sell box got
+the **epic** correctly, while clicking the *same item* in the SELL tab's inventory browser got the
+**blue** one.
 
-Same item, same destination, two entry points, different answer — which means the item is not
-the problem and neither is the price database. One of the two paths is doing something the other
-is not.
+**Then it flipped.** After a few more attempts the owner saw the reverse — the drag path picking
+the rare. That single observation is what solved it, and it invalidated the first write-up of this
+item, which had confidently named `Atr_ClearAll` and a premature `Atr_UpdateUI` in the click path
+as the difference.
 
-**Item 12 part 2 is apparently working**, incidentally: the drag path is the one that fix was
-written against, and it now gets the epic. This is the entry point that fix does not reach.
+**A bug that swaps sides is not one path being wrong. It is an ordering race.** Two code paths
+that disagree consistently point at the paths; two that trade places point at the state they
+share.
 
-### The two paths, side by side
+### The race
 
-Drag — `Atr_OnDropItem` (`Auctionator.lua:1578`):
-
-```lua
-Atr_ClickAuctionSellItemButton (self, button);
-ClearCursor();
-```
-
-Click — `Atr_LoadBagSlotToSellPane` (`:1824`), reached from `Atr_SB_Item_OnClick`:
+`Atr_OnNewAuctionUpdate` opens with:
 
 ```lua
-PickupContainerItem (bagID, slotID);
-if (GetCursorInfo() == "item") then
-    Atr_ClearAll();                   -- only this path
-    Atr_ClickAuctionSellItemButton ();
-    ClearCursor();
+if (not gAtr_ClickAuctionSell) then
+    gPrevSellItemLink = nil;
+    return;
 end
-...
-Atr_UpdateUI();                       -- and only this path
+gAtr_ClickAuctionSell = false;
 ```
 
-**The click path picks the exact bag slot**, so the item genuinely in the sell slot is the epic —
-this is not a case of grabbing the wrong stack. What differs is `Atr_ClearAll()` before the click
-and **`Atr_UpdateUI()` after it**.
+The flag is **consumed by the first `NEW_AUCTION_UPDATE`** and every later one early-returns. Item
+12 part 2's identity correction lives further down, inside the block guarded by
+`gPrevSellItemLink ~= auctionLink` — so it runs only when the flag-carrying event is also the one
+that sees a changed link.
 
-### Most likely mechanism, to check first
+How many of those events the client fires, and which of them carries the flag, differs between
+dropping an item in the box and clicking a tile — and, as the flip proved, between attempts on the
+same path. Whichever variant the cached scan happened to hold then stayed.
 
-`Atr_UpdateUI()` runs **synchronously**, while `NEW_AUCTION_UPDATE` — which is what
-`Atr_OnNewAuctionUpdate` and therefore the whole item-identity path hangs off — arrives a frame
-later. So the click path paints the pane once from whatever scan is already current (the rare's,
-cached under that name from an earlier search) before the event that would correct it has fired.
+### The fix
 
-The suspicion is that this early repaint also latches `gPrevSellItemLink`, because
-`Atr_OnNewAuctionUpdate` guards its entire body with:
+`Atr_Sell_SyncScanIdentity` (`Auctionator.lua`), called at the **top** of
+`Atr_OnNewAuctionUpdate`, before the flag check, so it runs on every one of these events rather
+than only on the one that wins the race. It reads the sell slot, and if the active scan is about
+that item but holds a different link, pushes the real one in through `AtrScan:UpdateItemLink` and
+marks the pane for repaint.
 
-```lua
-if (gPrevSellItemLink ~= auctionLink) then
-```
+Two properties make an unconditional call safe:
 
-If that is already equal by the time the event lands, the search, the
-`AtrScan:UpdateItemLink` correction from part 2 and the rest are all skipped, and the stale paint
-is what stays on screen. That would explain why the symptom is stable rather than a flicker.
+- **Name-guarded.** When this runs the active scan may still be the PREVIOUS item's — `DoSearch`
+  has not necessarily happened yet — and pushing this item's link into that scan would corrupt it.
+  A scan that is not about this item is left completely alone.
+- **Idempotent.** It returns early when the link already matches, so firing on every event costs
+  one comparison after the first.
 
-**Cheap confirmation before writing anything:** print `gPrevSellItemLink` and
-`gSellPane.activeScan.itemLink` at the top of `Atr_OnNewAuctionUpdate` and take both paths. If
-the click path arrives with them already equal, the mechanism is confirmed and the fix is small —
-either clear `gPrevSellItemLink` in `Atr_LoadBagSlotToSellPane`, or drop the premature
-`Atr_UpdateUI()` and let the event do the work, which is what the drag path already relies on.
+Item 12 part 2's original correction after `DoSearch` stays: it is the one that runs on a *fresh*
+scan, where this helper would have nothing to compare against yet.
 
-**Do not fix it by guessing.** Two of this item's neighbours (10 and 12 part 2) turned out to have
-the wrong mechanism written down, and both were settled in minutes by looking at real data
-instead.
+**Verified** by `luac5.1 -p` and an offline test of the helper's guards: a scan holding the wrong
+variant of this item is corrected and the repaint requested; a second call writes nothing; a scan
+for a different item is untouched; an empty sell slot, a missing scan and a missing pane are all
+no-ops; and the identity ends correct under every ordering of flagged and unflagged events — which
+is the race itself. **Not verified in game.**
+
+**What to watch:** the symptom was intermittent, so one successful drag or click proves nothing.
+Load the epic and the rare alternately, by both paths, several times each.
 
 ---
 
