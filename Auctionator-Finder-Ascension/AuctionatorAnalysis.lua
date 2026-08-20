@@ -56,6 +56,12 @@
 --              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
 --              arithmetic over today's prices, exact if the prices are current.
 --
+-- ONE FILTER BOX serves all three: it narrows whichever table is up, live, as
+-- you type, and it deliberately survives a view switch -- "show me the linen" is
+-- the same question on any of them.  The box used to be for ADDING a watched
+-- item, which is a once-per-item job; that moved to a popup behind the Add
+-- button beside it.
+--
 -- EVERY ROW BEHAVES THE SAME WAY in all three views, because they are all the
 -- same kind of thing -- an item you are deciding about.  Hover shows the item's
 -- own tooltip (and, on the crafting view, a second tooltip beside it with the
@@ -195,6 +201,15 @@ function Atr_An_Observe (itemName, listings, now)
 
 		if (owner ~= ATR_AN_UNKNOWN_SELLER) then sellers[owner] = true; end
 
+		-- One number, once, and it is what makes a watched item hoverable: the
+		-- watchlist is keyed by NAME and a name cannot draw a tooltip. Taken from
+		-- the first listing that carries a link and never revisited -- a same-name
+		-- variant is a different instance of the same item, so any of them names
+		-- the right thing to show.
+		if (o.id == nil and L.link and zc and zc.ItemIDfromLink) then
+			o.id = tonumber ((zc.ItemIDfromLink (L.link)));   -- extra parens: returns 3 values
+		end
+
 		if (buy > 0) then
 			local unit = math.floor (buy / qty);
 			if (unit > 0 and (low == nil or unit < low)) then low = unit; end
@@ -292,6 +307,7 @@ function Atr_An_Stats (itemName)
 	end
 
 	return {
+		id			= o.id,
 		sellers		= o.sellers or 0,
 		listings	= o.listings or 0,
 		low			= o.low,
@@ -325,7 +341,8 @@ function Atr_An_ObserveResults (results)
 		if (r and r.name and Atr_An_IsWatched (r.name)) then
 			local t = byName[r.name];
 			if (t == nil) then t = {}; byName[r.name] = t; end
-			tinsert (t, { owner = r.owner, count = r.count, buyout = r.buyoutPrice, timeLeft = r.timeLeft });
+			tinsert (t, { owner = r.owner, count = r.count, buyout = r.buyoutPrice, timeLeft = r.timeLeft,
+						  link = r.link });
 		end
 	end
 
@@ -356,12 +373,21 @@ function Atr_An_CollectListing (srch, itemName, owner, count, buyout, index)
 	local bag = srch.anListings;
 	if (bag == nil) then bag = {}; srch.anListings = bag; end
 
-	local tl = 0;
-	if (index and type (GetAuctionItemTimeLeft) == "function") then
-		tl = GetAuctionItemTimeLeft ("list", index) or 0;
+	local tl, link = 0, nil;
+	if (index) then
+		if (type (GetAuctionItemTimeLeft) == "function") then
+			tl = GetAuctionItemTimeLeft ("list", index) or 0;
+		end
+		-- The item's LINK, kept for one reason: the watchlist stores a name, and
+		-- a name alone cannot draw a tooltip. Atr_An_Observe reads the ID off it
+		-- once and remembers that, so a watched item is hoverable from then on
+		-- -- including in a later session, before anything has been scanned.
+		if (type (GetAuctionItemLink) == "function") then
+			link = GetAuctionItemLink ("list", index);
+		end
 	end
 
-	tinsert (bag, { name = itemName, owner = owner, count = count, buyoutPrice = buyout, timeLeft = tl });
+	tinsert (bag, { name = itemName, owner = owner, count = count, buyoutPrice = buyout, timeLeft = tl, link = link });
 end
 
 -- Hand a finished search's collected listings to the analysis, or throw them
@@ -702,6 +728,67 @@ end
 
 local gAn_Group = nil;		-- nil = every group
 
+-- THE FILTER BOX (owner's request, 2026-08-20) ------------------------------
+--
+-- The box at the top left used to ADD an item to the watchlist. Adding an item
+-- is something you do once per item and then never again; narrowing what is on
+-- screen is something you do constantly, and neither the crafting view (a
+-- couple of hundred recipes) nor the ledger had any way to do it at all. So the
+-- box filters, live, as you type, and it is the SAME box on all three views --
+-- "show me the linen" is one question whichever table is up, and the filter
+-- deliberately survives a view switch for that reason.
+--
+-- Adding moved to the button beside it, which opens a popup (item 26).
+--
+-- Plain substring, case-insensitive, and matched with find's plain flag: an
+-- item name is full of Lua pattern characters ("Mana Potion (Superior)") and a
+-- filter box that threw a pattern error on a bracket would be worse than no
+-- filter at all.
+local gAn_Filter = "";
+
+local function An_PassesFilter (name)
+
+	if (gAn_Filter == "") then return true; end
+	if (type (name) ~= "string") then return false; end
+
+	return (string.find (string.lower (name), gAn_Filter, 1, true) ~= nil);
+end
+
+local function An_SetFilter (text)
+
+	local f = tostring (text or "");
+	f = f:gsub ("^%s+", ""):gsub ("%s+$", "");
+	f = string.lower (f);
+
+	if (f == gAn_Filter) then return; end
+
+	gAn_Filter = f;
+
+	-- a narrower list under an old scroll offset draws as a page of nothing
+	An_ScrollTop ();
+	Atr_An_Redisplay ();
+end
+
+-- Add an item to the watchlist from typed text, from the popup the Add button
+-- opens or from a shift-clicked link pasted into it.
+local function An_AddWatchFromText (txt)
+
+	if (type (txt) ~= "string" or txt == "") then return false; end
+
+	local name = txt:match ("%[(.-)%]") or txt;
+	name = name:gsub ("^%s+", ""):gsub ("%s+$", "");
+
+	if (name == "") then return false; end
+
+	-- into the group being looked at, which is what the old add box did
+	if (Atr_An_Watch (name, gAn_Group)) then
+		if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
+	end
+
+	Atr_An_Redisplay ();
+	return true;
+end
+
 local AN_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:4:0|t";
 local AN_SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:12:12:4:0|t";
 local AN_COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:12:12:4:0|t";
@@ -758,7 +845,51 @@ local function An_RowLink (rec)
 		if (link) then rec.link = link; return link; end
 	end
 
+	-- An ID the client cannot name yet still makes a tooltip: "item:1234" is a
+	-- link as far as SetHyperlink and GetItemInfo are concerned, and asking for
+	-- it is what makes the client go and fetch the item. NOT remembered on the
+	-- record -- the next hover should get the real link once it arrives.
+	if (rec.id) then return "item:"..rec.id; end
+
 	return nil;
+end
+
+-- ITEMS THE CLIENT HAS NEVER HEARD OF ---------------------------------------
+--
+-- A tooltip needs the client to know the item, and it only knows what it has
+-- seen. On a fresh session the market and crafting views can be a whole page of
+-- rows with no tooltip behind them, which is what happened in game (owner's
+-- report, 2026-08-20: "it didn't immediately show the tooltip, but once I did a
+-- left click most of them updated" -- the lookup warmed the cache).
+--
+-- So ask for the item on a hidden tooltip as its row is drawn. That is the
+-- standard way to make this client fetch an item it does not have, and by the
+-- time the cursor arrives a moment later the real data is in. Once per item per
+-- session: an item that never answers is not asked twice, and the hover path
+-- still asks for itself, so nothing is lost if the fetch failed.
+local gAn_Warm, gAn_Warmed = nil, {};
+
+local function An_WarmItem (rec)
+
+	local id = rec and rec.id;
+	if (id == nil or gAn_Warmed[id]) then return; end
+
+	if (type (GetItemInfo) == "function" and GetItemInfo (id)) then
+		gAn_Warmed[id] = true;		-- already known, nothing to fetch
+		return;
+	end
+
+	if (type (CreateFrame) ~= "function") then return; end
+
+	if (gAn_Warm == nil) then
+		gAn_Warm = CreateFrame ("GameTooltip", "Atr_An_WarmTooltip", UIParent, "GameTooltipTemplate");
+	end
+
+	gAn_Warmed[id] = true;
+
+	gAn_Warm:SetOwner (UIParent, "ANCHOR_NONE");
+	gAn_Warm:SetHyperlink ("item:"..id);
+	gAn_Warm:Hide();
 end
 
 -- GEAR GOES TO THE FINDER, EVERYTHING ELSE TO BUY.  That split is not a
@@ -842,8 +973,9 @@ local function An_Rows ()
 
 	local name, w;
 	for name, w in pairs (db.watch) do
-		if (gAn_Group == nil or (w.group or "") == gAn_Group) then
-			tinsert (out, { name = name, group = w.group, st = Atr_An_Stats (name) });
+		if ((gAn_Group == nil or (w.group or "") == gAn_Group) and An_PassesFilter (name)) then
+			local st = Atr_An_Stats (name);
+			tinsert (out, { name = name, group = w.group, st = st, id = st and st.id });
 		end
 	end
 
@@ -875,10 +1007,21 @@ local function An_TradeRows ()
 
 	local list, tot = Atr_Ledger_ItemTotals ();
 
+	if (gAn_Filter ~= "") then
+		local keep, i = {}, nil;
+		for i = 1, #list do
+			if (An_PassesFilter (list[i].name)) then tinsert (keep, list[i]); end
+		end
+		list = keep;
+	end
+
 	return An_SortRows ("trades", list), tot;
 end
 
-local function An_TradeSummary (tot)
+-- `shown` is how many rows the filter left; the totals are the LEDGER's, over
+-- every row it holds, which is why the two counts can disagree and why the
+-- filtered one is said separately rather than substituted in.
+local function An_TradeSummary (tot, shown)
 
 	if (tot == nil or tot.rows == 0) then
 		return AZT("The ledger is empty. It fills itself from your auction house buys, posts and mail.");
@@ -886,6 +1029,10 @@ local function An_TradeSummary (tot)
 
 	local s = string.format (AZT("%d items -- paid %s, got %s, margin %s"),
 				tot.items, An_Money (tot.paid), An_Money (tot.got), An_Signed (tot.margin));
+
+	if (gAn_Filter ~= "" and shown) then
+		s = string.format (AZT("%d shown of "), shown)..s;
+	end
 
 	if (tot.tiedQty > 0) then
 		s = s..string.format (AZT("  |  %s still listed (%d)"), An_Money (tot.tied), tot.tiedQty);
@@ -956,12 +1103,13 @@ local function An_RedisplayTrades ()
 				end
 
 				line.rec = r;
+				An_WarmItem (r);
 				line:Show();
 			end
 		end
 	end
 
-	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_TradeSummary (tot)); end
+	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_TradeSummary (tot, n)); end
 end
 
 -- THE CRAFTING VIEW (BACKLOG item 8, B2) -----------------------------------
@@ -998,7 +1146,19 @@ local function An_CraftRows ()
 	-- and a header click reorders the cached list without touching a price.
 	-- stats.best was taken when the list was built, so it keeps naming the best
 	-- craft however the table is currently ordered.
-	return An_SortRows ("craft", gAn_CraftRows), gAn_CraftStats;
+	An_SortRows ("craft", gAn_CraftRows);
+
+	-- The filter makes a COPY: what is cached is every recipe, and filtering the
+	-- cache in place would throw away the rest of it on the first keystroke.
+	if (gAn_Filter ~= "") then
+		local keep, i = {}, nil;
+		for i = 1, #gAn_CraftRows do
+			if (An_PassesFilter (gAn_CraftRows[i].name)) then tinsert (keep, gAn_CraftRows[i]); end
+		end
+		return keep, gAn_CraftStats;
+	end
+
+	return gAn_CraftRows, gAn_CraftStats;
 end
 
 -- Profit as a share of the SALE price, not of the cost.  Markup on cost is the
@@ -1133,13 +1293,18 @@ local function An_ShowCraftTip (owner, r)
 	end
 end
 
-local function An_CraftSummary (stats)
+local function An_CraftSummary (stats, shown)
 
 	if (stats == nil or stats.total == 0) then
 		return AZT("No recipes harvested yet. Open a profession window once and this fills itself in.");
 	end
 
-	local s = string.format (AZT("%d recipes -- %d priced"), stats.total, stats.priced);
+	local s;
+	if (gAn_Filter ~= "" and shown) then
+		s = string.format (AZT("%d of %d recipes -- %d priced"), shown, stats.total, stats.priced);
+	else
+		s = string.format (AZT("%d recipes -- %d priced"), stats.total, stats.priced);
+	end
 
 	if (stats.best) then
 		s = s..string.format (AZT("  |  best %s per craft"), An_Signed (stats.best));
@@ -1200,12 +1365,13 @@ local function An_RedisplayCraft ()
 				line.cmargin:SetText (An_Margin (r));
 
 				line.rec = r;
+				An_WarmItem (r);
 				line:Show();
 			end
 		end
 	end
 
-	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_CraftSummary (stats)); end
+	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_CraftSummary (stats, n)); end
 end
 
 -- Swap the views over the shared table.  Nothing is re-anchored: every row
@@ -1341,6 +1507,7 @@ function Atr_An_Redisplay ()
 				end
 
 				line.rec = r;
+				An_WarmItem (r);
 				line:Show();
 			end
 		end
@@ -1352,10 +1519,19 @@ function Atr_An_Redisplay ()
 	-- number actually looks.  As standing text under the table it was a wall of
 	-- yellow that never changed and never got read twice (owner's call, 2026-08).
 	if (Atr_An_Summary) then
+
 		local watched = 0;
 		local nm;
 		for nm in pairs (Atr_An_DB ().watch) do watched = watched + 1; end
-		Atr_An_Summary:SetText (string.format (AZT("%d watched"), watched));
+
+		-- Both the group dropdown and the filter box narrow this list, so say so
+		-- whenever what is on screen is not the whole watchlist: "3 watched" over
+		-- a filtered table reads as three items watched in total.
+		if (n < watched) then
+			Atr_An_Summary:SetText (string.format (AZT("%d of %d watched"), n, watched));
+		else
+			Atr_An_Summary:SetText (string.format (AZT("%d watched"), watched));
+		end
 	end
 end
 
@@ -1773,6 +1949,21 @@ if (StaticPopupDialogs) then
 		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
 	};
 
+	StaticPopupDialogs["ATR_AN_ADD_WATCH"] = {
+		text			= AZT("Item to watch -- type a name or shift-click a link"),
+		button1			= ACCEPT,
+		button2			= CANCEL,
+		hasEditBox		= 1,
+		maxLetters		= 96,
+		OnAccept		= function (self) An_AddWatchFromText (self.editBox:GetText()); end,
+		EditBoxOnEnterPressed = function (self)
+			An_AddWatchFromText (self:GetParent().editBox:GetText());
+			self:GetParent():Hide();
+		end,
+		OnShow			= function (self) self.editBox:SetText(""); self.editBox:SetFocus(); end,
+		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
+	};
+
 	StaticPopupDialogs["ATR_AN_NEW_SLIST"] = {
 		text			= AZT("Name for the new shopping list"),
 		button1			= ACCEPT,
@@ -1972,13 +2163,16 @@ function Atr_An_RefreshToggle ()
 
 	if (gAnalysisPane == nil or not An_TabIsCurrent ()) then return; end
 
+	-- WHAT IS ON SCREEN, which the group dropdown and now the filter box both
+	-- narrow.  That is the useful behaviour -- "rescan these" -- but it is worth
+	-- knowing rather than discovering, so the button's tooltip says it too.
 	local rows = An_Rows ();
 	local q, i = {}, nil;
 	for i = 1, #rows do tinsert (q, rows[i].name); end
 
 	if (#q == 0) then
 		if (zc and zc.msg_atr) then
-			zc.msg_atr (AZT("Analysis: nothing watched here yet -- add an item first"));
+			zc.msg_atr (AZT("Analysis: nothing to rescan here -- the filter or the group is hiding everything, or nothing is watched yet"));
 		end
 		return;
 	end
@@ -2052,40 +2246,70 @@ function Atr_An_Init ()
 	title:SetPoint ("TOP", 0, -18);
 	title:SetText ("Auctionator - "..AZT("Analysis"));
 
-	-- add box: type a name or shift-click an item link into it
-	local addLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-	addLabel:SetPoint ("TOPLEFT", 72, -40);
-	addLabel:SetText (AZT("Watch item"));
+	-- FILTER BOX: narrows whichever table is up, live, as you type.  It is on
+	-- every view (see An_SetFilter) and so is deliberately NOT in gAn_MarketOnly
+	-- below.  Same size and place as the add box it replaced -- 90 wide starting
+	-- at x=76, because at x=24 both it and its label ran under the auction
+	-- house's portrait, which is drawn over them.
+	local filtLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+	filtLabel:SetPoint ("TOPLEFT", 72, -40);
+	filtLabel:SetText (AZT("Filter"));
 
-	local addBox = CreateFrame ("EditBox", "Atr_An_AddBox", panel, "InputBoxTemplate");
-	-- Half its old 180 width, and started past x=70: at x=24 both it and its
-	-- label ran under the auction house's portrait, which is drawn over them.
-	addBox:SetSize (90, 20);
-	addBox:SetPoint ("TOPLEFT", 76, -52);
-	addBox:SetAutoFocus (false);
-	addBox:SetMaxBytes (96);
+	local filtBox = CreateFrame ("EditBox", "Atr_An_FilterBox", panel, "InputBoxTemplate");
+	filtBox:SetSize (90, 20);
+	filtBox:SetPoint ("TOPLEFT", 76, -52);
+	filtBox:SetAutoFocus (false);
+	filtBox:SetMaxBytes (96);
 
-	local function doAdd ()
-		local txt = addBox:GetText();
-		if (txt == nil or txt == "") then return; end
-		-- a shift-clicked link arrives as the whole hyperlink; keep the name
-		local name = txt:match ("%[(.-)%]") or txt;
-		if (Atr_An_Watch (name, gAn_Group)) then
-			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
+	-- OnTextChanged, not OnEnterPressed: "works immediately when text is typed
+	-- in" is the request, and a filter you have to confirm is a search box.
+	local rewriting = false;
+
+	filtBox:SetScript ("OnTextChanged", function (self)
+
+		if (rewriting) then return; end
+
+		local txt = self:GetText() or "";
+
+		-- a shift-clicked link arrives as the whole hyperlink; filter on the name
+		-- anybody would have typed.  The rewrite re-enters this script, hence the
+		-- flag -- without it the SetText below would recurse.
+		local name = txt:match ("%[(.-)%]");
+		if (name) then
+			rewriting = true;
+			self:SetText (name);
+			rewriting = false;
+			txt = name;
 		end
-		addBox:SetText ("");
-		addBox:ClearFocus();
-		Atr_An_Redisplay ();
-	end
 
-	addBox:SetScript ("OnEnterPressed", doAdd);
-	addBox:SetScript ("OnEscapePressed", function (self) self:SetText (""); self:ClearFocus(); end);
+		An_SetFilter (txt);
+	end);
 
+	filtBox:SetScript ("OnEnterPressed", function (self) self:ClearFocus(); end);
+	filtBox:SetScript ("OnEscapePressed", function (self)
+		self:SetText ("");			-- OnTextChanged clears the filter with it
+		self:ClearFocus();
+	end);
+
+	-- Add is now a popup (owner's request): typing a name is rare enough that it
+	-- does not deserve the permanent box, and the box it used to share is doing
+	-- something you want on every view.
 	local addBtn = CreateFrame ("Button", "Atr_An_AddButton", panel, "UIPanelButtonTemplate");
 	addBtn:SetSize (46, 22);
-	addBtn:SetPoint ("LEFT", addBox, "RIGHT", 6, 0);
+	addBtn:SetPoint ("LEFT", filtBox, "RIGHT", 6, 0);
 	addBtn:SetText (AZT("Add"));
-	addBtn:SetScript ("OnClick", doAdd);
+	addBtn:SetScript ("OnClick", function ()
+		if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_ADD_WATCH"); end
+	end);
+	addBtn:SetScript ("OnEnter", function (self)
+		if (GameTooltip) then
+			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+			GameTooltip:SetText (AZT("Watch an item"), 1, 1, 1);
+			GameTooltip:AddLine (AZT("Type a name, or shift-click an item link into the box. It joins the group you are looking at."), 0.8, 0.8, 0.8, true);
+			GameTooltip:Show();
+		end
+	end);
+	addBtn:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
 
 	-- group filter
 	if (UIDropDownMenu_Initialize) then
@@ -2325,7 +2549,7 @@ function Atr_An_Init ()
 		if (GameTooltip) then
 			GameTooltip:SetOwner (self, "ANCHOR_LEFT");
 			GameTooltip:SetText (AZT("Rescan the watched items"), 1, 1, 1);
-			GameTooltip:AddLine (AZT("One search per item, in sequence. Stays on this tab -- leaving it stops the run."), 0.8, 0.8, 0.8, true);
+			GameTooltip:AddLine (AZT("One search per item, in sequence, for the items on screen -- the filter and the group both narrow it. Stays on this tab: leaving it stops the run."), 0.8, 0.8, 0.8, true);
 			GameTooltip:Show();
 		end
 	end);
@@ -2391,7 +2615,8 @@ function Atr_An_Init ()
 	-- Everything that only makes sense against the watchlist.  The Ledger view
 	-- has nothing to add an item to, no groups to filter by and nothing to
 	-- rescan, so these go away wholesale rather than sitting there inert.
-	gAn_MarketOnly = { addLabel, addBox, addBtn, grpLabel, newGrp, refresh, progress, _G["Atr_An_GroupDD"] };
+	-- The filter box and its label are NOT here: they are on every view now.
+	gAn_MarketOnly = { addBtn, grpLabel, newGrp, refresh, progress, _G["Atr_An_GroupDD"] };
 
 	Atr_An_SetView ("market");
 
@@ -2475,9 +2700,7 @@ if (SlashCmdList) then
 		msg = tostring (msg or ""):gsub ("^%s+", ""):gsub ("%s+$", "");
 		local cmd, rest = msg:match ("^(%S+)%s*(.*)$");
 		if (cmd == "add" and rest ~= "") then
-			local name = rest:match ("%[(.-)%]") or rest;
-			Atr_An_Watch (name);
-			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
+			An_AddWatchFromText (rest);		-- same path as the Add button's popup
 		elseif (cmd == "group" and rest ~= "") then
 			Atr_An_AddGroup (rest);
 		elseif (cmd == "trades" or cmd == "market" or cmd == "craft") then
