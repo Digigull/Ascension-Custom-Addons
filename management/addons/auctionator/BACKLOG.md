@@ -1981,7 +1981,10 @@ rather than decorative. `sell-variant-smoke.lua` still passes 27/27 over the sam
 **Not verified in game.**
 
 **What to watch:** the layout numbers are reasoned from the Ledger's budget (columns end at 630,
-delete button 636–656, scroll bar owns 664+), not seen. And a rescan of a large watchlist is one
+delete button 636–656, scroll bar owns 664+), not seen. *(Superseded 2026-08-20 — item 23: they
+were wrong, and wrong in exactly this way. The budget is Blizzard's 768px auction house; Ascension's
+is wider, so the table stopped a third short of the right edge. Widths are now measured at init and
+the columns share out the slack, so no coordinate here is a constant any more.)* And a rescan of a large watchlist is one
 AH query per item — cancellable, but not quick.
 
 ---
@@ -2354,9 +2357,57 @@ is now in a form whose output can actually be pasted back.
 
 ---
 
+## 23. Analysis tab — the layout assumed a 768px auction house — DONE
+
+**Asked 2026-08-20, with a screenshot:** the Add box is too big and sits under the character
+portrait; the columns leave the right third of the tab empty; Rescan is not at the right; the
+column headers are crowded from above; and the yellow paragraph under the table should go.
+
+Four of the five are one root cause. Every number in `Atr_An_Init` was reasoned from **Blizzard's**
+auction house — 768px wide, so a 738px panel and a 660px row (item 17's "What to watch" note said
+as much: *reasoned from the Ledger's budget, not seen*). **Ascension's window is wider than that.**
+Everything anchored to the panel's `BOTTOMRIGHT` therefore stopped short of the real right edge
+with a band of empty backdrop past it, which is what put Rescan in the middle of nowhere, and the
+columns ended where a 660px row ended rather than where the table does — so the two money columns
+were squeezed hard enough to **wrap onto two lines** while ~90px of table sat unused beside them.
+
+The fix is to stop naming a width:
+
+- the panel measures `AuctionFrame:GetWidth()` at init and spans the backdrop exactly
+  (`frameW - 22`, since the panel starts 10 in from the left and the backdrop ends 12 in from the
+  right), so a `BOTTOMRIGHT` anchor is genuinely bottom-right. Fallback 768 if the frame has no
+  width yet;
+- the scroll frame, `AN_ROW_W` and the columns all derive from that;
+- `AN_COLS` entries carry a **minimum `w` and a `grow` weight** instead of a fixed `x`;
+  `An_LayoutCols(rowW)` fills in `cx`/`cw`, handing the slack out by weight and giving the rounding
+  remainder to the last growing column so the row's right edge lands exactly on the delete lane.
+  Weights: Item 3, Group 1, Sold/day 1, Low 2, Gold/day 2, the two counts fixed. On a ~830px
+  window that is Item 184→216, Low 84→105, Gold/day 88→111.
+
+The other two:
+
+- **the Add box** is half its old width (180→90) and starts at x=76 rather than x=24. The portrait
+  is a 60px texture at the window's top-left, so anything under panel x≈57 is behind a face — the
+  label at x=20 and the box at x=24 both were. Its `Add` button and the group controls follow it.
+- **the headers** moved from -74 to -84, and the scroll frame and rows from -92 to -102, with them.
+  The group dropdown's frame art hangs well below its own anchor and was all but touching the
+  header row.
+- **the yellow paragraph** is gone; the summary is now just `N watched`. The two clauses it carried
+  are the same two facts the `Sold/day` and `Gold/day` header tooltips already state (item 18) —
+  which is where someone puzzled by a number looks — so as standing text it was a wall of yellow
+  under the table that never changed.
+
+**Verified** by `luac5.1 -p`, `analysis-feed-smoke.lua` (27/27, it loads the file), and by running
+`An_LayoutCols` standalone at 768, 830 and an absurd 600: at the two real widths the columns end
+exactly on the delete lane, and at 600 they fall back to their minimums rather than inverting.
+**Not verified in game** — the widths are now measured rather than assumed, which is the point,
+but nothing here has been seen on screen.
+
+---
+
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20, 21 and 22 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22 and 23 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was

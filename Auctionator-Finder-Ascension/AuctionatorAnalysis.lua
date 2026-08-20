@@ -367,7 +367,7 @@ end
 
 local AN_NUM_ROWS = 14;
 local AN_ROW_H    = 20;
-local AN_ROW_W    = 660;
+local AN_ROW_W    = 660;		-- a placeholder: Atr_An_Init recomputes it from the real window
 
 -- ONE definition of the columns, used to build both the headers and the cells.
 -- They were two separate lists and had drifted apart: every header sat at the
@@ -376,23 +376,62 @@ local AN_ROW_W    = 660;
 -- header and "Gold/day" ran under the per-row delete button.  Deriving both from
 -- this table is what stops that happening again.
 --
--- `x` is relative to a row; a header is the same x shifted by the scroll frame's
--- own inset (AN_HEAD_X0).  Columns end at 630 because the last 30px of the row
--- belong to the delete button, and the scroll bar owns 664 and beyond (the same
--- budget the Ledger's rows use).
-local AN_HEAD_X0 = 14;
+-- `w` is a column's MINIMUM width and `grow` its share of whatever the window
+-- has spare; An_LayoutCols fills in `cx`/`cw`, which are the numbers actually
+-- used.  Those were fixed x positions summing to a 660px row, and 660 is only
+-- right on Blizzard's 768px auction house: Ascension's is wider, so the right
+-- third of the tab sat empty while the two money columns were squeezed hard
+-- enough to wrap onto two lines.  Nothing here may assume a window width.
+--
+-- A header is the same cx shifted by the scroll frame's own inset (AN_HEAD_X0).
+local AN_HEAD_X0  = 14;
+local AN_LEAD     = 6;		-- gap before the first column
+local AN_COL_GAP  = 4;		-- gap between columns
+local AN_DEL_LANE = 30;		-- the delete button's own lane at the end of a row
 
 local AN_COLS = {
-	{ key = "item",		head = "Item",		x = 6,	 w = 184					},
-	{ key = "grp",		head = "Group",		x = 194, w = 74						},
-	{ key = "sellers",	head = "Sellers",	x = 272, w = 48,  just = "CENTER"	},
-	{ key = "listings",	head = "Listings",	x = 324, w = 54,  just = "CENTER"	},
-	{ key = "rate",		head = "Sold/day",	x = 382, w = 68,  just = "CENTER",
+	{ key = "item",		head = "Item",		w = 184, grow = 3					},
+	{ key = "grp",		head = "Group",		w = 74,  grow = 1					},
+	{ key = "sellers",	head = "Sellers",	w = 48,  grow = 0, just = "CENTER"	},
+	{ key = "listings",	head = "Listings",	w = 54,  grow = 0, just = "CENTER"	},
+	{ key = "rate",		head = "Sold/day",	w = 68,  grow = 1, just = "CENTER",
 	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count." },
-	{ key = "low",		head = "Low",		x = 454, w = 84,  just = "RIGHT"	},
-	{ key = "farm",		head = "Gold/day",	x = 542, w = 88,  just = "RIGHT",
+	{ key = "low",		head = "Low",		w = 84,  grow = 2, just = "RIGHT"	},
+	{ key = "farm",		head = "Gold/day",	w = 88,  grow = 2, just = "RIGHT",
 	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise." },
 };
+
+-- Spread the columns over a row `rowW` wide: each keeps its minimum width and
+-- the slack is handed out by `grow`, with the rounding remainder going to the
+-- last growing column so the right edge lands exactly on the delete lane.
+local function An_LayoutCols (rowW)
+
+	local base, grow, last = 0, 0, nil;
+	local i, c;
+	for i, c in ipairs (AN_COLS) do
+		base = base + c.w;
+		if ((c.grow or 0) > 0) then grow = grow + c.grow; last = i; end
+	end
+
+	local slack = rowW - AN_LEAD - AN_DEL_LANE - AN_COL_GAP * (#AN_COLS - 1) - base;
+	if (slack < 0 or grow == 0) then slack = 0; end		-- narrow window: minimums win
+
+	local x, handed = AN_LEAD, 0;
+	for i, c in ipairs (AN_COLS) do
+		local add = 0;
+		if (slack > 0 and (c.grow or 0) > 0) then
+			if (i == last) then
+				add = slack - handed;
+			else
+				add = math.floor (slack * c.grow / grow);
+				handed = handed + add;
+			end
+		end
+		c.cw = c.w + add;
+		c.cx = x;
+		x = x + c.cw + AN_COL_GAP;
+	end
+end
 
 local gAn_Group = nil;		-- nil = every group
 
@@ -500,13 +539,16 @@ function Atr_An_Redisplay ()
 		end
 	end
 
+	-- Just the count.  This line used to carry two paragraphs explaining what a
+	-- range and a turnover figure mean; both now live in the tooltips on the
+	-- "Sold/day" and "Gold/day" headers, which is where someone puzzled by a
+	-- number actually looks.  As standing text under the table it was a wall of
+	-- yellow that never changed and never got read twice (owner's call, 2026-08).
 	if (Atr_An_Summary) then
 		local watched = 0;
 		local nm;
 		for nm in pairs (Atr_An_DB ().watch) do watched = watched + 1; end
-		Atr_An_Summary:SetText (string.format (
-			AZT("%d watched   |   a range means some listings could have expired -- scan more often to narrow it   |   turnover is a floor: anything posted and sold between two scans is invisible"),
-			watched));
+		Atr_An_Summary:SetText (string.format (AZT("%d watched"), watched));
 	end
 end
 
@@ -1157,10 +1199,29 @@ function Atr_An_Init ()
 
 	if (Atr_An_Panel or type (CreateFrame) ~= "function") then return; end
 
+	-- The panel used to be a flat 738 wide, which is Blizzard's 768px auction
+	-- house minus its insets.  Ascension's window is wider, so everything anchored
+	-- to the panel's BOTTOMRIGHT -- the Rescan button above all -- stopped short of
+	-- the right edge with a band of empty backdrop beyond it.  Measure instead:
+	-- the panel starts 10 in from the window's left and ends where the backdrop
+	-- does, 12 in from its right, so it IS the content area and anything anchored
+	-- right is genuinely right.  The height is left alone -- it already matches.
+	local frameW = 768;
+	if (AuctionFrame and AuctionFrame.GetWidth) then frameW = AuctionFrame:GetWidth() or 768; end
+	if (frameW < 600) then frameW = 768; end		-- not laid out yet: fall back
+
+	local panelW = math.floor (frameW) - 22;
+
 	local panel = CreateFrame ("Frame", "Atr_An_Panel", AuctionFrame);
-	panel:SetSize (738, 447);
+	panel:SetSize (panelW, 447);
 	panel:SetPoint ("TOPLEFT", 10, 0);
 	panel:Hide();
+
+	-- Row and scroll widths follow from that: the scroll frame keeps a small right
+	-- margin, and a row stops short of the scroll bar by AN_DEL_LANE.
+	local scrollW = panelW - AN_HEAD_X0 - 8;
+	AN_ROW_W = scrollW - 30;
+	An_LayoutCols (AN_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
 	bg:SetTexture (0, 0, 0, 0.85);
@@ -1168,17 +1229,19 @@ function Atr_An_Init ()
 	bg:SetPoint ("BOTTOMRIGHT", AuctionFrame, "BOTTOMRIGHT", -12, 28);
 
 	local title = panel:CreateFontString (nil, "BACKGROUND", "GameFontNormal");
-	title:SetPoint ("TOP", -10, -18);
+	title:SetPoint ("TOP", 0, -18);
 	title:SetText ("Auctionator - "..AZT("Analysis"));
 
 	-- add box: type a name or shift-click an item link into it
 	local addLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-	addLabel:SetPoint ("TOPLEFT", 20, -40);
+	addLabel:SetPoint ("TOPLEFT", 72, -40);
 	addLabel:SetText (AZT("Watch item"));
 
 	local addBox = CreateFrame ("EditBox", "Atr_An_AddBox", panel, "InputBoxTemplate");
-	addBox:SetSize (180, 20);
-	addBox:SetPoint ("TOPLEFT", 24, -52);
+	-- Half its old 180 width, and started past x=70: at x=24 both it and its
+	-- label ran under the auction house's portrait, which is drawn over them.
+	addBox:SetSize (90, 20);
+	addBox:SetPoint ("TOPLEFT", 76, -52);
 	addBox:SetAutoFocus (false);
 	addBox:SetMaxBytes (96);
 
@@ -1234,24 +1297,26 @@ function Atr_An_Init ()
 	grpLabel:SetPoint ("TOPLEFT", 436, -40);
 	grpLabel:SetText (AZT("New group"));
 
-	-- headers: same x, width and justification as the cells beneath them
+	-- Headers: same x, width and justification as the cells beneath them.  They
+	-- sit at -84, not -74: the group dropdown's frame art hangs well below its
+	-- own anchor and was all but touching them.
 	local c;
 	for _, c in ipairs (AN_COLS) do
 
 		local fs = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
-		fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.x, -74);
-		fs:SetWidth (c.w);
+		fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.cx, -84);
+		fs:SetWidth (c.cw);
 		fs:SetJustifyH (c.just or "LEFT");
 		fs:SetText (AZT (c.head));
 
 		-- A FontString cannot take scripts, so a column with something to explain
 		-- gets an invisible hit frame over its header.  It stops above the scroll
-		-- frame (-92) so it cannot eat a click meant for a row.
+		-- frame (-102) so it cannot eat a click meant for a row.
 		if (c.tip) then
 			local col = c;
 			local hit = CreateFrame ("Frame", nil, panel);
-			hit:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.x, -72);
-			hit:SetSize (col.w, 16);
+			hit:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.cx, -82);
+			hit:SetSize (col.cw, 16);
 			hit:EnableMouse (true);
 			hit:SetScript ("OnEnter", function (self)
 				if (GameTooltip) then
@@ -1266,8 +1331,8 @@ function Atr_An_Init ()
 	end
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
-	scroll:SetPoint ("TOPLEFT", 14, -92);
-	scroll:SetSize (690, AN_NUM_ROWS * AN_ROW_H);
+	scroll:SetPoint ("TOPLEFT", AN_HEAD_X0, -102);
+	scroll:SetSize (scrollW, AN_NUM_ROWS * AN_ROW_H);
 	scroll:SetScript ("OnVerticalScroll", function (self, offset)
 		if (FauxScrollFrame_OnVerticalScroll) then
 			FauxScrollFrame_OnVerticalScroll (self, offset, AN_ROW_H, Atr_An_Redisplay);
@@ -1275,7 +1340,7 @@ function Atr_An_Init ()
 	end);
 
 	local holder = CreateFrame ("Frame", nil, panel);
-	holder:SetPoint ("TOPLEFT", AN_HEAD_X0, -92);
+	holder:SetPoint ("TOPLEFT", AN_HEAD_X0, -102);
 	holder:SetSize (AN_ROW_W, AN_NUM_ROWS * AN_ROW_H);
 
 	local i;
@@ -1288,8 +1353,8 @@ function Atr_An_Init ()
 		local cc;
 		for _, cc in ipairs (AN_COLS) do
 			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-			fs:SetPoint ("LEFT", cc.x, 0);
-			fs:SetWidth (cc.w);
+			fs:SetPoint ("LEFT", cc.cx, 0);
+			fs:SetWidth (cc.cw);
 			fs:SetJustifyH (cc.just or "LEFT");
 			line[cc.key] = fs;
 		end
@@ -1319,11 +1384,10 @@ function Atr_An_Init ()
 		line:Hide();
 	end
 
-	-- Given a width so it wraps instead of running off the panel and under the
-	-- rescan button; anchored BOTTOMLEFT, so extra lines grow upward.
+	-- One short line -- the watched count -- so it no longer needs a wrap width
+	-- to keep it out from under the Rescan button.
 	local summary = panel:CreateFontString ("Atr_An_Summary", "ARTWORK", "GameFontNormalSmall");
 	summary:SetPoint ("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 34);
-	summary:SetWidth (520);
 	summary:SetJustifyH ("LEFT");
 	summary:SetText ("");
 
