@@ -923,3 +923,61 @@ reagents.
 The colour segmentation was resolved back to plain text rather than eyeballed —
 `[gold:+][blue:Reagent List]`, `[gold:+][default:New list...]`, `[gold:+][default:New group...]`.
 **Not verified in game.**
+
+---
+
+## 11. The craft tooltip's yield mark was on the wrong line — DONE
+
+**Asked (owner, 2026-08-20, with a screenshot of an Alchemy tooltip):** *"On the tooltip for
+multicraft can you change Craft costx3 and remove the x3 there, then on Craft profit change it to
+Craft profit(3)"*.
+
+**They are right, and the old label was a claim about the wrong number.** A multi-output recipe is
+shown PER CRAFT: `Atr_AddCraftProfitToTip` multiplies a per-item reagent cost back up by the yield,
+so the figure beside *Craft cost* is the recipe's whole reagent bill for **one press of Create** —
+not three of anything. `x3` beside it named the arithmetic used to get there and read as a
+multiplier on the result.
+
+The profit line is where the count actually earns its place: that margin is the whole press, so it
+depends on selling all three. `(3)` states the yield without pretending to be a multiplier.
+
+```
+before                          after
+  Craft cost x3      33g          Craft cost         33g
+  Craft profit x3    65g          Craft profit (3)   65g
+```
+
+**What did not change, deliberately:** the *stack* multiplier. Hold Shift over a stack of five and
+every line on the tooltip is scaled by five and says `x5`, the Auction line included — that is a
+different annotation, it applies to the whole tooltip, and the two can never co-occur anyway
+(`perCraft` requires no stack scaling). The `Craft loss` line takes the new mark too, being the same
+row in the negative.
+
+**The header comment was arguing for the old shape and is updated in the same edit** — marked
+superseded rather than deleted, because "tag both lines, they are both scaled" is a reading somebody
+will arrive at again.
+
+**Verified** by driving the real `Atr_AddCraftProfitToTip` with a stubbed tooltip and printing the
+lines it emits, across all five cases — the reported one, stack-scaled, a recipe that makes one, an
+unknown market price, and a loss:
+
+```
+makes 3, hovering one (the reported case):
+  Craft cost           33g
+  Craft profit (3)     63g
+makes 3, hovering a stack of 5 with Shift (stack scaling wins, no yield mark):
+  Craft cost x5        55g
+  Craft profit x5      105g
+makes ONE (no mark at all):
+  Craft cost           11g
+  Craft profit         21g
+makes 3, market price unknown:
+  Craft cost           33g
+  Craft profit (3)     unknown
+makes 3, sells at a LOSS:
+  Craft cost           33g
+  Craft loss (3)       -30g
+```
+
+`luac5.1 -p` clean; all five Auctionator suites still pass (27 + 68 + 114 + 25 + 20).
+**Not verified in game.**
