@@ -6,9 +6,9 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
-and deliberately declined. Four items do not carry that label and are the ones to know about:
+and deliberately declined. Five items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **item 28** is a new request with nothing built yet. **"Suggested order" at the foot of the file is the live view
+**item 10** closed without any code, and **items 28 and 29** are new, with nothing built yet. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
 was and was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14,
@@ -1106,6 +1106,11 @@ coming back from a supplied ranking. All passed first run; not kept, per the rep
 and nothing overlaps in the control row; the top of the list is a reagent you would recognise as
 the one your best crafts eat; a vendor-sold reagent says Vendor; and a row's tooltip names the
 recipes that want it.
+
+**Verified in game 2026-08-20, and it worked — but the ranking column was the wrong one.** The
+figures are right and the owner read the page correctly; ranking by dependence puts a 29s filler
+reagent above the two that own the craft cost. **Item 29** carries the report, why the number is
+correct anyway, and the fix.
 
 ### Original v1 suggestion, for the record
 
@@ -3131,14 +3136,150 @@ What it would then feed, in rising order of ambition:
 
 ---
 
+## 29. NEW — the Reagents view ranks dependence; you decide with money
+
+**Reported in game by the owner, 2026-08-20, the day B3 shipped:** "it says cured feralhide is the
+biggest profit number on the reagents page but the Essence of Fire and Cleansed Plague Leather are
+the real value in these leather working crafts."
+
+**The numbers are correct and the reading is right.** Both, at once, which is the whole of this
+item. The Profit column sums the per-craft profit of every paying recipe that needs a reagent, so
+Cured Feralhide's 843g 16s is arithmetic over six Gambesons — the four on screen add to 707g 33s
+and the two below the fold make up the rest. What it *says* is "if this vanished, that much profit
+becomes unavailable to me", which is a **dependence** measure, and dependence is trivially
+satisfied by a 29s item with 161 listings from 19 sellers.
+
+**So the column is structurally rigged.** The winner will always be the cheapest thing that appears
+in everything, because it is in everything *because* it is cheap filler. That is not a bug in the
+arithmetic; it is the wrong question ranked first.
+
+### The correction that makes it a rule the addon can apply
+
+The owner's first instinct was "cheap reagents never matter" and they corrected it themselves
+(recorded in item 8's group C, which is the same insight pointed at a different feature).
+**The filter is not unit price. It is share of the bill.** Two rows off the same screenshot:
+
+| Reagent | Costs each | Units wanted | Actual outlay | Verdict |
+|---|---|---|---|---|
+| Cured Feralhide | 29s | 6 | **1g 74s** | ignorable — 0.2% of a Devilsaur Gambeson |
+| Illusion Dust | 56s | 147 | **82g 32s** | not ignorable — bulk turns pennies into a bill |
+
+Same "cheap", forty-seven times the money. And the proportional filter is **self-correcting under a
+price shock**: if a reagent quadruples, its share quadruples with it and the row unfolds itself,
+where an absolute "under X copper = hide" rule would have hidden it exactly when it mattered.
+
+### The number that is computed and not shown
+
+`Need x Cost`. The addon already works it out — it is the *"That costs"* line in the row's hover
+tooltip — and it is neither a column nor sortable. Promote it and the page inverts:
+
+| Reagent | Profit (today's rank) | What the basket costs | Return |
+|---|---|---|---|
+| Cured Feralhide | 843g 16s | 1g 74s | 484x |
+| Enchanting Vellum - Weapon | 673g 44s | 52g 80s | 12.8x |
+| Cured Savage Meat | 628g 99s | 221g 56s | 2.8x |
+| Illusion Dust | 468g 97s | 82g 32s | 5.7x |
+| Greater Eternal Essence | 459g 22s | 312g 40s | 1.5x |
+
+Top row: 1g 74s of shopping unlocks 843g. Bottom row: 312g 40s unlocks 459g. Both true, opposite
+decisions, and the page currently ranks them the wrong way round.
+
+**The owner's own reading is a cost-share reading**, and it is stark on the two craft tooltips
+they posted: Essence of Fire x5 is **99g 50s of Devilsaur Gambeson's 134g 26s — 74%**, and
+Cleansed Plague Leather x1 is **30g 58s of Magescale Gambeson's 39g 83s — 77%**. Those crafts are
+financially a bet on two markets; everything else in them is rounding. And the reagents that own
+the cost are also the thin ones — 10 sellers and 7 sellers against Cured Feralhide's 19 (counts the
+owner looked up by hand, which is the job the watchlist exists to do).
+
+### The reform: print a bill, not a ranking
+
+Reagents are never decided on their own. You pick a craft and the shopping follows, so the view
+should stop being a standalone league table and become **the invoice for a plan**: tick some
+recipes on the Crafting view, name a batch size, get the list you walk down at the auction house.
+Worked from the owner's real numbers, for *five Devilsaur Gambesons and five Magescale Gambesons*:
+
+| Reagent | Buy | Each | Cost | Share | Supply |
+|---|---|---|---|---|---|
+| Essence of Fire | 25 | 19g 90s | **497g 50s** | 57% | 10 sellers, 66 listed |
+| Cleansed Plague Leather | 5 | 30g 58s | **152g 90s** | 18% | 7 sellers, 50 listed |
+| Sulfur-Tanned Stegodon Hide | 5 | 20g | 100g | 11% | not watched |
+| Devilsaur Leather | 20 | 3g 62s | 72g 40s | 8% | not watched |
+| Blue Dragonscale | 20 | 1g 74s | 34g 80s | 4% | not watched |
+| *+ 2 cheap reagents, folded* | | | *12g 32s* | *1%* | *always available* |
+| **To buy** | | | **869g 92s** | | *after the 2 Feralhide in the bank* |
+
+and under it the line that is the point: **spend 869g 92s → sell 3,148g 75s → keep 2,278g 83s.**
+
+No new arithmetic anywhere in that table. The same numbers the addon already holds, multiplied by a
+batch size and **sorted by money instead of by dependence** — at which point the two reagents the
+owner picked out by eye are the top two rows, in order, with the reason printed beside them.
+
+### Four rules, and the third is the one with teeth
+
+1. **Sort by money, not dependence.** Dependence stays as a column; it answers a real question,
+   just not the one you have while holding gold.
+2. **Fold what does not matter.** Under ~2% of the bill collapses to one dim unfoldable line, and
+   vendor-sold folds with it. The fix for noise is fewer rows, not more columns — and the owner is
+   already applying this rule by eye, which is the tell that the addon should be applying it.
+3. **Count units, not listings.** "66 listings" could be 66 Essences of Fire or 1,300; you need 25.
+   That gap is the only thing that can stop a craft you can otherwise afford, and it is the one
+   question neither view can answer. **`Atr_An_Observe` already reads every listing's stack size to
+   compute the unit price and then discards it** — summing it into the `obs` record turns Supply
+   into "330 available, you need 25".
+4. **Say the risk in words.** Three states are enough — *most of the bill* / *thin market* / fine.
+   The same line belongs on a Crafting row's tooltip: "74% of this cost is Essence of Fire, from
+   10 sellers" is what a margin is really a bet on.
+
+### Driving it
+
+One control, on the Crafting view because that is where profit is already being read: **a tick box
+per recipe and a batch size**. With nothing ticked it falls back to today's behaviour — every
+paying recipe, one craft of each — so the page is never empty and never demands setup. The
+difference is that "one of each" stops being presented as a plan, which it is not; it is the
+baseline reading of what your professions depend on.
+
+Beyond that, a **gold budget** ("I have 500g — what should I make") is the version an ordinary
+player would use every session, but it is a genuine feature rather than a presentation fix and it
+goes last.
+
+### Stages
+
+1. **Cost column, sorted by default, trivia folded.** No new data, no new capture — the outlay is
+   already computed and already in the tooltip. On its own it answers the report that opened this
+   item.
+2. **Count units in the scan.** Sum each listing's stack size where `Atr_An_Observe` already reads
+   it and store it beside the listing count. Old watched items backfill on their next scan.
+3. **The plan** — tick, batch, and the spend/sell/keep line. This is the reform; stages 1 and 2 are
+   what make it readable when it arrives.
+4. **Verdict text**, and the risk line on craft tooltips. Cheap, and the part a layman actually
+   reads — last only because the thresholds want tuning against a few weeks of real numbers rather
+   than guessed ones.
+
+---
+
 ## Suggested order
 
 Items 1–9 and 11–27 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Item 28 is the one unstarted request**, added 2026-08-20. What is otherwise left is
+(2026-08-19). **Items 28 and 29 are unstarted**, both added 2026-08-20. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
-all. In order:
+all.
 
-1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
+**Reordered 2026-08-20 after the first in-game session with the Reagents view.** What moved to the
+top is not the biggest item but the cheapest correction to a thing that was actually confusing in
+use, followed by the one diagnostic that could change the value of everything below it. In order:
+
+1. **Item 29, stages 1 and 2** — the Reagents view ranks dependence, so a 29s filler reagent sits
+   above the two that own the craft cost. Stage 1 promotes the outlay the addon already computes
+   to a sortable column, flips the default sort to it and folds anything under ~2% of the bill;
+   stage 2 sums the stack sizes `Atr_An_Observe` already reads and throws away, so Supply counts
+   *units* against what you need instead of listings. Neither needs new data or a new capture, and
+   between them they answer the only thing that has confused anyone in use so far.
+2. **Item 28's stage 0** — one diagnostic at a Call Board, pasted back. It is minutes of work and
+   it decides whether the addon can see the server's *published* weekly demand at all. Everything
+   else on this list measures effects; this is the only candidate cause, so it is worth knowing
+   before more effort goes into inferring what it would simply state. If it reads, it outranks C
+   outright — a leading indicator beats a lagging one built from a series that does not exist yet.
+3. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
    all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
    inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing
    lifetime, undercut churn), which are arithmetic over data the addon already holds. **C** (price
@@ -3147,24 +3288,21 @@ all. In order:
    `{ t, low }` on each watched item's existing `obs` record, not a retrofit of the mean database,
    which sorts by price and evicts at random. The item carries the owner's worked example, the
    storage limits of keeping history for everything, and why the obvious shortcut fails.
-2. **Item 28's stage 0** — one diagnostic at a Call Board, pasted back. It is minutes of work and
-   it decides whether the addon can see the server's *published* weekly demand at all. Everything
-   else on this list measures effects; this is the only candidate cause, so it is worth knowing
-   before more effort goes into inferring what it would simply state. If it reads, it outranks C
-   outright — a leading indicator beats a lagging one built from a series that does not exist yet.
-3. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+4. **Item 29's stages 3 and 4** — the plan (tick recipes, name a batch, get a bill) and the
+   plain-English verdicts. The reform proper, and it wants stages 1 and 2 under it first.
+5. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
-4. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+6. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
    all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
    data has never been seen.
-5. **Item 12's sizing question** — how many names on this server carry more than one variant.
+7. **Item 12's sizing question** — how many names on this server carry more than one variant.
    Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
    only whether extending part 3 is worth it, not what shape it would take.
-6. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+8. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
    purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
    comparison against a real mismatched pair, never an imagined one.
-7. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+9. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
    price. The craft cost reproduces exactly from real data, so this is an auction-house question
    rather than an addon one, and there may be no work here at all.
 
@@ -3269,6 +3407,12 @@ to become visible.
   8898 samples carry no timestamps. The advisor is a data-plumbing project before it is a
   feature.
 - **Item 9:** parked by the owner until item 7 lands.
+- **Item 29:** where the folding threshold actually sits. ~2% of the bill is a guess that reads
+  well against one screenshot and wants a few sessions of real bills before it is fixed in code —
+  and it must stay a share rather than a copper figure, for the reason the item gives. Also open:
+  whether the plan is driven by tick boxes or by a gold budget. The item recommends tick boxes
+  first because they need no allocation logic; the budget is the version an ordinary player would
+  actually use.
 - **Item 28:** whether Ascension's Call Board is a standard quest giver — in which case the
   standard quest APIs read it and the whole item is cheap — or a custom frame, in which case they
   return nothing and it is dead in that form. **This is the gate on the item and nothing offline
