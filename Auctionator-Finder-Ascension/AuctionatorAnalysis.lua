@@ -109,6 +109,7 @@ function Atr_An_DB ()
 	if (type (db.groups) ~= "table") then db.groups = {}; end
 	if (type (db.watch)  ~= "table") then db.watch  = {}; end
 	if (type (db.obs)    ~= "table") then db.obs    = {}; end
+	if (type (db.ids)    ~= "table") then db.ids    = {}; end
 
 	return db;
 end
@@ -155,6 +156,129 @@ function Atr_An_AddGroup (name)
 	tinsert (db.groups, name);
 	table.sort (db.groups);
 	return true;
+end
+
+-- WHAT THE CLIENT NEEDS TO DRAW A TOOLTIP, AND WHY IT SO OFTEN HAS NEITHER --
+--
+-- A tooltip needs an item ID. This tab's three views mostly have a NAME: the
+-- watchlist is keyed by one, and so is every enchant recipe (an enchant makes no
+-- item, so its record is filed under the scroll it sells as). GetItemInfo can
+-- turn a name into a link, but only for an item the CLIENT has cached, and it
+-- caches what it has seen -- which is why a fresh session showed no tooltip
+-- until something was looked up, and why the same item needed looking up again
+-- the next session (owner's report, 2026-08-20: Essence of Earth on the market
+-- view, and the Scroll of Enchant rows on the crafting view).
+--
+-- The client cannot be asked "what ID is this name" -- but this addon has been
+-- writing that answer down for months without anybody noticing, in three saved
+-- tables it keeps for other reasons:
+--
+--   * every REAGENT of every harvested recipe carries an id AND a name, because
+--     the profession harvest stores both (a reagent link can come back nil on
+--     this client, so the name is its fallback).  That is a name -> id map of
+--     every trade good the player's professions use -- Essence of Earth among
+--     them -- built by opening a profession window once;
+--   * every LEDGER row carries both, since Atr_Ledger_Add resolves the id off
+--     the link when it records the trade;
+--   * every watched item that has been observed carries the id this file
+--     started storing with item 26.
+--
+-- So the index is assembled from those, once per session, at no storage cost --
+-- and anything NEW that gets resolved from a real link is written to a small
+-- saved map of our own, so one lookup is the last one that item ever needs.
+--
+-- That map is GATED to names this tab could actually draw (watched, or a
+-- harvested recipe), which bounds it at a few hundred entries: an ungated
+-- name -> id cache fed by a category sweep is thousands of rows of saved
+-- variable, and item 13 was spent clawing back exactly that kind of weight.
+local gAn_IdIndex = nil;		-- name -> id, in memory, one build per session
+
+local function An_IdFromLink (link)
+
+	if (type (link) ~= "string" or zc == nil or zc.ItemIDfromLink == nil) then return nil; end
+
+	return tonumber ((zc.ItemIDfromLink (link)));		-- extra parens: returns 3 values
+end
+
+local function An_IdIndexBuild ()
+
+	local idx = {};
+	local db  = Atr_An_DB ();
+
+	local nm, v;
+
+	-- what we have already learned and saved
+	for nm, v in pairs (db.ids) do
+		if (type (v) == "number") then idx[nm] = v; end
+	end
+
+	-- watched items, from their own observations
+	for nm, v in pairs (db.obs) do
+		if (type (v) == "table" and v.id and idx[nm] == nil) then idx[nm] = v.id; end
+	end
+
+	-- the ledger: every row it kept carries a name and the id it resolved
+	if (type (AUCTIONATOR_LEDGER) == "table" and type (AUCTIONATOR_LEDGER.rows) == "table") then
+		local i, row;
+		for i = 1, #AUCTIONATOR_LEDGER.rows do
+			row = AUCTIONATOR_LEDGER.rows[i];
+			if (type (row) == "table" and row.name and row.id and idx[row.name] == nil) then
+				idx[row.name] = row.id;
+			end
+		end
+	end
+
+	-- every reagent of every harvested recipe
+	if (type (AUCTIONATOR_CRAFT_RECIPES) == "table") then
+		local _, rec, rg;
+		for _, rec in pairs (AUCTIONATOR_CRAFT_RECIPES) do
+			if (type (rec) == "table" and type (rec.reagents) == "table") then
+				for _, rg in ipairs (rec.reagents) do
+					if (type (rg) == "table" and rg.id and rg.name and idx[rg.name] == nil) then
+						idx[rg.name] = rg.id;
+					end
+				end
+			end
+		end
+	end
+
+	return idx;
+end
+
+-- Is this a name the tab could actually draw?  The gate on what gets SAVED, and
+-- on whether a scan is worth asking the auction API for a link.  A recipe key
+-- covers the case that prompted it: "Scroll of Enchant Boots - Speed" is a
+-- crafting row and nothing else in the addon can resolve its ID.
+local function An_IdWanted (itemName)
+
+	if (Atr_An_IsWatched (itemName)) then return true; end
+
+	return (type (AUCTIONATOR_CRAFT_RECIPES) == "table"
+			and AUCTIONATOR_CRAFT_RECIPES[itemName] ~= nil);
+end
+
+function Atr_An_IdForName (itemName)
+
+	if (type (itemName) ~= "string" or itemName == "") then return nil; end
+
+	if (gAn_IdIndex == nil) then gAn_IdIndex = An_IdIndexBuild (); end
+
+	return gAn_IdIndex[itemName];
+end
+
+-- Remember a name -> id resolved from a real link.  Global so the feed above can
+-- call it; see the gate comment for why not everything is kept.
+function Atr_An_LearnId (itemName, id)
+
+	id = tonumber (id);
+	if (type (itemName) ~= "string" or itemName == "" or id == nil) then return; end
+
+	if (gAn_IdIndex == nil) then gAn_IdIndex = An_IdIndexBuild (); end
+	if (gAn_IdIndex[itemName] == id) then return; end
+
+	gAn_IdIndex[itemName] = id;
+
+	if (An_IdWanted (itemName)) then Atr_An_DB ().ids[itemName] = id; end
 end
 
 -- OBSERVATION -------------------------------------------------------------
@@ -206,8 +330,8 @@ function Atr_An_Observe (itemName, listings, now)
 		-- the first listing that carries a link and never revisited -- a same-name
 		-- variant is a different instance of the same item, so any of them names
 		-- the right thing to show.
-		if (o.id == nil and L.link and zc and zc.ItemIDfromLink) then
-			o.id = tonumber ((zc.ItemIDfromLink (L.link)));   -- extra parens: returns 3 values
+		if (o.id == nil and L.link) then
+			o.id = An_IdFromLink (L.link);
 		end
 
 		if (buy > 0) then
@@ -338,6 +462,16 @@ function Atr_An_ObserveResults (results)
 	local i;
 	for i = 1, #results do
 		local r = results[i];
+
+		-- Learn the name -> id here, for EVERY result and not just the watched
+		-- ones: this is the only place the addon sees a live link beside the name
+		-- it was listed under, and the crafting view's enchant rows -- keyed by a
+		-- scroll name nothing else can resolve -- are exactly what needs it.  The
+		-- gate inside decides what is worth keeping.
+		if (r and r.name and r.link and Atr_An_IdForName (r.name) == nil) then
+			Atr_An_LearnId (r.name, An_IdFromLink (r.link));
+		end
+
 		if (r and r.name and Atr_An_IsWatched (r.name)) then
 			local t = byName[r.name];
 			if (t == nil) then t = {}; byName[r.name] = t; end
@@ -368,6 +502,17 @@ end
 function Atr_An_CollectListing (srch, itemName, owner, count, buyout, index)
 
 	if (type (srch) ~= "table" or type (itemName) ~= "string") then return; end
+
+	-- EVERY scan passes through here, which makes it the one place a crafting
+	-- row's scroll can learn its own ID: a scroll is not gear, so looking one up
+	-- lands on the Buy tab, which never reaches the Finder's result feed.  Two
+	-- table lookups per listing in the ordinary case -- the API call happens only
+	-- for a name this tab can draw and cannot already resolve.
+	if (An_IdWanted (itemName) and Atr_An_IdForName (itemName) == nil
+		and index and type (GetAuctionItemLink) == "function") then
+		Atr_An_LearnId (itemName, An_IdFromLink (GetAuctionItemLink ("list", index)));
+	end
+
 	if (not Atr_An_IsWatched (itemName)) then return; end
 
 	local bag = srch.anListings;
@@ -858,21 +1003,32 @@ local function An_RowLink (rec)
 	if (rec == nil) then return nil; end
 	if (rec.link) then return rec.link; end
 
-	if (rec.id and type (GetItemInfo) == "function") then
-		local _, link = GetItemInfo (rec.id);
+	-- The ID this row knows, or the one the index remembers for its name. A
+	-- watch entry and an enchant recipe are both name-only, and the index is
+	-- what gives them an ID at all (see Atr_An_IdForName).
+	local id = rec.id or Atr_An_IdForName (rec.name);
+
+	if (id and type (GetItemInfo) == "function") then
+		local _, link = GetItemInfo (id);
 		if (link) then rec.link = link; return link; end
 	end
 
 	if (rec.name and Atr_GetItemLink) then
 		local link = Atr_GetItemLink (rec.name);
-		if (link) then rec.link = link; return link; end
+		if (link) then
+			rec.link = link;
+			-- resolved from the client's own cache: worth writing down, since
+			-- that cache is a session and this is not
+			Atr_An_LearnId (rec.name, An_IdFromLink (link));
+			return link;
+		end
 	end
 
 	-- An ID the client cannot name yet still makes a tooltip: "item:1234" is a
 	-- link as far as SetHyperlink and GetItemInfo are concerned, and asking for
 	-- it is what makes the client go and fetch the item. NOT remembered on the
 	-- record -- the next hover should get the real link once it arrives.
-	if (rec.id) then return "item:"..rec.id; end
+	if (id) then return "item:"..id; end
 
 	return nil;
 end
@@ -894,7 +1050,12 @@ local gAn_Warm, gAn_Warmed = nil, {};
 
 local function An_WarmItem (rec)
 
-	local id = rec and rec.id;
+	if (rec == nil) then return; end
+
+	-- the index first, because the rows that need warming most are the ones with
+	-- no ID of their own: a watched name, an enchant's scroll
+	local id = rec.id or Atr_An_IdForName (rec.name);
+
 	if (id == nil or gAn_Warmed[id]) then return; end
 
 	if (type (GetItemInfo) == "function" and GetItemInfo (id)) then
