@@ -75,6 +75,19 @@ end
 local ATR_LEDGER_MAX_ROWS = 2000;
 local gLedgerPruneTold    = false;
 
+-- WHICH VERSION OF THE RECORD A READER IS LOOKING AT.
+--
+-- Bumped by every write and by the clear.  It exists so a cached view can tell
+-- "the ledger has not changed" from "I have not looked recently" without either
+-- re-totalling on every frame or going stale: the per-item sub-tab (BACKLOG
+-- item 8) caches its rows and compares this, so a purchase made while the
+-- auction house is open shows up the moment that tab is next drawn.
+--
+-- A plain global rather than a saved field: it means nothing between sessions,
+-- and persisting it would only invite somebody to compare two numbers that were
+-- never counting the same thing.
+gAtr_LedgerRev = 0;
+
 function Atr_Ledger_DB ()
 
 	if (type (AUCTIONATOR_LEDGER) ~= "table") then AUCTIONATOR_LEDGER = {}; end
@@ -103,6 +116,7 @@ function Atr_Ledger_Add (row)
 	if (row.link and row.id == nil) then row.id = Atr_Ledger_ItemID (row.link); end
 
 	tinsert (db.rows, row);
+	gAtr_LedgerRev = (gAtr_LedgerRev or 0) + 1;
 
 	-- oldest first, and say so once
 	while (#db.rows > ATR_LEDGER_MAX_ROWS) do
@@ -412,6 +426,7 @@ end
 function Atr_Ledger_Clear ()
 	AUCTIONATOR_LEDGER = { ver = 1, rows = {} };
 	gLedgerPruneTold = false;
+	gAtr_LedgerRev = (gAtr_LedgerRev or 0) + 1;
 	if (zc and zc.msg_atr) then zc.msg_atr (LZT("Auctionator ledger cleared.")); end
 end
 
@@ -1182,4 +1197,163 @@ if (StaticPopupDialogs) then
 		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1,
 		showAlert = 1,			-- the yellow (!) -- this one deletes something
 	};
+end
+
+-- THE PER-ITEM VIEW (BACKLOG item 8) ---------------------------------------
+--
+-- The Current / History / Ledger strip over the results list asks a different
+-- question from the Ledger main tab: not "what have I been trading" but "what
+-- did I do with THIS item".  Same rows, one name.
+--
+-- Everything here is a READER.  The strip lives in the shared upstream panel
+-- (FRAMEWORK.md §4, World 1) and Atr_ShowItemLedger draws it; what that renderer
+-- gets from this file is text and numbers, never a ledger row -- the same split
+-- item 1 made when Atr_Hist_PaneRows went into AuctionatorHistory.lua.  A pane
+-- that learns `src` tags and copper fields is a pane that has to be edited every
+-- time the record grows a field.
+
+-- One item's rows, newest first.
+--
+-- The money each row reports is the UNIT price, not the total, and that is a
+-- deliberate match to the two tabs beside this one: Current lists per-item
+-- buyouts and History lists per-item daily closes, so the same column means the
+-- same thing across all three and "I sold at 2g, the market was at 2g40 that
+-- week" is one tab-click to check.  The total is in the row's text where the
+-- quantity makes it differ.
+--
+-- `money = nil` is honest and has to survive to the renderer: an expiry moves no
+-- money at all, and a zero in a money column reads as "sold for nothing".
+function Atr_Ledger_PaneRows (name)
+
+	local out = {};
+
+	if (type (name) ~= "string" or name == "") then return out; end
+
+	local rows = Ldg_Rows ();
+	local i;
+
+	for i = #rows, 1, -1 do
+
+		local r = rows[i];
+
+		if (Ldg_RowName (r) == name) then
+
+			local kind = LDG_SRC[r.src] or { text = tostring (r.src), colour = "|cffffffff" };
+			local qty  = tonumber (r.qty) or 0;
+
+			local txt = kind.colour..LZT(kind.text).."|r";
+
+			if (qty > 1) then txt = txt.."  x"..qty; end
+
+			if (r.t and date) then txt = txt.."   "..date ("%b %d", r.t); end
+
+			-- The total, only where the quantity makes it different from the unit
+			-- price already in the money column.  Repeating one stack's price
+			-- twice on the same line is noise.
+			local total = nil;
+			if (r.src == "sale") then
+				total = tonumber (r.money);
+			elseif (r.unit and qty > 0) then
+				total = tonumber (r.unit) * qty;
+			end
+
+			if (total and total > 0 and qty > 1) then
+				txt = txt.."   |cff888888("..Ldg_Money (total).." "..LZT("total")..")|r";
+			end
+
+			tinsert (out, {
+				money	= tonumber (r.unit),		-- nil on a row that moved no money
+				text	= txt,
+				src		= r.src,
+				link	= r.link,
+			});
+		end
+	end
+
+	return out;
+end
+
+-- One item's record out of Atr_Ledger_ItemTotals, or nil if it has none.
+--
+-- That function totals the WHOLE ledger to answer for one name, which looks
+-- wasteful and is not worth avoiding: it is 2000 rows at the cap, run once per
+-- tab draw, and the alternative is a second accumulator that can drift out of
+-- step with the one the Advisor already trusts.  One definition of "realised
+-- margin", used everywhere.
+function Atr_Ledger_ItemRecord (name)
+
+	if (type (name) ~= "string" or name == "") then return nil; end
+
+	local list = Atr_Ledger_ItemTotals ();
+	local i;
+
+	for i = 1, #list do
+		if (list[i].name == name) then return list[i]; end
+	end
+
+	return nil;
+end
+
+-- The one line over the list: what this item has actually done for you.
+--
+-- This exists because the rows alone under-answer the question.  An item you
+-- have traded is usually two or three rows, and three rows under a column
+-- heading built for a market series reads as an empty tab -- while the number
+-- somebody opens this for ("am I up or down on this") is a subtraction across
+-- them that nobody should be doing by eye.
+--
+-- Bought and sold only, plus the realised difference.  Postings and deposits
+-- are on the rows and are not part of "did this make money": an auction still
+-- up has not resolved, and saying so in a summary line would be inventing a
+-- result the ledger does not have.
+function Atr_Ledger_PaneSummary (name)
+
+	local r = Atr_Ledger_ItemRecord (name);
+
+	if (r == nil) then return nil; end
+
+	local parts = {};
+
+	if ((r.boughtQty or 0) > 0) then
+		tinsert (parts, string.format (LZT("bought %d for %s"), r.boughtQty, Ldg_Money (r.paid)));
+	end
+
+	if ((r.soldQty or 0) > 0) then
+		tinsert (parts, string.format (LZT("sold %d for %s"), r.soldQty, Ldg_Money (r.got)));
+	end
+
+	if (#parts == 0) then return nil; end
+
+	-- The margin only means anything once both sides exist.  "Realised +9g" under
+	-- a purchase you have not sold yet would be a lie with a plus sign on it.
+	if ((r.boughtQty or 0) > 0 and (r.soldQty or 0) > 0) then
+		local m = r.margin or 0;
+		if (m >= 0) then
+			tinsert (parts, "|cff80ff80"..string.format (LZT("realised +%s"), Ldg_Money (m)).."|r");
+		else
+			tinsert (parts, "|cffff8080"..string.format (LZT("realised -%s"), Ldg_Money (-m)).."|r");
+		end
+	end
+
+	-- The same separator the Ledger tab's totals line uses.  Not a coloured one:
+	-- "|cff555555|r" with nothing between the codes is an empty string, which is
+	-- what the first version of this line actually rendered.
+	return table.concat (parts, "   |   ");
+end
+
+-- THE EMPTY STATE, which is the common one here and matters more than it does on
+-- the other two tabs: most items you look up have never been traded, so drawing
+-- nothing would read as a broken tab rather than as an answer.  Item 1 recorded
+-- the same lesson about the History tab and it applies harder to this one.
+function Atr_Ledger_PaneMessage (haveRows)
+
+	if (haveRows) then return nil; end
+
+	local db = Atr_Ledger_DB ();
+
+	if (#(db.rows or {}) == 0) then
+		return LZT("Your ledger is empty.\n\nIt fills in as you buy and sell through the auction house -- there is nothing to record yet.");
+	end
+
+	return LZT("You have not bought or sold this.\n\nThe Ledger tab shows what you traded; this item is not in the record.");
 end

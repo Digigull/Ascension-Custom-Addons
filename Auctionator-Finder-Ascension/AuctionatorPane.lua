@@ -5,6 +5,20 @@ ATR_SHOW_CURRENT	= 1;
 ATR_SHOW_HISTORY	= 2;
 ATR_SHOW_HINTS		= 3;
 
+-- THE LEDGER SUB-TAB IS 4, NOT 3, AND THE REASON IS WORTH KEEPING (BACKLOG
+-- item 8).  Slot 3 looks free -- its button is hidden and the backlog recorded
+-- the hint view as dead, "whose sources (Wowecon, GoingPrice, gAtr_ScanDB) are
+-- not installed".  Two thirds of that is right and the last third is not:
+-- Atr_BuildHints also reads gAtr_ScanDB and your own most recent posting, both
+-- of which exist here, and Atr_OnSearchComplete still calls SetToShowHints()
+-- when a CREATE-AUCTION search comes back with no current listings.  So the
+-- branch is live, it fires on the Sell tab exactly when you have nothing to
+-- price against, and taking its slot would have swapped a pricing hint for a
+-- ledger at the moment the hint is most useful.  A fourth id costs nothing:
+-- PanelTemplates only ever indexes the tabs it is told about, and a hidden one
+-- in the middle is invisible to it.
+ATR_SHOW_LEDGER		= 4;
+
 function AtrPane.create ()
 
 	local pane = {};
@@ -21,6 +35,9 @@ function AtrPane.create ()
 	pane.sortedHist		= nil;
 	pane.marketHist		= nil;		-- the market series for this item (BACKLOG item 1)
 	pane.hints			= nil;
+	pane.itemLedger		= nil;		-- this item's ledger rows (BACKLOG item 8)
+	pane.itemLedgerFor	= nil;		-- ...the name they are for
+	pane.itemLedgerRev	= nil;		-- ...and the gAtr_LedgerRev they were built at
 	
 	pane.hlistScrollOffset	= 0;
 	
@@ -41,6 +58,9 @@ function AtrPane:DoSearch (searchText, exact, rescanThreshold, callback)
 	self.sortedHist			= nil;
 	self.marketHist			= nil;
 	self.hints				= nil;
+	self.itemLedger			= nil;
+	self.itemLedgerFor		= nil;
+	self.itemLedgerRev		= nil;
 	
 	self.SS_hilite_itemName	= searchText;		-- by name for search summary
 	
@@ -142,6 +162,22 @@ end
 function AtrPane:SetToShowHints ()
 	
 	self.showWhich = ATR_SHOW_HINTS;
+	
+end
+
+-----------------------------------------
+
+function AtrPane:ShowLedger ()
+	
+	return self.showWhich == ATR_SHOW_LEDGER;
+	
+end
+
+-----------------------------------------
+
+function AtrPane:SetToShowLedger ()
+	
+	self.showWhich = ATR_SHOW_LEDGER;
 	
 end
 
