@@ -712,9 +712,27 @@ local function An_Menu_Init (self, level)
 	end
 end
 
--- `anchor` is a frame, or "cursor" for a right-click.  `mode` is "both" (the
--- Finder's row menu), "groups" or "lists".  Returns false when the dropdown API
--- is not there to drive, so a caller can fall back rather than error.
+-- `anchor` is the frame the menu should hang off -- the button or row that was
+-- clicked.  `mode` is "both" (the Finder's row menu), "groups" or "lists".
+-- Returns false when the dropdown API is not there to drive, so a caller can
+-- fall back rather than error.
+--
+-- THIS COPIES THE ONE RECIPE KNOWN TO WORK IN THIS ADDON: the Finder's
+-- Categories button (`Atr_Finder_CatDDMenu`, AuctionatorFinder.lua).  The first
+-- version opened nothing at all, and differed from it in exactly two ways --
+-- both of which are the bug (BACKLOG item 20):
+--
+--  * It called UIDropDownMenu_Initialize on EVERY click, just before toggling.
+--    Initialize runs the init function immediately, so the buttons were built
+--    against whatever UIDROPDOWNMENU_MENU_LEVEL / _VALUE the last menu in the UI
+--    had left behind -- and any level but the one about to be shown puts them
+--    where nobody looks.  ToggleDropDownMenu sets those globals itself and THEN
+--    calls the init function, which is why initialising once at creation is not
+--    an optimisation but the whole trick.  The menu's content still varies per
+--    click: the init function reads gAnMenu_Item and gAnMenu_Mode when Toggle
+--    calls it, and those are set below.
+--  * The frame was never Hidden.  A UIDropDownMenuTemplate frame is a visible
+--    widget by default.
 function Atr_An_ShowItemMenu (anchor, itemName, mode)
 
 	if (itemName == nil or itemName == "") then return false; end
@@ -726,10 +744,17 @@ function Atr_An_ShowItemMenu (anchor, itemName, mode)
 
 	if (gAnMenu_Frame == nil) then
 		gAnMenu_Frame = CreateFrame ("Frame", "Atr_An_ItemMenu", UIParent, "UIDropDownMenuTemplate");
+		gAnMenu_Frame:Hide();
+		UIDropDownMenu_Initialize (gAnMenu_Frame, An_Menu_Init, "MENU");
 	end
 
-	UIDropDownMenu_Initialize (gAnMenu_Frame, An_Menu_Init, "MENU");
-	ToggleDropDownMenu (1, nil, gAnMenu_Frame, anchor or "cursor", 0, 0);
+	-- Toggle means toggle: with a menu already open, clicking the OTHER button
+	-- would close that one and open nothing, which reads as a dead button.
+	if (DropDownList1 and DropDownList1:IsShown() and CloseDropDownMenus) then
+		CloseDropDownMenus();
+	end
+
+	ToggleDropDownMenu (1, nil, gAnMenu_Frame, anchor, 0, 0);
 
 	return true;
 end
@@ -1224,19 +1249,19 @@ function Atr_An_Init ()
 			return b;
 		end
 
-		local watch = headerButton ("Atr_An_BuyWatchButton", 58, "Watch", "groups",
-			"Watch on the Analysis tab",
-			"Adds this item to an Analysis group, so searches start counting what sells.");
-		watch:SetPoint ("TOPLEFT", nameFS, "BOTTOMLEFT", 2, -8);
-
 		-- The panel's own "Add Item To List" button adds whatever is in the SEARCH
 		-- BOX, which on a broad search is the search term and not this item -- so
 		-- searching "silk" and pressing it files "silk".  This one files the item
 		-- you are looking at, and asks which list.
-		local tolist = headerButton ("Atr_An_BuyListButton", 96, "Add to List", "lists",
+		local tolist = headerButton ("Atr_An_BuyListButton", 100, "+Shopping list", "lists",
 			"Add to a shopping list",
 			"Adds THIS item -- not the search term -- to a shopping list of your choosing.");
-		tolist:SetPoint ("LEFT", watch, "RIGHT", 6, 0);
+		tolist:SetPoint ("TOPLEFT", nameFS, "BOTTOMLEFT", 2, -8);
+
+		local watch = headerButton ("Atr_An_BuyWatchButton", 76, "+Analysis", "groups",
+			"Watch on the Analysis tab",
+			"Adds this item to an Analysis group, so searches start counting what sells.");
+		watch:SetPoint ("LEFT", tolist, "RIGHT", 6, 0);
 	end
 end
 

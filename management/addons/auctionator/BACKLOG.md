@@ -2143,9 +2143,74 @@ could have caught — the honest answer is that the screenshot caught it, one ro
 
 ---
 
+## 20. The Buy tab's buttons opened no menu — and the labels — DONE
+
+**Reported 2026-08-20:** the two buttons from item 19 now appear, but clicking either does
+nothing. Plus two cosmetic asks: swap their positions, and rename them **+Shopping list** and
+**+Analysis**.
+
+### Why nothing opened
+
+The buttons appear only when `Atr_An_BuyItemName()` returns a name, and the click handler asks the
+same function — so the click *was* reaching `Atr_An_ShowItemMenu`. That put the fault inside the
+dropdown call, not around it.
+
+**This addon already contains a context menu that works**: the Finder's **Categories** button
+(`Atr_Finder_CatDDMenu`, `AuctionatorFinder.lua`). Comparing the two, item 18's version differed in
+exactly two ways, and both are the bug:
+
+```lua
+-- what works                                 -- what item 18 did
+local catDD = CreateFrame (...)               gAnMenu_Frame = CreateFrame (...)
+catDD:Hide();                                 -- (never hidden)
+UIDropDownMenu_Initialize (catDD, init, "MENU");
+catBtn:OnClick = function (self)              function ...
+    ToggleDropDownMenu (1, nil, catDD, self, 0, 0)   UIDropDownMenu_Initialize (frame, init, "MENU")   <-- every click
+end                                               ToggleDropDownMenu (1, nil, frame, anchor, 0, 0)
+```
+
+**`UIDropDownMenu_Initialize` runs the init function immediately.** Calling it on every click meant
+the menu's buttons were built against whatever `UIDROPDOWNMENU_MENU_LEVEL` and
+`UIDROPDOWNMENU_MENU_VALUE` the last dropdown anyone opened had left behind — and
+`UIDropDownMenu_AddButton` places a button by comparing its level against that global. Any level but
+the one about to be shown, and the buttons go where nobody is looking. `ToggleDropDownMenu` sets
+those globals itself and *then* calls the init function, which is why initialising **once at
+creation** is not a tidiness point but the entire mechanism.
+
+The menu's content still varies per click: the init function reads `gAnMenu_Item` and
+`gAnMenu_Mode` at the moment Toggle calls it, and those are set just before.
+
+The second difference — the frame never being `:Hide()`n — leaves a stray dropdown widget parented
+to `UIParent` at the screen origin. Not the reported symptom, but wrong.
+
+**Also fixed:** toggle means toggle. With one menu already open, clicking the *other* button closed
+the first and opened nothing — a third way to look like a dead button. `CloseDropDownMenus()` first
+when a list is up.
+
+**And the anchor:** `"cursor"` is gone; both call sites now anchor to the frame that was clicked,
+which is what the Categories button does. The Finder's right-click menus hang off the row.
+
+### The general lesson, which is why this is written down
+
+Two rounds were lost to the same shape of mistake: **reasoning from how an API ought to work
+instead of from a working example twenty lines away in the same addon.** Item 19 was
+`recommendElements`; this one was the dropdown lifecycle. When this client's UI API is involved,
+find the call in this repo that already works and copy its shape exactly — the differences that
+matter are rarely the ones that look meaningful.
+
+### Labels
+
+Swapped, and renamed as asked: **+Shopping list** (100px) sits under the item name, **+Analysis**
+(76px) to its right.
+
+**Verified** by `luac5.1 -p` and the two offline suites (17 + 27). Neither can reach a dropdown, so
+this rests on matching a known-good call in the same client. **Not verified in game.**
+
+---
+
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16, 17, 18 and 19 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16, 17, 18, 19 and 20 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was

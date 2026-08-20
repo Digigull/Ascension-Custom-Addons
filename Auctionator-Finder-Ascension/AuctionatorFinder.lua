@@ -2250,7 +2250,7 @@ function FdrGrp_BuildFrame ()
 			-- the same item, so filing it works exactly as it does out there
 			if (button == "RightButton") then
 				if (m.name and m.name ~= "" and type (Atr_An_ShowItemMenu) == "function") then
-					Atr_An_ShowItemMenu ("cursor", m.name, "both");
+					Atr_An_ShowItemMenu (self, m.name, "both");
 				end
 				return;
 			end
@@ -3660,7 +3660,7 @@ local function Fdr_Row_OnClick (self, button)
 	if (button == "RightButton") then
 		local nm = self.rec.name;
 		if (nm and nm ~= "" and type (Atr_An_ShowItemMenu) == "function") then
-			Atr_An_ShowItemMenu ("cursor", nm, "both");
+			Atr_An_ShowItemMenu (self, nm, "both");		-- anchored to the row, like the Categories button
 		end
 		return;
 	end
