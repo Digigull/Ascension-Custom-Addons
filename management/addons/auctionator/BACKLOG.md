@@ -20,7 +20,9 @@ the feed works, the report's clock was mislabelled. **Item 8 is new, 2026-08-22,
 the problem; the tooltip read the price by name while a Buy search files it under the item's
 variant key, so a search could not move the tooltip of any item a full scan already knew. Written
 up under the item. **Item 8 was built 2026-08-20** and its one open premise turned out to be
-wrong in a way that changed the design: slot 3 is not free. **Nothing on this queue is unbuilt.**
+wrong in a way that changed the design: slot 3 is not free.
+
+**Item 9 is new, 2026-08-20, and built the same day.**
 
 ---
 
@@ -789,3 +791,64 @@ post / sale / expire across two items) and its rows, summary, both empty states 
 counter check out; that caught the summary separator rendering as an empty string
 (`|cff555555|r` with nothing between the codes). **Not verified in game** — the tab strip itself is
 reasoned.
+
+---
+
+## 9. No way to delete an Analysis watch group — DONE
+
+**Asked (owner, 2026-08-20, after testing item 8):** *"I just noticed though, i don't have a way to
+delete watch groups on the analysis tab, maybe we can add some small red x buttons into the drop
+down with confirmation?"*
+
+**True: groups were create-only.** `Atr_An_AddGroup` (`AuctionatorAnalysis.lua:168`) appends and
+sorts, `Add Group` calls it through a popup, and nothing anywhere removed one. A group typed with a
+typo was permanent.
+
+**The one real decision: what happens to the items in a deleted group.** A group is a *label*, and
+deleting a label must not delete what it labels. Every item filed under the group stays watched and
+loses its group. This is not a soft call — a watched item carries observation history in `db.obs`
+that scanning rebuilt over days, and taking a dozen of them out with one click on a red x is
+recoverable by no amount of rescanning. The confirmation names the count for the same reason, so
+"delete" never quietly means more than it looks: *"Delete the group "Ore"? 14 watched items are
+filed under it. They stay watched and lose the label; nothing else about them changes."*
+
+**Why the Blizzard dropdown's list had to be replaced rather than added to.** `UIDropDownMenu` has
+no per-entry widget in 3.3.5: its rows are the interface-wide globals
+`DropDownList1Button1..N`, recycled by every dropdown in the UI, so an x parented to one of them
+would turn up on somebody else's menu. This file had already met that class of problem — the note
+above `Atr_An_MenuEntries` records two attempts at a Blizzard dropdown for the Buy tab and *"it
+opened nothing either time"* — and already carried the answer: a plain frame it owns outright.
+
+So **the dropdown box stays exactly as it is** — its art, its width, its text, `An_GroupDD_Init`
+still installed — and only the list it opens is ours. One `SetScript` on `Atr_An_GroupDDButton`.
+
+**What was added:**
+
+- `Atr_An_DeleteGroup (name)` and `Atr_An_GroupCount (name)` beside `Atr_An_AddGroup` — pure data,
+  no UI. Delete returns `nil` for "no such group" and a number for "removed, this many unfiled",
+  because the caller has to be able to tell an empty group from a missing one.
+- `Atr_An_GroupMenuEntries ()` — the pure menu shape, same bargain `Atr_An_MenuEntries` struck.
+  "All groups" carries no x: it is not a group, it is the absence of a filter.
+- `Atr_An_ShowMenu (anchor, title, entries, xoff)` — the item menu's show path, generalised so the
+  group menu reuses the frame, the click-eater, the strata and the placement flip.
+- An optional red x per row in `An_MenuRow`, a **child of the row** rather than a sibling: the row
+  is a full-width Button, and two overlapping frames at the same level hand the click to whichever
+  the layout engine puts on top. A child is unambiguously in front of its parent, so the x deletes
+  and never selects.
+- `StaticPopupDialogs["ATR_AN_DEL_GROUP"]`, with `showAlert`.
+
+**One bug caught before it shipped, and it is the kind that confirms and then does nothing.**
+`gAn_PendingGroup` — the group name that has to survive the menu closing — was first declared beside
+`gAn_PendingItem`, which sits *below* `Atr_An_GroupMenuEntries`. The entries builder would have
+assigned a **global** of that name while the popup, defined after the local, read the **local**: every
+delete would have asked for confirmation and quietly done nothing. Declared above its only writer,
+with a comment saying why it lives there.
+
+**Pinned:** the existing `analysis-feed-smoke.lua` grew 22 assertions (31 → 53) — the counts, the
+menu shape, deleting twice, an empty group versus a missing one, and the rule that matters: every
+item in a deleted group is still watched and simply unlabelled, and other groups are untouched. Run
+rather than reasoned because this is the only destructive operation on the tab's saved data.
+
+**Verified:** `luac5.1 -p` clean; all five Auctionator suites pass (27 + 53 + 114 + 25 + 20).
+**Not verified in game** — the frame work (the x hit area, the menu's placement under the dropdown)
+is reasoned.
