@@ -2439,23 +2439,34 @@ lane clears the last one. Gold/day at a ~830px window is 128px against a ~118px 
 
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22 and 23 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
-after the first real dump, same day. What is left, in order:
+Every numbered item has now shipped or closed: 1–9 and 11–23 are **DONE** or deliberately parked,
+and item 10 closed without any code (2026-08-19). Rewritten twice that day — once after the first
+real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is unstarted.** What
+is left is follow-on work inside shipped items, two standing deferrals, and two questions that
+need no code at all. In order:
 
-1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
-   waiting on: three trailing-space rows, none with an unsuffixed twin, so replacing the texture
-   hack orphans nothing. Part 2 (give the Sell tab the item it was handed) is independent and
-   smaller still.
-2. **Item 7 (Ledger)** — the biggest new surface, and it unblocks 8 and 9. One scope question
-   to answer before the first row is written: auction house only, or vendor and mail too.
-3. **Item 12 part 3** — the price database's value shape. Do it after part 1, which is what
-   gives it data to store, and fold item 13's mean-database change into the same pass since both
-   touch the same value types.
-4. **Item 8 (Advisor)** — now known to be a data-plumbing project first: there is no price
-   series, confirmed on real data. Scope after the Ledger.
-5. **Item 9** — investigate with ledger data in hand.
-6. **Item 13** — saved-variable trimming. Invisible to the user, so it ranks last on its own;
-   worth folding into item 12 part 3 if that lands first.
+1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1 and E2. Left, cheapest
+   first: **D** (the Ledger views, nearly free now that the Ledger holds the data), then **A5/A6**
+   (listing lifetime, undercut churn) and **B2/B3** (recipe ranking, reagent pressure), which are
+   arithmetic over data the scan already produces. **C** (price trend) ranks last of the four —
+   it needs a dated series that does not exist, so it is a writer plus a retention rule, and it
+   must be watchlist-scoped: the naive all-names version is several megabytes, immediately after
+   item 13 clawed back 384 KB.
+2. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+   deferred. The `src` tag already exists to carry it, so this is new capture points rather than
+   a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
+3. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+   all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
+   data has never been seen.
+4. **Item 12's sizing question** — how many names on this server carry more than one variant.
+   Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
+   only whether extending part 3 is worth it, not what shape it would take.
+5. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+   purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
+   comparison against a real mismatched pair, never an imagined one.
+6. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+   price. The craft cost reproduces exactly from real data, so this is an auction-house question
+   rather than an addon one, and there may be no work here at all.
 
 ## What a SavedVariables dump answers
 
