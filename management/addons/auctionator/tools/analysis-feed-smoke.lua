@@ -257,6 +257,12 @@ reset ()
 Atr_An_AddGroup ("Cloth")
 Atr_An_AddGroup ("Ore")
 
+-- The three "makes something new" entries carry a gold + (owner, 2026-08-20).
+-- Spelled out once here rather than inline in five assertions: if the colour
+-- moves, one line moves with it.
+local PLUS    = "|cffffd100+|r"
+local REAGENT = PLUS .. "|cff40a0ffReagent List|r"
+
 local function texts (entries)
 	local out = {}
 	for i = 1, #entries do out[i] = entries[i].text end
@@ -269,10 +275,10 @@ local function findEntry (entries, text)
 end
 
 local groups = Atr_An_MenuEntries (WATCHED, "groups")
-eq (texts (groups), "(no group) | Cloth | Ore | New group...", "groups mode lists every group")
+eq (texts (groups), "(no group) | Cloth | Ore | " .. PLUS .. "New group...", "groups mode lists every group")
 
 local lists = Atr_An_MenuEntries (WATCHED, "lists")
-eq (texts (lists), "no lists yet | New list...", "lists mode still offers a way in with no lists")
+eq (texts (lists), "no lists yet | " .. PLUS .. "New list...", "lists mode still offers a way in with no lists")
 eq (findEntry (lists, "no lists yet").disabled, true, "... and says so as a disabled line")
 
 local both = Atr_An_MenuEntries (WATCHED, "both")
@@ -391,12 +397,21 @@ eq (Atr_Craft_ReagentList (nil, "Iron Sights Scope"), nil, "an item nothing make
 
 -- ...and the menu entry that gate controls.
 local entries = Atr_An_MenuEntries ("Reflex Scope", "lists")
-local blue    = findEntry (entries, "|cff40a0ff+Reagent List|r")
+local blue    = findEntry (entries, REAGENT)
 check (blue ~= nil, "the +Reagent List entry appears for a window-harvested craft")
-eq (entries[#entries].text, "|cff40a0ff+Reagent List|r", "... at the bottom of the shopping list section")
+eq (entries[#entries].text, REAGENT, "... at the bottom of the shopping list section")
 
-eq (findEntry (Atr_An_MenuEntries ("Iron Sights Scope", "lists"), "|cff40a0ff+Reagent List|r"), nil,
+eq (findEntry (Atr_An_MenuEntries ("Iron Sights Scope", "lists"), REAGENT), nil,
 	"... and not for an item nothing makes")
+
+-- The + is GOLD and outside the blue, on all three: it marks the same kind of
+-- action in each and reads as one mark, not three near-misses.
+eq (REAGENT:sub (1, #PLUS), PLUS, "the reagents entry opens with the gold +")
+check (REAGENT:find ("|cff40a0ff", 1, true) > #PLUS, "... and its words are blue after it")
+eq (findEntry (Atr_An_MenuEntries ("Reflex Scope", "lists"), PLUS .. "New list...") ~= nil, true,
+	"New list... carries the same gold +")
+eq (findEntry (Atr_An_MenuEntries ("Reflex Scope", "groups"), PLUS .. "New group...") ~= nil, true,
+	"New group... carries the same gold +")
 
 AUCTIONATOR_CRAFT_RECIPES = nil
 

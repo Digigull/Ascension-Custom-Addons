@@ -893,6 +893,18 @@ the reverse index on the Crafting view, where the tab already knows the id.
 (`|cff40a0ff`) and already the last entry in the shopping-list section, above the *Analysis group*
 header — the position in the request was already the intended one; it simply had never been seen.
 
+**And the mark it shares with its neighbours** (owner, 2026-08-20, follow-up: *"change the plus
+symbol to gold and add a plus symbol in front of New list and New Group"*). The `+` is gold
+(`|cffffd100`) on all three, with only the reagents entry's *words* staying blue — so the menu now
+reads `+New list...`, `+Reagent List`, `+New group...`, and the three "this makes something new"
+verbs carry one mark instead of three near-misses.
+
+Two details worth keeping. The `+` is **one constant**, `AN_PLUS`, not three copies of an escape
+code — a fourth such entry should use it rather than a hand-typed colour. And it is **prepended
+outside the `AZT()` lookup**, so the translation keys stay `"New list..."` and `"New group..."`: a
+locale file carries the words and never the punctuation. That is also what lets the `+` keep its own
+colour while the words keep theirs.
+
 **Why the tests said nothing, which is the part worth keeping.** `analysis-feed-smoke.lua` covers
 `Atr_An_MenuEntries` and passed 31 assertions while this was totally broken, because it loaded only
 `AuctionatorAnalysis.lua` and `AuctionatorScan.lua`. The menu gate reads
@@ -907,5 +919,7 @@ name alone finds each.
 nothing for a window-harvested recipe asked by name, and against the fixed one, which returns its
 reagents.
 
-**Verified:** `luac5.1 -p` clean; all five Auctionator suites pass (27 + 64 + 114 + 25 + 20).
+**Verified:** `luac5.1 -p` clean; all five Auctionator suites pass (27 + 68 + 114 + 25 + 20).
+The colour segmentation was resolved back to plain text rather than eyeballed —
+`[gold:+][blue:Reagent List]`, `[gold:+][default:New list...]`, `[gold:+][default:New group...]`.
 **Not verified in game.**

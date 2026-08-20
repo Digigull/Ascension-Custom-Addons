@@ -3142,6 +3142,20 @@ end
 -- sections one after the other rather than in submenus -- a flat list of eight is
 -- easier to hit than two fly-outs, and there is no submenu machinery to get
 -- wrong).  Entries are { text, func, disabled, header }.
+-- THE GOLD PLUS (owner, 2026-08-20: "change the plus symbol to gold and add a
+-- plus symbol in front of New list and New Group").
+--
+-- One constant rather than three copies of an escape code, because these three
+-- entries are the menu's "this makes something new" verbs and the whole value of
+-- the mark is that they keep looking alike.  A fourth such entry added later
+-- should use this and not a hand-typed colour.
+--
+-- PREPENDED OUTSIDE THE AZT() LOOKUP, deliberately: the translation keys stay
+-- "New list..." and "New group...", so a locale file carries the words and never
+-- the punctuation.  It also means the + keeps its colour when the words do not
+-- (see the reagents entry, whose text is blue under a gold +).
+local AN_PLUS = "|cffffd100+|r";
+
 function Atr_An_MenuEntries (itemName, mode)
 
 	local out = {};
@@ -3170,7 +3184,7 @@ function Atr_An_MenuEntries (itemName, mode)
 			tinsert (out, { text = AZT("no lists yet"), disabled = true });
 		end
 
-		tinsert (out, { text = AZT("New list..."), func = function ()
+		tinsert (out, { text = AN_PLUS..AZT("New list..."), func = function ()
 			gAn_PendingItem = itemName;
 			if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_SLIST"); end
 		end });
@@ -3195,7 +3209,7 @@ function Atr_An_MenuEntries (itemName, mode)
 		if (type (Atr_Craft_ReagentList) == "function"
 			and Atr_Craft_ReagentList (Atr_An_IdForName (itemName), itemName)) then
 			tinsert (out, {
-				text = "|cff40a0ff"..AZT("+Reagent List").."|r",
+				text = AN_PLUS.."|cff40a0ff"..AZT("Reagent List").."|r",
 				func = function () Atr_An_AddReagentList (itemName); end });
 		end
 	end
@@ -3214,7 +3228,7 @@ function Atr_An_MenuEntries (itemName, mode)
 			tinsert (out, { text = g, func = function () Atr_An_AddToGroup (itemName, g); end });
 		end
 
-		tinsert (out, { text = AZT("New group..."), func = function ()
+		tinsert (out, { text = AN_PLUS..AZT("New group..."), func = function ()
 			gAn_PendingItem = itemName;
 			if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_GROUP"); end
 		end });
