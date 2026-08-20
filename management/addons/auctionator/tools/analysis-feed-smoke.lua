@@ -77,6 +77,14 @@ end
 load_addon_file ("Auctionator-Finder-Ascension/AuctionatorAnalysis.lua")
 load_addon_file ("Auctionator-Finder-Ascension/AuctionatorScan.lua")
 
+-- THE PROFESSION FILE IS LOADED FOR ONE REASON, and it is the reason the
+-- "+Reagent List" entry could be wholly broken in game while this suite passed:
+-- the menu gate is `type (Atr_Craft_ReagentList) == "function"`, and without
+-- this file that is false, so the entry was never built and never checked.  A
+-- stub would have reproduced the same blind spot -- what was wrong was which KEY
+-- the real function looks under.
+load_addon_file ("Auctionator-Finder-Ascension/AuctionatorFinderProfession.lua")
+
 --------------------------------------------------------------------
 -- helpers
 --------------------------------------------------------------------
@@ -339,6 +347,58 @@ eq (texts (Atr_An_GroupMenuEntries ()), "All groups | Ore", "the menu follows th
 reset ()
 eq (texts (Atr_An_GroupMenuEntries ()), "All groups | no groups yet", "with no groups it says so")
 eq (findEntry (Atr_An_GroupMenuEntries (), "no groups yet").disabled, true, "... as a disabled line")
+
+--------------------------------------------------------------------
+-- "+REAGENT LIST" (BACKLOG item 7, reported not working 2026-08-20).
+--
+-- The recipe table is written by two harvests with two different key types: the
+-- profession WINDOW keys by the produced item's numeric ID, the recipe-tooltip
+-- harvest keys by name.  The Analysis menu has only a name, so it found the
+-- second kind and silently missed the first -- which is nearly every recipe a
+-- player actually has.  Both shapes are built here; the ID-keyed one is the case
+-- that was broken.
+--------------------------------------------------------------------
+
+reset ()
+
+local NAMES = { [55055] = "Reflex Scope", [55056] = "Iron Sights Scope" }
+GetItemInfo = function (k) return NAMES[k] end
+
+AUCTIONATOR_CRAFT_RECIPES = {
+	-- window harvest: keyed by the produced item's ID
+	[55055] = { made = 1, reagents = { { id = 3577, name = "Gold Bar", count = 2 },
+									   { id = 4371, name = "Bronze Framework", count = 1 } } },
+	-- tooltip harvest: keyed by name
+	["Scroll of Enchant Boots - Speed"] = { made = 1, byTooltip = true,
+		reagents = { { name = "Greater Planar Essence", count = 1 } } },
+}
+
+eq (Atr_Craft_IdForName ("Reflex Scope"), 55055, "a name resolves to the numeric key holding its recipe")
+eq (Atr_Craft_IdForName ("Iron Sights Scope"), nil, "... and a name with no recipe resolves to nothing")
+
+-- THE BUG. Name-only lookup had to start working for the ID-keyed records.
+local rg, made = Atr_Craft_ReagentList (nil, "Reflex Scope")
+check (rg ~= nil, "a WINDOW-harvested recipe is found by name alone")
+eq (rg and #rg, 2, "... with all its reagents")
+eq (made, 1, "... and its yield")
+
+eq (select (1, Atr_Craft_ReagentList (55055, "Reflex Scope")) ~= nil, true, "the id still works when passed")
+
+local tt = Atr_Craft_ReagentList (nil, "Scroll of Enchant Boots - Speed")
+check (tt ~= nil, "a TOOLTIP-harvested recipe is still found by name")
+
+eq (Atr_Craft_ReagentList (nil, "Iron Sights Scope"), nil, "an item nothing makes has no reagent list")
+
+-- ...and the menu entry that gate controls.
+local entries = Atr_An_MenuEntries ("Reflex Scope", "lists")
+local blue    = findEntry (entries, "|cff40a0ff+Reagent List|r")
+check (blue ~= nil, "the +Reagent List entry appears for a window-harvested craft")
+eq (entries[#entries].text, "|cff40a0ff+Reagent List|r", "... at the bottom of the shopping list section")
+
+eq (findEntry (Atr_An_MenuEntries ("Iron Sights Scope", "lists"), "|cff40a0ff+Reagent List|r"), nil,
+	"... and not for an item nothing makes")
+
+AUCTIONATOR_CRAFT_RECIPES = nil
 
 --------------------------------------------------------------------
 

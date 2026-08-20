@@ -54,7 +54,7 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/passlootbis/tools/usable-smoke.lua      # 14 assertions
   lua5.1 management/addons/passlootbis/tools/report-smoke.lua      # 3 passes, non-zero on a crash
   lua5.1 management/addons/auctionator/tools/sell-variant-smoke.lua # 27 assertions
-  lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua # 53 assertions
+  lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua # 64 assertions
   lua5.1 management/addons/auctionator/tools/history-store-smoke.lua # 114 assertions
   lua5.1 management/addons/auctionator/tools/callboard-smoke.lua    # 25 assertions
   lua5.1 management/addons/auctionator/tools/price-variant-smoke.lua # 20 assertions

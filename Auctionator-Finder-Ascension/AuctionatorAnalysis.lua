@@ -3080,7 +3080,7 @@ function Atr_An_AddReagentList (itemName)
 	if (itemName == nil or itemName == "") then return false; end
 
 	local reagents = (type (Atr_Craft_ReagentList) == "function")
-					 and Atr_Craft_ReagentList (nil, itemName) or nil;
+					 and Atr_Craft_ReagentList (Atr_An_IdForName (itemName), itemName) or nil;
 
 	if (reagents == nil or #reagents == 0) then
 		if (zc and zc.msg_atr) then
@@ -3184,9 +3184,18 @@ function Atr_An_MenuEntries (itemName, mode)
 		-- section files ONE item onto a list, and this one creates a list and
 		-- fills it with several OTHER items.  It is a different kind of action
 		-- sharing a section, which is exactly when a colour is doing work.
-		if (type (Atr_Craft_ReagentList) == "function" and Atr_Craft_ReagentList (nil, itemName)) then
+		--
+		-- THE ID GOES FIRST WHEN WE HAVE ONE (owner, 2026-08-20: this entry never
+		-- appeared).  Passing nil made this ask by name alone, and the recipe
+		-- table is keyed by the produced item's ID for everything the profession
+		-- WINDOW harvested -- which is nearly every recipe there is.  The lookup
+		-- is fixed inside Atr_Craft_ReagentList so a name now resolves either way;
+		-- handing over the id as well simply skips the reverse index when this tab
+		-- already knows it, which on the Crafting view it does.
+		if (type (Atr_Craft_ReagentList) == "function"
+			and Atr_Craft_ReagentList (Atr_An_IdForName (itemName), itemName)) then
 			tinsert (out, {
-				text = "|cff40a0ff"..AZT("Add reagents list").."|r",
+				text = "|cff40a0ff"..AZT("+Reagent List").."|r",
 				func = function () Atr_An_AddReagentList (itemName); end });
 		end
 	end
