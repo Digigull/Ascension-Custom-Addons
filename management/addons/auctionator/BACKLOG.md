@@ -392,8 +392,7 @@ one placement genuinely serves all three tabs — they are the same widget objec
 §4).
 
 `(-28, -46)` is item 3's line for the Ledger's Clear button, so the two land on the same rule: clear
-of Blizzard's 32px close button above, short of the headings bar below. The visible label is still
-"Scan Categories...", which `AuctionatorFinderFullScan.lua` sets at load and this does not touch.
+of Blizzard's 32px close button above, short of the headings bar below.
 
 **Verified:** `luac5.1 -p` and `ET.parse` clean, the four Auctionator suites still pass. **Not
 verified in game** — whether `(-28, -46)` clears the money frame on the Buy tab is the thing to look
@@ -437,6 +436,26 @@ parsed. The guard was always false, so the button has read "Full Scan..." all al
 the owner called it when asking for this item. It is now `Fdr_FS_RelabelButton()`, called once the
 button exists. **The claim in the Built section above that the visible label is "Scan Categories..."
 was wrong.**
+
+### And the label went back, 2026-08-22
+
+**Asked (owner), after seeing it for the first time:** change "Scan Categories..." back to **"Full
+Scan..."** on all tabs.
+
+The retitle is retired — no relabel runs, so the button keeps the label its XML gives it. Which is
+the label it has always shown in practice: the retitle was a bare `if` at file scope where
+`Atr_FullScanButton` does not exist yet, so it never fired until 2026-08-22, when fixing it changed
+the button's name for the first time. It now reads "Full Scan..." on purpose rather than by
+accident.
+
+The reasoning behind the old name is kept in `AuctionatorFinderFullScan.lua` as superseded rather
+than deleted: *"Full Scan..." is a misnomer once gear is excluded and the scan is category-driven*
+is still true of what the button **does**, and the next person to read that file will have the same
+idea.
+
+**Not renamed:** `Atr_FullScanStartButton`, the button **inside** the full-scan frame, still says
+"Scan Categories" / "Cancel". It is a different widget on a popup rather than on a tab, and the
+request named the one with the ellipsis.
 
 **Known rough edge, not fixed:** `Atr_UpdateUI_SellPane` disables both buttons while a Sell search is
 processing and re-enables when it finishes. Switch tabs mid-scan and they stay greyed on every tab

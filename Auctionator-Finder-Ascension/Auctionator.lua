@@ -961,19 +961,16 @@ function Atr_Sell_PlaceTopRightButtons ()
 		opts:SetPoint ("TOPRIGHT", AuctionFrame, "TOPRIGHT", ATR_TOPRIGHT_X, ATR_TOPRIGHT_Y);
 	end
 
-	-- Full Scan keeps its XML anchor to Options' left and follows it across; it
-	-- is the wider of the two once AuctionatorFinderFullScan.lua retitles it
-	-- "Scan Categories...", so it takes the inboard slot where there is room.
+	-- Full Scan keeps its XML anchor to Options' left and follows it across, and
+	-- keeps its XML label, "Full Scan..." -- the retitle to "Scan Categories..."
+	-- was retired at the owner's request (2026-08-22); see the note where it used
+	-- to live in AuctionatorFinderFullScan.lua.
 	if (full and full.ClearAllPoints and opts) then
 		if (full.SetParent) then full:SetParent (AuctionFrame); end
 		if (full.SetFrameLevel) then full:SetFrameLevel (lvl); end
 		full:ClearAllPoints();
 		full:SetPoint ("RIGHT", opts, "LEFT", -4, 0);
 	end
-
-	-- The Finder's relabel, now that the button it renames exists.  See
-	-- Fdr_FS_RelabelButton for why this cannot stay where it was.
-	if (type (Fdr_FS_RelabelButton) == "function") then Fdr_FS_RelabelButton (); end
 
 	-- Hidden until a tab says otherwise.  As AuctionFrame's children they would
 	-- otherwise show over Blizzard's own Browse / Bid / Auctions tabs, where an
