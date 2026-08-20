@@ -8,8 +8,8 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, **item 29** has shipped its first two stages of three, and
-**items 28 and 30** are new, with nothing built yet.
+**item 10** closed without any code, and **items 28 and 30** are new, with nothing built yet.
+**Item 29 shipped in full** on 2026-08-20, all three stages.
 Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
@@ -3144,7 +3144,7 @@ What it would then feed, in rising order of ambition:
 
 ---
 
-## 29. The Reagents view ranked dependence; you decide with money — STAGES 1 AND 2 BUILT
+## 29. The Reagents view ranked dependence; you decide with money — DONE
 
 **Revised the same day it was written.** The owner's Advisor idea (item 30) took the verdict-text
 stage out of this item entirely and supplied a better driver for the plan. What is left here is
@@ -3327,9 +3327,58 @@ Reasoned, not seen in game.
   next scan of that item. Pinned in `tools/analysis-feed-smoke.lua` (31 assertions, all passing) —
   both the sum and the nil.
 
-**Not done, and deliberately:** no Share column. The percentage is in the row tooltip and on the
-fold line, which is where stage 3 and item 30 read it from; the row has no width for another
-column, and stage 3's table drops columns rather than adding them.
+**Not done at stage 1, and deliberately:** no Share column. The percentage is in the row tooltip and
+on the fold line, which is where stage 3 and item 30 read it from; the row has no width for another
+column.
+
+### Built, 2026-08-20 — stage 3, the plan. The item is now done
+
+The fallback driver, not item 30's Make card: **tick recipes on the Crafting view, name a batch
+size, and the Reagents view prices exactly that.** Item 30 can hand the same shape in from the
+other end later — `Atr_An_PlanMap()` is the seam, and it is global for that reason.
+
+- **One function, one basket.** `Atr_Craft_ReagentPressure(ranking, plan)` takes an optional
+  `{ [recipe name] = crafts }` map. `qty` replaces the `pays` gate: without a plan it is "one, if
+  it pays", with one it is what you ticked — **including a recipe that loses money today**, because
+  a tick is a decision and the function does not get to overrule it. Everything downstream (`need`,
+  `outlay`, `profit`, `toBuy`) is the same arithmetic over a different basket, which is why there
+  is no second function.
+- **The plan is saved** in `AUCTIONATOR_ANALYSIS.plan` (`{ batch, recipes }`), because it is built
+  at the profession window and read at the auction house, with a walk and often a `/reload` in
+  between.
+- **One batch size for the lot**, not a spinner per row: the flow it serves — five of this and five
+  of that — needs one box, and a control per recipe would be a control for every recipe you own in
+  order to use two of them.
+- **The tick is a lane, not a column.** `An_LayoutCols` grew an optional `lead`; the Crafting view
+  passes `AN_LEAD + AN_PLAN_LANE` and gets 24px at the start of every row, the mirror of the
+  delete button's lane at the end. Nothing about a tick sorts, so it is not a ninth column, and the
+  craft view had 70px of slack to spend on the narrowest window.
+- **The line that is the point**, under the reagent table: `plan: 2 recipes, 10 crafts, 7 reagents
+  to find | spend 869g 92s -> sell 3,148g 75s -> keep 2,278g 83s`. **Spend is a cash flow** — the
+  basket less what is already in the bank — and it deliberately treats reagents you already hold as
+  free, because tonight they are. That is not the Profit column's reading, which charges a craft
+  for every reagent it eats whoever paid for it; both are true and the comment at the site says so.
+- **Both ends of that line can be a floor, and each says which.** A planned recipe nobody has
+  scanned adds nothing to the sell figure; a reagent nobody has priced adds nothing to the spend.
+  `stats.wanted`/`stats.wantedPriced` count the basket's own reagents apart from the book's so the
+  second one can be said at all.
+- **With no plan nothing changes**, and the summary now says so in words: `no plan: one craft of
+  each paying recipe -- 869g 92s of reagents`. That baseline was always the honest reading of what
+  your professions depend on; what it was not is a shopping list, and it no longer reads as one.
+- **A plan that matches nothing is not a plan.** `An_PlanTotals` returns nil for both "nothing
+  ticked" and "nothing ticked still exists", so the pressure call gets nil and the view falls back
+  rather than drawing an empty invoice — and `An_PlanIsStale` keeps the two apart so the summary
+  can say *your plan names no recipe you have harvested*.
+- **The fold does the rest of the work.** Under a plan every reagent outside it has no `need`, so
+  it folds as *not in your plan* and the page becomes the invoice on its own. The row tooltip
+  greys unplanned recipes the way it already greys money-losing ones, sorts planned ones to the
+  top so the cap cannot hide them, and prints `x5, 5 crafts` where the batch is not one.
+- `/atranalysis plan <recipe>`, `plan clear` and `batch <n>` drive the same three things without
+  the buttons — the file's standing rule after item 22.
+
+**Not built:** no per-recipe quantity, and the Crafting view's summary prices the plan off its own
+Profit/craft column rather than off the bill. Asking for the bill there would price every reagent
+you own on every keystroke in the filter box; the two views answer the two halves.
 
 ---
 
@@ -3439,8 +3488,8 @@ Supply counts units. Build those first and the cards are accurate on the day the
 
 ## Suggested order
 
-Items 1–9 and 11–27 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28 and 30 are unstarted** and **item 29 has stage 3 left**, all added 2026-08-20. What is otherwise left is
+Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
+(2026-08-19). **Items 28 and 30 are unstarted** and **item 29 is done in full**, all added 2026-08-20. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
@@ -3464,8 +3513,10 @@ short of a readout. In order:
    five or six cards in plain sentences over figures four existing functions already return. No
    new capture and no new saved variable — it is a renderer, and its whole discipline is that it
    computes nothing. Wants entry 1 under it, because it reads those same figures.
-4. **Item 29's stage 3** — the plan: a batch, a bill, and the spend/sell/keep line. It sits after
-   item 30 because item 30's Make card is the better way to drive it.
+4. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
+   fallback driver (tick boxes on the Crafting view plus a batch size) turned out to be the cheap
+   half, and item 30's Make card can hand the same plan in through `Atr_An_PlanMap()` when it
+   exists. See item 29's second *Built* section.
 5. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
    all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
    inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing

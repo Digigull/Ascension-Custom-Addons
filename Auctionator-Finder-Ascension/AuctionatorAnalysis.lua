@@ -55,6 +55,8 @@
 --              by what one craft is worth -- Atr_Craft_ProfitRanking, in
 --              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
 --              arithmetic over today's prices, exact if the prices are current.
+--              Its rows tick, and what you tick is the PLAN the view below
+--              prices (item 29, stage 3; see An_PlanTotals).
 --   Reagents   (B3, 2026-08-20) that same table inverted -- what the profitable
 --              half of it makes you BUY, ranked by what the shopping COSTS.
 --              Atr_Craft_ReagentPressure, in the same file; the supply half of
@@ -63,6 +65,9 @@
 --              waiting on each reagent, which measures DEPENDENCE and hands the
 --              top of the page to the cheapest filler in the recipe book (item
 --              29); that column is still there, it is just no longer first.
+--              With recipes ticked on the Crafting view it stops being a league
+--              table altogether and becomes the invoice for that plan -- what to
+--              buy, what it costs, and the spend/sell/keep line under it.
 --
 -- ONE FILTER BOX serves all four: it narrows whichever table is up, live, as
 -- you type, and it deliberately survives a view switch -- "show me the linen" is
@@ -119,6 +124,14 @@ function Atr_An_DB ()
 	if (type (db.watch)  ~= "table") then db.watch  = {}; end
 	if (type (db.obs)    ~= "table") then db.obs    = {}; end
 	if (type (db.ids)    ~= "table") then db.ids    = {}; end
+
+	-- THE PLAN (item 29, stage 3): which recipes you are actually going to make,
+	-- and how many of each.  Saved rather than kept for the session, because the
+	-- plan is built at the profession window and read at the auction house --
+	-- with a walk, a loading screen and often a /reload in between.
+	if (type (db.plan) ~= "table") then db.plan = {}; end
+	if (type (db.plan.recipes) ~= "table") then db.plan.recipes = {}; end
+	if ((tonumber (db.plan.batch) or 0) < 1) then db.plan.batch = 1; end
 
 	return db;
 end
@@ -618,6 +631,7 @@ local AN_LEAD     = 6;		-- gap before the first column
 local AN_COL_GAP  = 4;		-- gap between columns
 local AN_DEL_LANE = 26;		-- the delete button's own lane at the end of a row
 local AN_SB_LANE  = 26;		-- what the scroll bar needs to the RIGHT of the scroll frame
+local AN_PLAN_LANE = 24;	-- the crafting view's plan tick, at the START of a row
 
 --
 -- `val` is what the column SORTS on (see An_SortRows).  It returns nil for a
@@ -778,10 +792,10 @@ local AN_RCOLS = {
 	{ key = "ritem",	head = "Reagent",	w = 180, grow = 4,					text = true,
 	  val = function (r) return string.lower (r.name or ""); end },
 	{ key = "rrecipes",	head = "Recipes",	w = 46,  grow = 0, just = "CENTER",
-	  tip = "How many of the recipes needing this reagent pay at today's prices, out of how many you have harvested. Everything else on the row is counted over the paying ones only.",
+	  tip = "How many of the recipes needing this reagent pay at today's prices, out of how many you have harvested -- or, once you have ticked a plan on the Crafting view, how many of the recipes IN IT need it. Everything else on the row is counted over that same set.",
 	  val = function (r) return r.pays; end },
 	{ key = "rneed",	head = "Need",		w = 42,  grow = 0, just = "CENTER",
-	  tip = "Units to run ONE craft of each recipe that pays. Not a shopping list for tonight -- a measure of how much of your crafting leans on this one reagent.",
+	  tip = "Units to run ONE craft of each recipe that pays: not a shopping list, a measure of how much of your crafting leans on this one reagent. Tick a plan on the Crafting view and it becomes the shopping list -- the units that plan wants, batch size and all.",
 	  val = function (r) return r.need; end },
 	{ key = "rhave",	head = "Have",		w = 42,  grow = 0, just = "CENTER",
 	  tip = "How many you already hold, across every character, bank and realm bank this account has opened a window on. You do not have to buy what is already in the bank.",
@@ -793,7 +807,7 @@ local AN_RCOLS = {
 	  tip = "Need x Each -- what this reagent actually costs you over the whole basket, and the money you decide with. A 29s reagent wanted six times is 1g 74s and ignorable; a 56s one wanted 147 times is 82g 32s and is not. Blank means it has never been priced.",
 	  val = function (r) return r.outlay; end },
 	{ key = "rprofit",	head = "Profit",	w = 84,  grow = 2, just = "RIGHT",
-	  tip = "How much of your own craft profit is waiting on this reagent: the per-craft profit of every paying recipe that needs it, added up. It measures DEPENDENCE, not value -- the cheapest filler in your recipe book wins it -- which is why the page no longer sorts by it.",
+	  tip = "How much of your own craft profit is waiting on this reagent: the per-craft profit of every recipe in the basket that needs it, added up over the crafts in it. It measures DEPENDENCE, not value -- the cheapest filler in your recipe book wins it -- which is why the page no longer sorts by it.",
 	  val = function (r) return r.profit; end },
 	{ key = "rsupply",	head = "Supply",	w = 78,  grow = 2, just = "CENTER",
 	  tip = "Whether you can actually buy it. Vendor means a vendor sells it -- unlimited supply at a price that never moves. Otherwise it is UNITS on the auction house at your last scan, from how many sellers -- units, because 66 listings could be 66 of them or 1,300 and you need a number you can compare with Need. It turns red when the market holds fewer than the basket wants. A * marks a scan taken before units were counted; rescan and it fills in. Needs the reagent on your watchlist; right-click a row to put it there.",
@@ -818,6 +832,11 @@ local gAn_View = "market";
 -- hidden wholesale when another view is up.
 local gAn_MarketOnly = {};
 
+-- ... and the ones that belong to the two views a PLAN means something on
+-- (item 29, stage 3).  They share the stretch of control row the market widgets
+-- above give up, so each list is hidden exactly when the other is shown.
+local gAn_PlanOnly = {};
+
 -- Spread the columns over a row `rowW` wide: each keeps its minimum width and
 -- the slack is handed out by `grow`, with the rounding remainder going to the
 -- last growing column so the right edge lands exactly on the delete lane.
@@ -825,7 +844,14 @@ local gAn_MarketOnly = {};
 -- It takes the column table rather than reading AN_COLS because there are two of
 -- them now (item 8 group D), laid out against the same row width so the two
 -- views' right edges land in the same place.
-local function An_LayoutCols (cols, rowW)
+--
+-- `lead` is how much of the row's left edge the columns do NOT get.  It is
+-- AN_LEAD everywhere except the crafting view, which parks a plan tick there
+-- (item 29, stage 3) -- the same trick the delete button plays at the other end,
+-- and it is a lane rather than a column because nothing about it sorts.
+local function An_LayoutCols (cols, rowW, lead)
+
+	lead = lead or AN_LEAD;
 
 	local base, grow, last = 0, 0, nil;
 	local i, c;
@@ -834,10 +860,10 @@ local function An_LayoutCols (cols, rowW)
 		if ((c.grow or 0) > 0) then grow = grow + c.grow; last = i; end
 	end
 
-	local slack = rowW - AN_LEAD - AN_DEL_LANE - AN_COL_GAP * (#cols - 1) - base;
+	local slack = rowW - lead - AN_DEL_LANE - AN_COL_GAP * (#cols - 1) - base;
 	if (slack < 0 or grow == 0) then slack = 0; end		-- narrow window: minimums win
 
-	local x, handed = AN_LEAD, 0;
+	local x, handed = lead, 0;
 	for i, c in ipairs (cols) do
 		local add = 0;
 		if (slack > 0 and (c.grow or 0) > 0) then
@@ -1430,12 +1456,165 @@ local gAn_CraftRows	= nil;
 local gAn_CraftStats	= nil;
 local gAn_ReagRows	= nil;
 local gAn_ReagStats	= nil;
+local gAn_ReagPlan	= nil;		-- the plan the cached rows were built from, or nil
 
 local function An_CraftInvalidate ()
 	gAn_CraftRows  = nil;
 	gAn_CraftStats = nil;
 	gAn_ReagRows   = nil;
 	gAn_ReagStats  = nil;
+end
+
+-- THE PLAN (BACKLOG item 29, stage 3) ---------------------------------------
+--
+-- Reagents are never decided on their own.  You pick a craft and the shopping
+-- follows -- so the reagent view stops being a standalone league table and
+-- becomes THE INVOICE FOR A PLAN: tick the recipes on the Crafting view, say how
+-- many of each, and walk the list at the auction house.
+--
+-- WITH NO PLAN SET NOTHING CHANGES.  The view falls back to one craft of each
+-- paying recipe, so it is never empty and never demands setup before it will
+-- say anything.  What changed is that "one of each" is no longer presented AS a
+-- plan, which it is not: it is the baseline reading of what your professions
+-- depend on.  The summary line says which of the two you are looking at.
+--
+-- ONE BATCH SIZE FOR THE LOT, rather than a number per recipe.  The request was
+-- "tick some recipes, name a batch size", and the flow it serves -- five of this
+-- and five of that -- is served by one box; a spinner per row would be a control
+-- for every recipe you own in order to use two of them.  Item 30's Make card
+-- will hand this the same shape from the other end.
+--
+-- Stored, not kept for the session: a plan is built at the profession window and
+-- read at the auction house, with a walk and often a /reload in between.
+
+-- The plan as the pressure function wants it: { [recipe name] = crafts }, or nil
+-- when nothing is ticked.  Global because item 30 reads the same plan.
+function Atr_An_PlanMap ()
+
+	local plan = Atr_An_DB ().plan;
+	local out, n = {}, 0;
+
+	local name, on;
+	for name, on in pairs (plan.recipes) do
+		if (on) then
+			out[name] = plan.batch;
+			n = n + 1;
+		end
+	end
+
+	if (n == 0) then return nil; end
+
+	return out;
+end
+
+function Atr_An_PlanBatch ()
+	return Atr_An_DB ().plan.batch or 1;
+end
+
+local function An_PlanHas (name)
+	return (name ~= nil) and (Atr_An_DB ().plan.recipes[name] == true);
+end
+
+-- Only the reagent half is dropped.  A plan changes what the BASKET holds and
+-- nothing at all about what one craft is worth, so the ranking -- which is the
+-- expensive half, and the one both views share -- stands.
+local function An_PlanChanged ()
+
+	gAn_ReagRows  = nil;
+	gAn_ReagStats = nil;
+
+	-- The reagent list changes LENGTH when the plan does -- a batch of five folds
+	-- a different set of rows than a batch of one -- and an offset left over from
+	-- the longer list draws a page of empty rows.  Only there: ticking happens on
+	-- the crafting view, whose own list does not move, and yanking that back to
+	-- the top on every tick would fight the person doing the ticking.
+	if (gAn_View == "reagents") then An_ScrollTop (); end
+
+	Atr_An_Redisplay ();
+end
+
+local function An_PlanSet (name, on)
+
+	if (name == nil or name == "") then return; end
+
+	Atr_An_DB ().plan.recipes[name] = on and true or nil;
+	An_PlanChanged ();
+end
+
+local function An_PlanSetBatch (n)
+
+	n = math.floor (tonumber (n) or 0);
+	if (n < 1) then n = 1; end
+	if (n > 999) then n = 999; end		-- a typo in a batch box should not be a bill
+
+	local plan = Atr_An_DB ().plan;
+	if (plan.batch == n) then return n; end
+
+	plan.batch = n;
+	An_PlanChanged ();
+
+	return n;
+end
+
+local function An_PlanClear ()
+
+	Atr_An_DB ().plan.recipes = {};
+	An_PlanChanged ();
+end
+
+-- THE PLAN MEASURED AGAINST THE RECIPES THAT ARE ACTUALLY LOADED.
+--
+-- A ticked name that no longer matches a harvested recipe counts for nothing --
+-- which is also what the bill does with it, and the two must agree or the
+-- summary would price a basket the table does not show.  So this is the ONE
+-- place the sales side of a plan is worked out, and both views read it: the
+-- crafting view to say what the plan is worth, the reagent view to put the
+-- sell figure in its spend/sell/keep line.
+--
+-- Returns nil when nothing is planned OR when nothing planned matches, so a
+-- caller can treat both as "no plan" -- which is what they are, for a table that
+-- would otherwise draw an empty invoice and call it your shopping.
+local function An_PlanTotals (rows)
+
+	local qty = Atr_An_PlanMap ();
+	if (qty == nil or type (rows) ~= "table") then return nil; end
+
+	local t = { recipes = 0, crafts = 0, revenue = 0, profit = 0, unpriced = 0, qty = qty };
+
+	local i;
+	for i = 1, #rows do
+
+		local r = rows[i];
+		local n = (r.name and qty[r.name]) or 0;
+
+		if (n > 0) then
+			t.recipes = t.recipes + 1;
+			t.crafts  = t.crafts + n;
+
+			-- Revenue is what the whole batch SELLS for: price each, times the
+			-- yield, times the crafts.  A recipe nobody has scanned adds nothing
+			-- and is counted instead, because a sales figure missing one of its
+			-- rows is a floor and has to be printed as one.
+			if (r.sell) then
+				t.revenue = t.revenue + r.sell * (r.made or 1) * n;
+			else
+				t.unpriced = t.unpriced + 1;
+			end
+
+			if (r.perCraft) then t.profit = t.profit + r.perCraft * n; end
+		end
+	end
+
+	if (t.recipes == 0) then return nil; end
+
+	return t;
+end
+
+-- Is there a plan that nothing matches?  The one state the two functions above
+-- deliberately collapse, kept apart here so the summary can say so rather than
+-- silently showing the baseline as though you had never ticked anything.
+local function An_PlanIsStale (rows)
+	return (Atr_An_PlanMap () ~= nil) and (An_PlanTotals (rows) == nil);
 end
 
 -- The cached ranking itself, built on first ask.  Both price-derived views go
@@ -1631,6 +1810,21 @@ local function An_CraftSummary (stats, shown)
 		s = s..string.format (AZT("  |  best %s per craft"), An_Signed (stats.best));
 	end
 
+	-- WHAT YOU HAVE TICKED, priced off this table's own column rather than off
+	-- the bill: profit here is the sum of Profit/craft over the batch, which is
+	-- the number beside every row you ticked.  The reagent view's spend/sell/keep
+	-- line is the other reading of the same plan -- cash out against cash in --
+	-- and it lives there because that is where the bill is worked out.  Asking
+	-- for the bill from HERE would price every reagent you own on every keystroke
+	-- in the filter box.
+	local plan = An_PlanTotals (gAn_CraftRows);
+	if (plan) then
+		s = s..string.format (AZT("  |  plan: %d recipes, %d crafts, %s"),
+				plan.recipes, plan.crafts, An_Signed (plan.profit));
+	elseif (An_PlanIsStale (gAn_CraftRows)) then
+		s = s..AZT("  |  your plan names no recipe you have harvested -- clear it or re-tick");
+	end
+
 	-- Not a rounding error to hide: the price database is name-keyed, so an item
 	-- the client cannot name is an item nothing can price.
 	if (stats.unnamed > 0) then
@@ -1684,6 +1878,11 @@ local function An_RedisplayCraft ()
 				end
 
 				line.cmargin:SetText (An_Margin (r));
+
+				-- the plan tick: this row is in the basket the reagent view prices
+				if (line.plan and line.plan.SetChecked) then
+					line.plan:SetChecked (An_PlanHas (r.name));
+				end
 
 				line.rec = r;
 				An_WarmItem (r);
@@ -1833,7 +2032,20 @@ local function An_ReagentRows ()
 
 		if (type (Atr_Craft_ReagentPressure) ~= "function") then return {}, nil; end
 
-		gAn_ReagRows, gAn_ReagStats = Atr_Craft_ReagentPressure (An_CraftList ());
+		-- The plan, if there is one that matches anything.  An_PlanTotals returns
+		-- nil for both "nothing ticked" and "nothing ticked still exists", and
+		-- both have to reach the pressure function as nil: a plan matching no
+		-- recipe would price an empty basket and present it as your shopping.
+		local rank = An_CraftList ();
+		local plan = An_PlanTotals (rank);
+
+		gAn_ReagRows, gAn_ReagStats = Atr_Craft_ReagentPressure (rank, plan and plan.qty or nil);
+
+		-- Remembered beside the rows, because every figure on the table is now
+		-- one of two different things and the words beside them have to say
+		-- which.  Read the plan afresh in a tooltip and it could have changed
+		-- since the numbers under the cursor were worked out.
+		gAn_ReagPlan = plan;
 
 		-- THE SUPPLY HALF, and it is attached here rather than in the pressure
 		-- function on purpose: everything else on a row comes out of the recipes,
@@ -1963,7 +2175,17 @@ local function An_ShowReagentTip (owner, r)
 
 		local left = string.format ("%s x%d", u.name or "?", u.count or 1);
 
-		if (u.perCraft == nil) then
+		-- how many of it the plan makes, where that is not simply one
+		if (u.plan and u.plan > 1) then
+			left = string.format (AZT("%s x%d, %d crafts"), u.name or "?", u.count or 1, u.plan);
+		end
+
+		if (u.plan == 0) then
+			-- a plan is set and this recipe is not in it: greyed for the same
+			-- reason a money-losing one is, which is that this row's Need and
+			-- Outlay deliberately do not count it
+			tip:AddDoubleLine (left, AZT("not planned"), 0.5, 0.5, 0.5, 0.5, 0.5, 0.5);
+		elseif (u.perCraft == nil) then
 			tip:AddDoubleLine (left, AZT("not priced"), 0.6, 0.6, 0.6, 1, 0.4, 0.4);
 		elseif (u.perCraft > 0) then
 			tip:AddDoubleLine (left, An_Signed (u.perCraft), 0.9, 0.9, 0.9, 1, 1, 1);
@@ -1983,7 +2205,9 @@ local function An_ShowReagentTip (owner, r)
 	tip:AddLine (" ");
 
 	if (r.need) then
-		tip:AddDoubleLine (AZT("Units for one craft of each"), tostring (r.need), 1, 1, 1, 1, 1, 1);
+		tip:AddDoubleLine (gAn_ReagPlan and AZT("Units your plan wants")
+									     or AZT("Units for one craft of each"),
+			tostring (r.need), 1, 1, 1, 1, 1, 1);
 	end
 	if (r.have and r.have > 0) then
 		tip:AddDoubleLine (AZT("You already hold"), tostring (r.have), 1, 1, 1, 1, 1, 1);
@@ -2061,12 +2285,13 @@ local function An_ShowFoldTip (owner, f)
 	end
 
 	GameTooltip:AddLine (" ");
-	GameTooltip:AddLine (AZT("Everything under 2% of the bill, everything a vendor sells, and everything no paying recipe wants today. None of them changes a decision, and the fix for a page that reads as noise is fewer rows."), 0.8, 0.8, 0.8, true);
+	GameTooltip:AddLine (AZT("Everything under 2% of the bill, everything a vendor sells, and everything the basket does not want. None of them changes a decision, and the fix for a page that reads as noise is fewer rows."), 0.8, 0.8, 0.8, true);
 
 	local k, parts = f.kinds or {}, {};
 	if (k.small)  then tinsert (parts, string.format (AZT("%d under 2%%"), k.small)); end
 	if (k.vendor) then tinsert (parts, string.format (AZT("%d vendor-sold"), k.vendor)); end
-	if (k.idle)   then tinsert (parts, string.format (AZT("%d wanted by nothing that pays today"), k.idle)); end
+	if (k.idle)   then tinsert (parts, string.format (gAn_ReagPlan and AZT("%d not in your plan")
+																  or AZT("%d wanted by nothing that pays today"), k.idle)); end
 
 	if (#parts > 0) then
 		GameTooltip:AddLine (table.concat (parts, ",  "), 0.6, 0.6, 0.6, true);
@@ -2135,29 +2360,95 @@ local function An_DrawFoldRow (line, f)
 	end
 end
 
+-- THE LINE UNDER THE TABLE, and it is two different sentences.
+--
+-- With a plan it is an invoice: what you ticked, what it costs to buy, what it
+-- sells for and what is left.  Without one it is a reading of the book -- how
+-- many reagents, over how many recipes, and what one craft of each paying one
+-- would cost.  The second is deliberately labelled as NOT a plan: it is the same
+-- table and the same arithmetic, but it measures what your professions depend on
+-- rather than what you are about to spend, and presenting it as a shopping list
+-- is exactly the confusion item 29 opened with.
 local function An_ReagentSummary (stats, shown)
 
 	if (stats == nil or stats.reagents == 0) then
 		return AZT("No recipes harvested yet. Open a profession window once and this fills itself in.");
 	end
 
-	local s;
+	-- The plan the ROWS were built from, not the plan as it stands: the two are
+	-- the same by the time this draws (a plan change drops the cache the rows
+	-- come out of), and reading the one the numbers came from is what keeps them
+	-- that way.
+	local plan = gAn_ReagPlan;
+
+	local s = "";
 	if (gAn_Filter ~= "" and shown) then
-		s = string.format (AZT("%d of %d reagents -- across %d recipes, %d of them paying"),
-				shown, stats.reagents, stats.recipes, stats.profitable);
-	else
-		s = string.format (AZT("%d reagents -- across %d recipes, %d of them paying"),
-				stats.reagents, stats.recipes, stats.profitable);
+		s = string.format (AZT("%d of %d reagents shown  |  "), shown, stats.reagents);
+	end
+
+	if (plan) then
+
+		s = s..string.format (AZT("plan: %d recipes, %d crafts, %d reagents to find"),
+				plan.recipes, plan.crafts, stats.wanted or 0);
+
+		-- THE LINE THAT IS THE POINT (item 29, stage 3).  Spend is what you must
+		-- actually put down -- the basket less what is already in the bank -- and
+		-- keep is what is left of the sales after it.  That is a CASH FLOW, and it
+		-- deliberately treats reagents you already hold as free: they are, tonight.
+		-- It is not the same reading as the Profit column, which charges a craft
+		-- for every reagent it eats whoever paid for it, and the two are allowed
+		-- to differ because they answer different questions.
+		local spend = stats.toBuy or stats.outlay or 0;
+		local keep  = (plan.revenue or 0) - spend;
+
+		-- An_Money prints a grey dash for zero, which is right in a column and
+		-- wrong in a sentence: "spend --" is not what "you already own all of it"
+		-- should read as.
+		s = s..string.format (AZT("  |  spend %s -> sell %s -> keep %s"),
+				(spend > 0) and An_Money (spend) or AZT("nothing"),
+				An_Money (plan.revenue), An_Signed (keep));
+
+		-- What the bank is saving you, where it is saving you anything: the row
+		-- Outlay column prints the whole basket, and the gap between the two
+		-- numbers is exactly the stuff you do not have to go and buy.
+		local held = (stats.outlay or 0) - spend;
+		if (held > 0) then
+			s = s..string.format (AZT("  |  %s of it is already in the bank"), An_Money (held));
+		end
+
+		-- BOTH ENDS OF THE LINE CAN BE FLOORS, and each says so for its own
+		-- reason: a recipe nobody has scanned adds nothing to the sell figure, and
+		-- a reagent nobody has priced adds nothing to the spend.
+		if (plan.unpriced > 0) then
+			s = s..string.format (AZT("  |  %d of them have never been priced, so the sell figure is a floor"), plan.unpriced);
+		end
+
+		local blind = (stats.wanted or 0) - (stats.wantedPriced or 0);
+		if (blind > 0) then
+			s = s..string.format (AZT("  |  %d of what you need has never been priced, so the spend is a floor too"), blind);
+		end
+
+		return s;
+	end
+
+	s = s..string.format (AZT("%d reagents -- across %d recipes, %d of them paying"),
+			stats.reagents, stats.recipes, stats.profitable);
+
+	if (An_PlanIsStale (An_CraftList ())) then
+		-- ticked, and none of it exists any more: better said than silently shown
+		-- as the baseline, which looks identical
+		s = s..AZT("  |  your plan names no recipe you have harvested -- clear it or re-tick");
 	end
 
 	-- Nothing paying is a real state, not an empty table, and saying so beats a
-	-- page of dashes: every recipe you know loses money at today's prices.
+	-- page of dashes: every recipe you know loses money at today's prices.  It is
+	-- not a state a plan can be in -- you ticked those recipes yourself.
 	if (stats.profitable == 0) then
 		return s..AZT("  |  nothing pays at today's prices, so nothing here is worth buying yet");
 	end
 
 	if (stats.outlay > 0) then
-		s = s..string.format (AZT("  |  one craft of each paying recipe: %s of reagents"), An_Money (stats.outlay));
+		s = s..string.format (AZT("  |  no plan: one craft of each paying recipe -- %s of reagents"), An_Money (stats.outlay));
 	end
 
 	if (stats.vendor > 0) then
@@ -2284,6 +2575,14 @@ function Atr_An_SetView (view)
 	local i;
 	for i = 1, #gAn_MarketOnly do vis (gAn_MarketOnly[i], market); end
 
+	local planView = (view == "craft" or view == "reagents");
+	for i = 1, #gAn_PlanOnly do vis (gAn_PlanOnly[i], planView); end
+
+	-- the box holds a saved number, so it is re-read on the way in rather than
+	-- left showing whatever was typed into it before a /reload
+	local bb = _G["Atr_An_PlanBatchBox"];
+	if (bb and planView) then bb:SetText (tostring (Atr_An_PlanBatch ())); end
+
 	for i = 1, AN_NUM_ROWS do
 		local line = _G["Atr_An_Row"..i];
 		if (line) then
@@ -2293,6 +2592,7 @@ function Atr_An_SetView (view)
 			for _, c in ipairs (AN_CCOLS) do vis (line[c.key], view == "craft");  end
 			for _, c in ipairs (AN_RCOLS) do vis (line[c.key], view == "reagents"); end
 			vis (line.del, market);
+			vis (line.plan, view == "craft");
 		end
 	end
 
@@ -3143,7 +3443,7 @@ function Atr_An_Init ()
 	AN_ROW_W = scrollW;
 	An_LayoutCols (AN_COLS,  AN_ROW_W);
 	An_LayoutCols (AN_TCOLS, AN_ROW_W);
-	An_LayoutCols (AN_CCOLS, AN_ROW_W);
+	An_LayoutCols (AN_CCOLS, AN_ROW_W, AN_LEAD + AN_PLAN_LANE);	-- the plan tick's lane
 	An_LayoutCols (AN_RCOLS, AN_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
@@ -3269,6 +3569,66 @@ function Atr_An_Init ()
 
 	grpBtn:SetPoint ("LEFT", addBtn, "RIGHT", 4, 0);
 
+	-- THE PLAN CONTROLS (item 29, stage 3), in the space the watchlist controls
+	-- vacate.  The group dropdown, Add Item and Add Group are all market-only and
+	-- are hidden on the two price-derived views, so this row is empty from x=176
+	-- across exactly where those sit -- which is why a fifth control fits at all
+	-- on a row the fourth view button already made tight.
+	--
+	-- One batch box for every ticked recipe, and one button to untick the lot.
+	-- The ticks themselves are per row on the Crafting view, because that is
+	-- where you are looking when you decide.
+	local batchLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+	batchLabel:SetPoint ("TOPLEFT", 172, -40);
+	batchLabel:SetText (AZT("Batch"));
+
+	local batchBox = CreateFrame ("EditBox", "Atr_An_PlanBatchBox", panel, "InputBoxTemplate");
+	batchBox:SetSize (40, 20);
+	batchBox:SetPoint ("TOPLEFT", 176, -52);
+	batchBox:SetAutoFocus (false);
+	batchBox:SetNumeric (true);
+	batchBox:SetMaxLetters (3);
+	batchBox:SetText (tostring (Atr_An_PlanBatch ()));
+
+	-- ON ENTER AND ON LEAVING THE BOX, not on every keystroke -- unlike the filter
+	-- beside it.  A batch change reprices the whole basket, so typing "10" through
+	-- a live handler would build the bill twice, once for a batch of 1.
+	local function batchApply (self)
+		self:SetText (tostring (An_PlanSetBatch (self:GetText())));
+	end
+
+	batchBox:SetScript ("OnEnterPressed", function (self) batchApply (self); self:ClearFocus(); end);
+	batchBox:SetScript ("OnEditFocusLost", batchApply);
+	batchBox:SetScript ("OnEscapePressed", function (self)
+		self:SetText (tostring (Atr_An_PlanBatch ()));
+		self:ClearFocus();
+	end);
+
+	batchBox:SetScript ("OnEnter", function (self)
+		if (GameTooltip == nil) then return; end
+		GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+		GameTooltip:SetText (AZT("How many of each"), 1, 1, 1);
+		GameTooltip:AddLine (AZT("Every recipe you tick on the Crafting view is planned this many times. Press Enter to apply it."), 0.8, 0.8, 0.8, true);
+		GameTooltip:Show();
+	end);
+	batchBox:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+	local clearBtn = CreateFrame ("Button", "Atr_An_PlanClearButton", panel, "UIPanelButtonTemplate");
+	clearBtn:SetSize (76, 22);
+	clearBtn:SetPoint ("LEFT", batchBox, "RIGHT", 8, 0);
+	clearBtn:SetText (AZT("Clear plan"));
+	clearBtn:SetNormalFontObject ("GameFontNormalSmall");
+	clearBtn:SetHighlightFontObject ("GameFontHighlightSmall");
+	clearBtn:SetScript ("OnClick", function () An_PlanClear (); end);
+	clearBtn:SetScript ("OnEnter", function (self)
+		if (GameTooltip == nil) then return; end
+		GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+		GameTooltip:SetText (AZT("Untick everything"), 1, 1, 1);
+		GameTooltip:AddLine (AZT("The Reagents view goes back to one craft of each recipe that pays -- which is what your professions depend on, not a shopping list."), 0.8, 0.8, 0.8, true);
+		GameTooltip:Show();
+	end);
+	clearBtn:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
 	-- Headers: same x, width and justification as the cells beneath them.  The
 	-- text sits at -84, not -74: the group dropdown's frame art hangs well below
 	-- its own anchor and was all but touching it.
@@ -3339,7 +3699,16 @@ function Atr_An_Init ()
 
 	headerSet ("Atr_An_HeadMarket",   "market",   AN_COLS);
 	headerSet ("Atr_An_HeadTrades",   "trades",   AN_TCOLS);
-	headerSet ("Atr_An_HeadCraft",    "craft",    AN_CCOLS);
+	local headCraft = headerSet ("Atr_An_HeadCraft", "craft", AN_CCOLS);
+
+	-- A word over the tick lane.  It is not a header -- there is no column under
+	-- it and nothing to sort -- so it is a plain FontString rather than one of
+	-- the Buttons above, which would offer a click that does nothing.
+	local planHead = headCraft:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+	planHead:SetPoint ("TOPLEFT", AN_HEAD_X0, -84);
+	planHead:SetWidth (AN_PLAN_LANE);
+	planHead:SetJustifyH ("LEFT");
+	planHead:SetText (AZT("Plan"));
 	headerSet ("Atr_An_HeadReagents", "reagents", AN_RCOLS);
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
@@ -3383,6 +3752,35 @@ function Atr_An_Init ()
 			if (line.rec) then Atr_An_Unwatch (line.rec.name); Atr_An_Redisplay (); end
 		end);
 		line.del = del;		-- unwatching is the market view's action, not the Ledger's
+
+		-- THE PLAN TICK (item 29, stage 3), in the lane An_LayoutCols keeps clear
+		-- at the start of a crafting row.  A lane rather than a column because
+		-- nothing about it sorts, and a child of the row rather than a ninth cell
+		-- because it is the one thing on a row you press instead of read.
+		local tick = CreateFrame ("CheckButton", nil, line, "UICheckButtonTemplate");
+		tick:SetSize (18, 18);
+		tick:SetPoint ("LEFT", 3, 0);
+		tick:Hide();				-- the crafting view shows it; see Atr_An_SetView
+
+		tick:SetScript ("OnClick", function (self)
+			local rec = line.rec;
+			if (rec == nil or rec.name == nil) then self:SetChecked (false); return; end
+			An_PlanSet (rec.name, self:GetChecked() and true or false);
+		end);
+
+		-- Its own tooltip, and it needs one: it is the only control on this tab
+		-- whose effect shows up on a different view.
+		tick:SetScript ("OnEnter", function (self)
+			if (GameTooltip == nil) then return; end
+			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+			GameTooltip:SetText (AZT("Plan this recipe"), 1, 1, 1);
+			GameTooltip:AddLine (AZT("Tick what you are actually going to make. The Reagents view then prices THAT -- what to buy, what it costs, and what the batch sells for -- instead of one craft of each recipe that pays."), 0.8, 0.8, 0.8, true);
+			GameTooltip:AddLine (string.format (AZT("The Batch box says how many of each: %d right now."), Atr_An_PlanBatch ()), 0.5, 0.5, 0.5, true);
+			GameTooltip:Show();
+		end);
+		tick:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+		line.plan = tick;
 
 		-- the item's own tooltip, the way the Ledger's rows do it.  A watch entry
 		-- stores only a name, so the link comes from the shared cache -- which
@@ -3535,12 +3933,12 @@ function Atr_An_Init ()
 	-- you made, what you could make, and what making it costs you.
 	local vReag = viewButton ("Atr_An_ViewReagents", "Reagents", "reagents",
 		"What you have to buy",
-		"The crafting list inverted: every reagent your paying recipes need, how much of your own profit is waiting on each one, how many you already hold -- and whether anyone is actually selling them.");
+		"The crafting list inverted: every reagent your paying recipes need, what the basket costs, how many you already hold -- and whether anyone is actually selling them. Tick recipes on the Crafting view and it stops being a league table and becomes the invoice for that plan, with the spend, the sell and what you keep under it.");
 	vReag:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -26, -50);
 
 	local vCraft = viewButton ("Atr_An_ViewCraft", "Crafting", "craft",
 		"What is worth crafting",
-		"Every recipe your professions have harvested, ranked by what one craft is worth at today's prices. The profession window's own profit sort, available where you are actually standing when you decide.");
+		"Every recipe your professions have harvested, ranked by what one craft is worth at today's prices. The profession window's own profit sort, available where you are actually standing when you decide. Tick the ones you are going to make and the Reagents view prices exactly that.");
 	vCraft:SetPoint ("RIGHT", vReag, "LEFT", -4, 0);
 
 	local vTrades = viewButton ("Atr_An_ViewTrades", "Trades", "trades",
@@ -3558,6 +3956,11 @@ function Atr_An_Init ()
 	-- rescan, so these go away wholesale rather than sitting there inert.
 	-- The filter box and its label are NOT here: they are on every view now.
 	gAn_MarketOnly = { addBtn, grpBtn, refresh, progress, _G["Atr_An_GroupDD"] };
+
+	-- The mirror of it: the two controls that only mean anything where there is
+	-- a plan to control.  They sit in the same stretch of row, which is what
+	-- makes both lists necessary rather than one.
+	gAn_PlanOnly = { batchLabel, batchBox, clearBtn };
 
 	Atr_An_SetView ("market");
 
@@ -3649,6 +4052,29 @@ if (SlashCmdList) then
 			-- this tab has been reported dead three times (item 22) and a second
 			-- way in costs two lines
 			Atr_An_SetView (cmd);
+		elseif (cmd == "batch" and rest ~= "") then
+
+			-- the same two controls the buttons drive, reachable without them:
+			-- a button on this tab has been reported dead three times (item 22)
+			local n = An_PlanSetBatch (rest);
+			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: planning %d of each ticked recipe"), n)); end
+
+		elseif (cmd == "plan" and rest ~= "") then
+
+			if (rest == "clear") then
+				An_PlanClear ();
+				if (zc and zc.msg_atr) then zc.msg_atr (AZT("Analysis: plan cleared")); end
+			else
+				-- a shift-clicked link works here too, the way the filter box takes one
+				local name = rest:match ("%[(.-)%]") or rest;
+				local on   = not An_PlanHas (name);
+				An_PlanSet (name, on);
+				if (zc and zc.msg_atr) then
+					zc.msg_atr (string.format (on and AZT("Analysis: %s is in the plan")
+												  or AZT("Analysis: %s is out of the plan"), name));
+				end
+			end
+
 		elseif (cmd == "diag") then
 
 			-- THE LAST RESORT, and the reason is on the record: the Buy tab's
@@ -3706,7 +4132,7 @@ if (SlashCmdList) then
 			end
 		else
 			if (zc and zc.msg_atr) then
-				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  craft  |  reagents  |  menu [item name]  |  diag"));
+				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  craft  |  reagents  |  plan <recipe name>  |  plan clear  |  batch <n>  |  menu [item name]  |  diag"));
 			end
 		end
 		Atr_An_Redisplay ();

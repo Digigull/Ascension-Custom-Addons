@@ -1035,6 +1035,18 @@ end
 -- them comparable per row.  Recipes that are merely known are still counted in
 -- `recipes`, so a row reads "3 of the 8 things I can make with this pay today".
 --
+-- ...UNLESS YOU SAY OTHERWISE (BACKLOG item 29, stage 3).  Pass `plan` -- a
+-- { [recipe name] = how many crafts } map -- and the basket becomes exactly that
+-- instead: only the named recipes count, each multiplied by its own number, and
+-- whether they pay is no longer the gate.  You told it what you are making.
+--
+-- The two are the same arithmetic over a different basket, which is why there is
+-- one function and not two.  "One craft of each paying recipe" is what the addon
+-- assumes when nobody has said, and it is deliberately NOT presented as a plan --
+-- it is the baseline reading of what your professions depend on.  A plan turns
+-- the same table into an invoice: `need` is what to buy, `outlay` is what it
+-- costs, and `stats.toBuy` is what it costs after the bank.
+--
 -- The vellum is included and is not in any recipe's reagent list: an enchant is
 -- unsellable without one, so it is the one reagent every scroll needs and it
 -- would have been the largest omission on an enchanter's table.
@@ -1050,20 +1062,28 @@ end
 --     profit, uses }
 -- with `unit` per item, `outlay` the whole basket at that price, `short`/`toBuy`
 -- the same after what you already hold, and `uses` the recipes that want it,
--- best per craft first.  stats is { reagents, priced, vendor, recipes,
--- profitable, outlay }.
+-- best per craft first.  `pays` is how many recipes counted INTO the basket --
+-- the paying ones, or the planned ones when a plan was passed.  stats is
+-- { reagents, priced, vendor, recipes, profitable, planned, crafts, wanted,
+-- wantedPriced, outlay, toBuy }, where `planned`/`crafts` describe the basket
+-- that was actually counted, `wanted` is how many reagents it asks you to find
+-- (of which `wantedPriced` could be priced), and `toBuy` is the bill less what
+-- you already hold.
 --
 -- `ranking` is optional: pass Atr_Craft_ProfitRanking's list when you already
 -- have one -- pricing every reagent of every recipe is the expensive half and
 -- there is no reason to do it twice for two views of the same table.
 -- Global, and guarded around every WoW API it touches, so it can be checked
 -- offline the way the ranking can.
-function Atr_Craft_ReagentPressure(ranking)
+function Atr_Craft_ReagentPressure(ranking, plan)
 
     local rank = ranking;
     if (type(rank) ~= "table") then rank = (Atr_Craft_ProfitRanking()); end
 
-    local stats = { reagents = 0, priced = 0, vendor = 0, recipes = 0, profitable = 0, outlay = 0 };
+    if (type(plan) ~= "table") then plan = nil; end
+
+    local stats = { reagents = 0, priced = 0, vendor = 0, recipes = 0, profitable = 0,
+                    planned = 0, crafts = 0, wanted = 0, wantedPriced = 0, outlay = 0, toBuy = 0 };
     local byKey, out = {}, {};
 
     -- IDs FIRST, and this is not a detail: the harvest keeps whatever the client
@@ -1087,6 +1107,24 @@ function Atr_Craft_ReagentPressure(ranking)
 
         local pays = (r.perCraft ~= nil and r.perCraft > 0);
         if (pays) then stats.profitable = stats.profitable + 1; end
+
+        -- HOW MANY CRAFTS OF THIS RECIPE THE BASKET HOLDS, and it is the only
+        -- thing a plan changes.  Without one that is "one, if it pays"; with one
+        -- it is whatever you ticked and however big a batch you asked for --
+        -- including for a recipe that does not pay today, because a tick is a
+        -- decision and this function does not get to overrule it.
+        local qty;
+        if (plan) then
+            qty = tonumber(plan[r.name]) or 0;
+        else
+            qty = pays and 1 or 0;
+        end
+        if (qty < 0) then qty = 0; end
+
+        if (qty > 0) then
+            stats.planned = stats.planned + 1;
+            stats.crafts  = stats.crafts + qty;
+        end
 
         -- This recipe's reagents, with the vellum an enchant never lists added
         -- as the reagent it is.  Priced by the same call the craft cost uses, so
@@ -1122,12 +1160,22 @@ function Atr_Craft_ReagentPressure(ranking)
                 if (e.id == nil) then e.id = rg.id or (rg.name and idFor[rg.name]); end
 
                 e.recipes = e.recipes + 1;
-                table.insert(e.uses, { name = r.name, count = rg.count, perCraft = r.perCraft, made = r.made });
+                -- `plan` is how many crafts of this recipe the basket holds, so
+                -- the row's tooltip can grey the recipes it is NOT counting the
+                -- same way it greys the ones that lose money -- both are "in the
+                -- book, deliberately not in this number".
+                table.insert(e.uses, { name = r.name, count = rg.count, perCraft = r.perCraft,
+                                       made = r.made, plan = plan and qty or nil });
 
-                if (pays) then
-                    e.pays   = (e.pays or 0) + 1;
-                    e.need   = (e.need or 0) + rg.count;
-                    e.profit = (e.profit or 0) + r.perCraft;
+                if (qty > 0) then
+                    e.pays = (e.pays or 0) + 1;
+                    e.need = (e.need or 0) + rg.count * qty;
+
+                    -- guarded, where the no-plan path did not have to be: a
+                    -- PLANNED recipe can be unpriced, and folding that in as a
+                    -- zero would turn "nothing here has been priced" into a
+                    -- profit of nought, which is a different claim
+                    if (r.perCraft) then e.profit = (e.profit or 0) + r.perCraft * qty; end
                 end
             end
         end
@@ -1154,6 +1202,16 @@ function Atr_Craft_ReagentPressure(ranking)
             e.have = tonumber((Atr_ItemCount_Query(e.id))) or 0;   -- extra parens: returns 3 values
         end
 
+        -- The basket's own reagents, counted apart from the book's.  `reagents`
+        -- is every reagent of every recipe you have harvested; `wanted` is the
+        -- ones this basket actually asks you to find -- which is the number a
+        -- plan is described by, and the one whose unpriced tail makes the bill
+        -- a floor rather than a total.
+        if (e.need and e.need > 0) then
+            stats.wanted = stats.wanted + 1;
+            if (e.unit) then stats.wantedPriced = stats.wantedPriced + 1; end
+        end
+
         if (e.need) then
             local short = e.need - (e.have or 0);
             if (short < 0) then short = 0; end
@@ -1162,10 +1220,20 @@ function Atr_Craft_ReagentPressure(ranking)
                 e.outlay = e.unit * e.need;
                 e.toBuy  = e.unit * short;
                 stats.outlay = stats.outlay + e.outlay;
+                stats.toBuy  = stats.toBuy + e.toBuy;
             end
         end
 
         table.sort(e.uses, function(a, b)
+            -- WHAT THE BASKET COUNTS COMES FIRST.  Under a plan, a recipe you did
+            -- not tick can out-earn one you did, and the tooltip stops after the
+            -- best few -- so sorting purely on profit could push every planned
+            -- recipe off the list explaining the numbers beside it.  With no plan
+            -- every entry is nil here and this falls straight through.
+            local ap = ((a.plan or 0) > 0);
+            local bp = ((b.plan or 0) > 0);
+            if (ap ~= bp) then return ap; end
+
             if (a.perCraft and b.perCraft) then
                 if (a.perCraft ~= b.perCraft) then return a.perCraft > b.perCraft; end
                 return (a.name or "") < (b.name or "");
