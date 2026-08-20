@@ -139,6 +139,41 @@ local ATR_HIST_NAMECAP  = 8000;		-- backstop: the feed itself is bounded by the 
 -- How far back anything is kept at all.
 local ATR_HIST_KEEP = ATR_HIST_DAYS + (ATR_HIST_WEEKS * 7);
 
+-- WHAT MAKES A DAY'S CLOSE WORTH BELIEVING (owner's question, 2026-08-21:
+-- "will this prevent a skew if I sell a cheap item like a single piece of linen
+-- cloth for 1000 gold?").
+--
+-- Three separate answers, because it was three separate holes:
+--
+-- 1. YOUR OWN LISTINGS ARE NOT THE MARKET.  Nothing in this addon's price feeds
+--    ever excluded them -- the only owner test in the scan is a display marker
+--    for the browse list.  So listing linen at 1000g put 1000g into the sample
+--    like anyone else's.  On a busy book that changed nothing; on a thin one you
+--    were quoting yourself back at yourself.
+--
+-- 2. THE MEGA-HIGH OUTLIER.  The owner's model of a trade-goods book is exactly
+--    right: "generally there will be a normal, medium and high price in the AH
+--    on trade goods, then the dumb mega high price here and there."  A median is
+--    already robust to a few of those -- but ours is QUANTITY-WEIGHTED, and one
+--    enormous stack at a silly price carries enormous weight.  That is the case
+--    the owner spotted, and it is the one a plain median does not cover.
+--
+--    So: reject listings priced above ATR_HIST_OUTLIER x the UNWEIGHTED middle.
+--    Unweighted for the centre on purpose -- one vote per listing -- because a
+--    giant stack must not be able to drag the very number it is measured against.
+--
+--    Only the HIGH tail is cut.  A cheap listing is a real buying opportunity and
+--    is what the Auction line reports; trimming both ends would also bias the
+--    figure downward, where trimming the junk end only removes prices nobody
+--    trades at.
+--
+-- 3. A THIN BOOK IS NOT A PRICE.  With one or two listings the "median" is just
+--    those listings, so the day is marked and the readers that quote a single
+--    day's close decline rather than reporting you to yourself.
+local ATR_HIST_THIN        = 3;		-- fewer listings than this and the day is marked
+local ATR_HIST_OUTLIER     = 4;		-- x the unweighted middle is where junk starts
+local ATR_HIST_OUTLIER_MIN = 4;		-- ... and you cannot name an outlier in a book of three
+
 -- Memoised per name per DAY.  Two of the callers make this a hot path and
 -- neither is obviously one: the Analysis view asks for every row on every
 -- redraw, and Atr_ShowRecTooltip is re-run EVERY FRAME while the sell tooltip is
@@ -240,15 +275,39 @@ end
 -- day:price          one scan, one day
 -- day:price:n         n scans closed that day
 -- day:price:n:span    a FOLDED week -- span is the days it stands for
+-- ...anything/L       THIN: L is the listing count for a day, or the number of
+--                     thin days for a fold.  Readers treat its PRESENCE as the
+--                     signal; only the diagnostic prints the number.
 --
 -- Each field is omitted when it carries no information, which is what keeps the
--- common record at nine characters.
-local function Hist_Rec (d, p, n, span)
+-- common record at nine characters -- and the thin suffix lands on the small
+-- minority of days that have one, so a well-stocked book costs nothing extra.
+local function Hist_Rec (d, p, n, span, thin)
 
-	if (span and span > 1) then return d..":"..p..":"..(n or 1)..":"..span; end
-	if (n and n > 1)      then return d..":"..p..":"..n; end
+	local s;
 
-	return d..":"..p;
+	if     (span and span > 1) then s = d..":"..p..":"..(n or 1)..":"..span;
+	elseif (n and n > 1)       then s = d..":"..p..":"..n;
+	else                            s = d..":"..p; end
+
+	if (thin) then s = s.."/"..thin; end
+
+	return s;
+end
+
+local function Hist_ParseRec (rec)
+
+	local body, thin = string.match (rec or "", "^([^/]+)/(%d+)$");
+	if (body == nil) then body = rec; end
+
+	local d, p, n, span = string.match (body or "", "^(%d+):(%d+):?(%d*):?(%d*)$");
+
+	d = tonumber (d);
+	p = tonumber (p);
+	if (d == nil or p == nil or p <= 0) then return nil; end
+
+	return { d = d, p = p, n = tonumber (n) or 1, span = tonumber (span) or 1,
+			 thin = tonumber (thin) };
 end
 
 -- One packed string -> { {d, p, n}, ... }, oldest first.  Malformed records are
@@ -261,12 +320,8 @@ function Atr_Hist_Decode (packed)
 
 	local rec;
 	for rec in string.gmatch (packed, "[^;]+") do
-		local d, p, n, span = string.match (rec, "^(%d+):(%d+):?(%d*):?(%d*)$");
-		d = tonumber (d);
-		p = tonumber (p);
-		if (d and p and p > 0) then
-			tinsert (out, { d = d, p = p, n = tonumber (n) or 1, span = tonumber (span) or 1 });
-		end
+		local e = Hist_ParseRec (rec);
+		if (e) then tinsert (out, e); end
 	end
 
 	return out;
@@ -277,7 +332,7 @@ local function Hist_Encode (series)
 	local parts = {};
 	local i;
 	for i = 1, #series do
-		parts[i] = Hist_Rec (series[i].d, series[i].p, series[i].n, series[i].span);
+		parts[i] = Hist_Rec (series[i].d, series[i].p, series[i].n, series[i].span, series[i].thin);
 	end
 
 	return table.concat (parts, ";");
@@ -330,7 +385,9 @@ local function Hist_Trim (packed, today)
 			if (e.d < b.d)  then b.d  = e.d; end
 			if (e.d > b.hi) then b.hi = e.d; end
 
-			b.n = b.n + (e.n or 1);
+			b.n    = b.n + (e.n or 1);
+			b.thin = (b.thin or 0) + (e.thin and 1 or 0);
+			b.days = (b.days or 0) + 1;
 			tinsert (b.p, e.p);
 
 		else
@@ -342,7 +399,12 @@ local function Hist_Trim (packed, today)
 	for _, k in ipairs (order) do
 		local b = bucket[k];
 		table.sort (b.p);
-		tinsert (out, { d = b.d, p = b.p[math.ceil (#b.p / 2)], n = b.n, span = (b.hi - b.d) + 1 });
+		-- a week made mostly of thin days is a thin week, and the marker carries
+		-- how many of its days were
+		local wthin = ((b.thin or 0) * 2 > (b.days or 1)) and b.thin or nil;
+
+		tinsert (out, { d = b.d, p = b.p[math.ceil (#b.p / 2)], n = b.n,
+						span = (b.hi - b.d) + 1, thin = wthin });
 	end
 
 	-- folded weeks were appended after the dailies they came from
@@ -361,10 +423,77 @@ local function Hist_LastRec (packed)
 	local last = string.match (packed or "", "[^;]+$");
 	if (last == nil) then return nil, nil; end
 
-	local d, p, n = string.match (last, "^(%d+):(%d+):?(%d*)$");
-	if (d == nil) then return nil, last; end
+	local e = Hist_ParseRec (last);
+	if (e == nil) then return nil, last; end
 
-	return { d = tonumber (d), p = tonumber (p), n = tonumber (n) or 1 }, last;
+	return e, last;
+end
+
+-- Reject the junk end of a book.  See the ATR_HIST_OUTLIER note above for why
+-- the centre is measured UNWEIGHTED and why only the high tail is cut.
+local function Hist_RejectHigh (list)
+
+	if (#list < ATR_HIST_OUTLIER_MIN) then return list; end
+
+	local p = {};
+	local i;
+	for i = 1, #list do p[i] = list[i].price; end
+	table.sort (p);
+
+	local mid = p[math.ceil (#p / 2)];
+	if (mid == nil or mid <= 0) then return list; end
+
+	local cap  = mid * ATR_HIST_OUTLIER;
+	local keep = {};
+	for i = 1, #list do
+		if (list[i].price <= cap) then tinsert (keep, list[i]); end
+	end
+
+	-- rejection must never eat the book: if this left almost nothing then the
+	-- "outliers" were the market and the centre was the anomaly
+	if (#keep < 2) then return list; end
+
+	return keep;
+end
+
+-- ONE SCAN'S LISTINGS -> THE DAY'S SAMPLE, and the count behind it.
+--
+-- `entries` is { price = per unit, weight = stack size, owner = seller } -- the
+-- shape all three feeds already build for the weighted median, plus the owner
+-- they already had and never used.
+--
+-- Returns nil when there is nothing left to measure, which the caller must treat
+-- as "no observation" rather than as a price: an auction house holding only your
+-- own listing has told you nothing about what anything is worth.
+function Atr_Hist_Sample (entries)
+
+	if (type (entries) ~= "table" or #entries == 0) then return nil, 0; end
+
+	local me = (type (UnitName) == "function") and UnitName ("player") or nil;
+
+	local keep = {};
+	local i;
+	for i = 1, #entries do
+
+		local e = entries[i];
+
+		-- Best effort, and it has to be: `owner` comes back nil from this API
+		-- often enough that the Analysis tab counts the cases (numNilOwners).
+		-- An unknown owner is KEPT -- dropping listings because we could not
+		-- identify them would quietly thin every book.
+		local mine = (me ~= nil and type (e.owner) == "string" and e.owner ~= "" and e.owner == me);
+
+		if (not mine and (tonumber (e.price) or 0) > 0) then tinsert (keep, e); end
+	end
+
+	if (#keep == 0) then return nil, 0; end
+
+	local kept = Hist_RejectHigh (keep);
+	local med  = Atr_WeightedMedianPrice and Atr_WeightedMedianPrice (kept) or 0;
+
+	if (med == nil or med <= 0) then return nil, #kept; end
+
+	return math.floor (med), #kept;
 end
 
 -- ===========================================================================
@@ -414,7 +543,10 @@ end
 -- Rules 3 and 4 matter more here than they do there: a bad current price is
 -- overwritten by the next scan, and a bad sample is averaged into every later
 -- reading of this series forever.
-function Atr_Hist_Note (name, price, now)
+-- `nlist` is how many listings backed the price -- Atr_Hist_Sample's second
+-- return.  Below ATR_HIST_THIN the day is marked, and the readers that quote one
+-- day's close then decline rather than report a book of one back at you.
+function Atr_Hist_Note (name, price, now, nlist)
 
 	if (not Atr_Hist_Enabled ()) then return false; end
 
@@ -429,8 +561,11 @@ function Atr_Hist_Note (name, price, now)
 	local day    = Hist_Day (now);
 	local packed = db.p[name];
 
+	nlist = tonumber (nlist);
+	local thin = (nlist and nlist < ATR_HIST_THIN) and nlist or nil;
+
 	if (type (packed) ~= "string" or packed == "") then
-		db.p[name] = Hist_Rec (day, price, 1);
+		db.p[name] = Hist_Rec (day, price, 1, nil, thin);
 		db.n = (db.n or 0) + 1;
 		gHist_DeltaCache[name] = nil;
 		if (db.n > ATR_HIST_NAMECAP) then Atr_Hist_PruneNames (db, day); end
@@ -442,16 +577,17 @@ function Atr_Hist_Note (name, price, now)
 	if (rec == nil) then
 		-- the tail is not a record we wrote: start again rather than append to
 		-- something we cannot read back
-		db.p[name] = Hist_Rec (day, price, 1);
+		db.p[name] = Hist_Rec (day, price, 1, nil, thin);
 		gHist_DeltaCache[name] = nil;
 		return true;
 
 	elseif (rec.d == day) then
-		-- the day's CLOSE is its newest reading; n says how many backed it
-		db.p[name] = string.sub (packed, 1, #packed - #raw)..Hist_Rec (day, price, rec.n + 1);
+		-- the day's CLOSE is its newest reading, and the newest reading's book
+		-- depth is the one that describes it
+		db.p[name] = string.sub (packed, 1, #packed - #raw)..Hist_Rec (day, price, rec.n + 1, nil, thin);
 
 	elseif (day > rec.d) then
-		db.p[name] = packed..";"..Hist_Rec (day, price, 1);
+		db.p[name] = packed..";"..Hist_Rec (day, price, 1, nil, thin);
 
 	else
 		-- the clock went backwards.  Refusing costs one sample; appending out of
@@ -515,6 +651,18 @@ function Atr_Hist_Recent (name, now)
 	local rec = Hist_LastRec (packed);
 	if (rec == nil or rec.p == nil or rec.p <= 0) then return nil; end
 
+	-- A THIN DAY IS NOT A PRICE, but it is not nothing either.  Prefer the newest
+	-- day that had a real book behind it; fall back to the thin one only when
+	-- that is all there has ever been, because for an item with two listings a
+	-- week that IS the evidence and the rung below this one is worse.
+	if (rec.thin) then
+		local s = Atr_Hist_Series (name, now);
+		local i;
+		for i = #s, 1, -1 do
+			if (not s[i].thin) then return s[i].p, s[i].age or 0; end
+		end
+	end
+
 	return rec.p, Hist_Day (now) - rec.d;
 end
 
@@ -542,7 +690,17 @@ function Atr_Hist_Delta (name, days, now)
 
 	if (cached and cached.day == today) then return cached.d; end
 
-	local s = Atr_Hist_Series (name, now);
+	local all = Atr_Hist_Series (name, now);
+
+	-- Both ends have to be real.  A delta between two thin days is the difference
+	-- between two accidents, and it is exactly what would have printed ">999%" in
+	-- green on the day somebody listed one linen for 1000 gold.
+	local s = {};
+	local i;
+	for i = 1, #all do
+		if (not all[i].thin) then tinsert (s, all[i]); end
+	end
+
 	if (#s < 2) then
 		if (days == nil and type (name) == "string") then
 			gHist_DeltaCache[name] = { day = today, d = nil };
@@ -564,7 +722,6 @@ function Atr_Hist_Delta (name, days, now)
 	local target = newest.d - days;
 
 	local pick;
-	local i;
 	for i = #s - 1, 1, -1 do
 		if (s[i].d <= target) then pick = s[i]; break; end
 	end
@@ -608,11 +765,22 @@ local ATR_HIST_MEDIAN_MIN = 3;
 
 function Atr_Hist_Median (name, now)
 
-	local s = Atr_Hist_Series (name, now);
+	local all = Atr_Hist_Series (name, now);
+
+	-- Thin days are dropped outright here rather than fallen back on: a median is
+	-- a statement about a market, and a day whose whole book was your own listing
+	-- and one other is not one.  An item that is ALWAYS thin therefore gets no
+	-- "typical price" at all, which is the honest answer -- the Auction line still
+	-- shows what is actually on the shelf.
+	local s = {};
+	local i;
+	for i = 1, #all do
+		if (not all[i].thin) then tinsert (s, all[i]); end
+	end
+
 	if (#s < ATR_HIST_MEDIAN_MIN) then return nil, #s; end
 
 	local p = {};
-	local i;
 	for i = 1, #s do p[i] = s[i].p; end
 
 	table.sort (p);
@@ -785,11 +953,13 @@ function Atr_Hist_Show (name)
 	if (#s == 0) then
 		tinsert (out, "(nothing recorded)");
 	else
-		tinsert (out, "day\tage\tscans\tprice           copper");
+		tinsert (out, "day\tage\tscans\tprice           copper      book");
 		local i;
 		for i = 1, #s do
-			tinsert (out, string.format ("%d\t%dd\t%d\t%-16s%d",
-				s[i].d, s[i].age or 0, s[i].n or 1, Hist_Money (s[i].p), s[i].p));
+			tinsert (out, string.format ("%d\t%dd\t%d\t%-16s%-12d%s",
+				s[i].d, s[i].age or 0, s[i].n or 1, Hist_Money (s[i].p), s[i].p,
+				s[i].thin and ("thin("..s[i].thin..")") or
+				((s[i].span or 1) > 1 and ("week of "..s[i].span) or "")));
 		end
 	end
 

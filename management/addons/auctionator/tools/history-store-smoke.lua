@@ -40,6 +40,27 @@ local gRealm = "Areanoss"
 
 function GetRealmName ()			return gRealm end
 function UnitFactionGroup ()		return "Alliance" end
+function UnitName ()				return "Falku" end
+
+-- the real one, copied in: Atr_Hist_Sample defers the actual median to it and
+-- the point of these tests is what gets fed TO it
+function Atr_WeightedMedianPrice (entries)
+	if (type (entries) ~= "table" or #entries == 0) then return 0 end
+	table.sort (entries, function (a, b) return a.price < b.price end)
+	local total = 0
+	for i = 1, #entries do total = total + (entries[i].weight or 0) end
+	if (total <= 0) then return 0 end
+	local half, cum = total / 2, 0
+	for i = 1, #entries do
+		cum = cum + (entries[i].weight or 0)
+		if (cum > half) then return math.floor (entries[i].price) end
+		if (cum == half) then
+			local nextp = (entries[i + 1] and entries[i + 1].price) or entries[i].price
+			return math.floor ((entries[i].price + nextp) / 2)
+		end
+	end
+	return math.floor (entries[#entries].price)
+end
 function ZT (s)						return s end
 
 local zc = {}
@@ -427,6 +448,113 @@ check (med ~= nil and med < 2000,
 	"a single poisoned day does not move the median -- got " .. tostring (med))
 
 eq (Atr_Hist_Median ("Never Heard Of It"), nil, "an unrecorded item has no typical price")
+
+--------------------------------------------------------------------
+-- 19. THE SAMPLE (owner's question, 2026-08-21: "will this prevent a skew if I
+--     sell a cheap item like a single piece of linen cloth for 1000 gold?").
+--
+--     Three separate holes, three separate answers, and the book shape is the
+--     owner's own: "generally there will be a normal, medium and high price in
+--     the AH on trade goods, then the dumb mega high price here and there."
+--------------------------------------------------------------------
+
+local function L (price, weight, owner)
+	return { price = price, weight = weight or 1, owner = owner }
+end
+
+-- a healthy linen book: normal, medium, high -- and one piece of junk
+local book = { L(1000), L(1050), L(1100), L(1200), L(1500), L(10000000, 1, "Falku") }
+
+local samp, nl = Atr_Hist_Sample (book)
+check (samp ~= nil and samp < 2000,
+	"a mega-high listing does not become the day's price -- got " .. tostring (samp))
+eq (nl, 5, "... and it is not counted in the book depth either")
+
+-- the case the owner spotted: the junk carries a HUGE STACK, so a
+-- quantity-weighted median would follow it up. This is what a plain median
+-- does not cover and why the high tail is cut at all.
+book = { L(1000, 1), L(1050, 1), L(1100, 1), L(1200, 1), L(9000000, 400, "Someone Else") }
+samp = Atr_Hist_Sample (book)
+check (samp ~= nil and samp < 2000,
+	"a 400-stack of junk cannot drag the weighted median -- got " .. tostring (samp))
+
+-- YOUR OWN LISTING IS NOT THE MARKET
+book = { L(1000, 1, "Alice"), L(1100, 1, "Bob"), L(1200, 1, "Carol"), L(1250, 1, "Dave") }
+local base = Atr_Hist_Sample (book)
+table.insert (book, L(1240, 1, "Falku"))
+eq (Atr_Hist_Sample (book), base, "your own listing does not move the sample")
+
+-- ... and an auction house holding ONLY your listing has told you nothing
+eq (Atr_Hist_Sample ({ L(10000000, 1, "Falku") }), nil,
+	"a book that is only your own listing is no observation at all")
+
+-- an UNKNOWN owner is kept: this API returns nil owners often enough that the
+-- Analysis tab counts them, and dropping those would thin every book
+book = { L(1000), L(1100), L(1200) }
+check (Atr_Hist_Sample (book) ~= nil, "listings with no owner are still the market")
+
+-- rejection must never eat the book: if almost everything is "high", the high
+-- prices ARE the market and the cheap one is the anomaly
+book = { L(1000000, 1), L(1010000, 1), L(1020000, 1), L(1030000, 1) }
+samp = Atr_Hist_Sample (book)
+check (samp ~= nil and samp > 900000, "a uniformly dear book is not rejected as outliers")
+
+--------------------------------------------------------------------
+-- 20. A THIN BOOK IS MARKED, and the readers that quote ONE day's close then
+--     decline rather than reporting you to yourself.
+--------------------------------------------------------------------
+
+gNow = day (7100); Atr_Hist_Note ("Thin Linen", 1000, nil, 9)
+gNow = day (7101); Atr_Hist_Note ("Thin Linen", 1010, nil, 9)
+gNow = day (7102); Atr_Hist_Note ("Thin Linen", 1020, nil, 9)
+
+-- day four: one listing, and it is the 1000g linen
+gNow = day (7103); Atr_Hist_Note ("Thin Linen", 10000000, nil, 1)
+
+s = Atr_Hist_Series ("Thin Linen")
+eq (#s, 4,               "the thin day is still recorded -- it happened")
+eq (s[4].thin, 1,        "... and marked with how thin the book was")
+eq (s[3].thin, nil,      "... while a healthy day carries no mark")
+
+-- the cascade skips back to the last real reading rather than quoting the spike
+local rp = Atr_Hist_Recent ("Thin Linen")
+eq (rp, 1020, "the price cascade skips a thin day for the last real one")
+
+-- the Week column and the Sell sentence must not fire on it at all
+w = Atr_Hist_Delta ("Thin Linen")
+check (w == nil or w.to ~= 10000000,
+	"the week-over-week figure never ends on a thin day -- got " .. tostring (w and w.to))
+eq (Atr_Hist_SellNote ("Thin Linen"), nil, "and the sell sentence stays quiet")
+
+-- the median ignores it too
+med = Atr_Hist_Median ("Thin Linen")
+check (med ~= nil and med < 2000,
+	"the typical price ignores the thin day entirely -- got " .. tostring (med))
+
+--------------------------------------------------------------------
+-- 21. THE COMMAND PATHS. They render into a copy box that does not exist here,
+--     so they return false -- but the BODY runs, which is the point: these are
+--     the only functions no other test reaches, and a typo in one of them would
+--     otherwise surface as an error in game with a full store behind it.
+--------------------------------------------------------------------
+
+local okShow  = pcall (Atr_Hist_Show,  "Thin Linen")
+local okAudit = pcall (Atr_Hist_Audit)
+local okRep   = pcall (Atr_Hist_Report)
+
+check (okShow,  "/atrhistory show runs over a real series")
+check (okAudit, "/atrhistory audit runs")
+check (okRep,   "/atrhistory status runs")
+
+-- audit reads the mean database too, so give it one shaped like the real thing
+gAtr_MeanDB = { ["Thin Linen"] = 1005, ["Copper Ore Two"] = { 900, 1000, 1100 } }
+function Atr_MeanCount (v) if (type (v) == "number") then return 1 end return #v end
+function Atr_MeanMedian (v) if (type (v) == "number") then return v end return v[math.ceil (#v / 2)] end
+
+check (pcall (Atr_Hist_Audit), "... and again with a mean database to compare against")
+
+check (Atr_Hist_Clear (),        "the store can be cleared")
+eq (Atr_Hist_Stats ().names, 0,  "... and it is empty afterwards")
 
 --------------------------------------------------------------------
 

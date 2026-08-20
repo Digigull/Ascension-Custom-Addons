@@ -685,6 +685,88 @@ while a single absurd day fails to move it at four.
 
 ---
 
+## 15. Sample hygiene, 2026-08-21 — "what if I list one linen for 1000 gold?"
+
+The owner asked whether any of this survives them listing a cheap item at an absurd price. Tracing
+it found **three separate holes**, and the owner named the third one themselves:
+
+> "generally there will be a normal, medium and high price in the AH on trade goods, then the dumb
+> mega high price here and there. Honestly cutting off some of the high might even have value on
+> high quantity listings."
+
+### What already protected you, before any of this
+
+The daily sample was already the **quantity-weighted median of every listing in the scan** — not the
+lowest, not any one listing. One absurd entry at the far end of a sorted list of forty moves
+nothing. And the weighting cuts the right way for the owner's own example: it weights by **stack
+size**, so *a single piece* of linen carries the least possible influence. One bad day also cannot
+move the 30-day median that feeds "Auction median".
+
+Stage 2 had already removed the worst version of this: `Atr_GetAuctionPrice` used to fall through to
+`Atr_GetMostRecentSale`, which reads your **posting history** — so listing linen at 1000g literally
+taught the addon that linen was worth 1000g whenever the scan database had nothing.
+
+### Hole 1 — your own listings were in the sample
+
+Nothing in any price feed excluded them. The only `owner == UnitName("player")` test in the scan is
+a **display marker** for the browse list. `Atr_Hist_Sample` now drops them.
+
+**An unknown owner is kept**, deliberately: this API returns nil owners often enough that the
+Analysis tab counts the cases (`numNilOwners`), and dropping listings because we could not identify
+them would quietly thin every book. And when *every* listing is yours, the sample returns **nil** —
+an auction house holding only your own listing has told you nothing, and the feed records no
+observation rather than a price.
+
+### Hole 2 — the mega-high outlier, on a weighted median
+
+This is the owner's insight and it is the one a plain median does not cover. A median resists a few
+extreme values; a **quantity-weighted** median does not resist one *enormous stack* at a silly
+price, because that stack carries weight proportional to its size.
+
+So listings above **4× the unweighted middle** are rejected before the median is taken. Unweighted
+for the centre on purpose — one vote per listing — because a giant stack must not be able to drag
+the very number it is measured against.
+
+**Only the high tail is cut.** A cheap listing is a real buying opportunity and is what the Auction
+line reports; trimming both ends would also bias the figure downward, where trimming the junk end
+only removes prices nobody trades at. And **rejection can never eat the book**: if it would leave
+fewer than two listings, the "outliers" were the market and the centre was the anomaly, so nothing
+is rejected. A book of three or fewer is never trimmed at all — you cannot identify an outlier in
+three numbers.
+
+### Hole 3 — a thin book is not a price
+
+With one or two listings the median is just those listings. The day is still **recorded** — it
+happened — but it is **marked**, with a `/L` suffix carrying the listing count, and the readers that
+quote a single day's close then decline:
+
+- **The price cascade** skips back to the newest day that had a real book behind it, falling back to
+  a thin one only when that is all there has ever been — for an item with two listings a week, that
+  *is* the evidence, and the rung below is worse.
+- **The Week column and the Sell sentence** drop thin days from both ends. A delta between two
+  accidents is what would have printed `>999%` in green on the day somebody listed one linen for
+  1000 gold.
+- **The median** drops them outright. An item that is *always* thin therefore gets no "typical
+  price" at all, which is the honest answer — the Auction line still shows what is on the shelf.
+
+The suffix costs 2–3 bytes and only on the minority of days that carry it, so a well-stocked book is
+unchanged at nine characters.
+
+### What was deliberately left alone
+
+**The mean database still gets the uncleaned sample.** Changing it would be a behaviour change to a
+shipped number for the sake of a store that is being superseded anyway. The history takes its own
+sample off the same listings — which is one more reason for the deletion `/atrhistory audit` exists
+to justify.
+
+**Tested:** 114 assertions. The new ones run the owner's exact scenarios — a mega-high listing in a
+healthy book, a 400-stack of junk against a weighted median, your own listing failing to move the
+sample, a book that is only yours returning nothing, unknown owners surviving, a uniformly dear book
+not being mistaken for outliers, and a thin day being recorded, marked, and then declined by each of
+the four readers in turn.
+
+---
+
 ## 9. Answered by the owner, 2026-08-21
 
 1. **A sixth folder and a companion addon: yes**, both approved.
