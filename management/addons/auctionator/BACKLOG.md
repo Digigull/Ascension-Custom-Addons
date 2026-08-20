@@ -22,7 +22,9 @@ variant key, so a search could not move the tooltip of any item a full scan alre
 up under the item. **Item 8 was built 2026-08-20** and its one open premise turned out to be
 wrong in a way that changed the design: slot 3 is not free.
 
-**Item 9 is new, 2026-08-20, and built the same day.**
+**Item 9 is new, 2026-08-20, and built the same day.** **Item 10 is new, 2026-08-20:** item 7's
+"+Reagent List" menu entry had never once appeared in game, and the suite that covers that menu did
+not load the file the entry depends on. Fixed the same day.
 
 ---
 
@@ -852,3 +854,72 @@ rather than reasoned because this is the only destructive operation on the tab's
 **Verified:** `luac5.1 -p` clean; all five Auctionator suites pass (27 + 53 + 114 + 25 + 20).
 **Not verified in game** — the frame work (the x hit area, the menu's placement under the dropdown)
 is reasoned.
+
+---
+
+## 10. Item 7's "+Reagent List" entry never appeared — DONE
+
+**Reported (owner, 2026-08-20, with a screenshot):** *"backlog 7 isn't working. Can you check this
+out, I would like the text to be blue and underneath the Shopping List section '+Reagent List'"* —
+the right-click menu on a Crafting-view row showed *Shopping list / Sample Shopping List #1 / New
+list... / Analysis group / ...* and no blue entry at all.
+
+**The cause is a key-type mismatch, and this file's own header warned about it.** The note above
+`Atr_Craft_ReagentList` says the two harvests write two different shapes into
+`AUCTIONATOR_CRAFT_RECIPES` and that *"a caller reading the table directly would work against one
+and silently return nothing for the other"*. That function **was** that caller:
+
+- the **profession window** harvest keys by the produced item's numeric ID (`db[madeID]`) — this is
+  what fills the Crafting view's 891 recipes, i.e. essentially everything;
+- the **recipe tooltip** harvest keys by name (`db[created]`) — far rarer;
+- the Analysis menu had only a name and called `Atr_Craft_ReagentList (nil, itemName)`, so the
+  lookup `AUCTIONATOR_CRAFT_RECIPES[name]` missed every window-harvested recipe.
+
+The entry is gated on that same call returning something, so it was never built. Not "sometimes
+broken": broken for every craft the owner could have tried.
+
+**Fixed by resolving a name against the ID-keyed records**, in the file that owns the record shape.
+`Atr_Craft_IdForName` builds a name → numeric-key map and memoises it, because the only way to match
+a name to a numeric key is to ask the client what each key is called and doing ~900 `GetItemInfo`
+calls per menu open is not a thing to do twice. It rebuilds when the record COUNT changes — counting
+keys is a pairs loop over a table already in memory, naming them is the expensive half — so opening
+another profession window refreshes it with nothing having to remember to invalidate anything.
+
+The two Analysis callers now also pass `Atr_An_IdForName (itemName)` as the first argument. That is
+not a second code path — a numeric first argument is the function's documented input — it just skips
+the reverse index on the Crafting view, where the tab already knows the id.
+
+**Also asked, also done:** the label is now **"+Reagent List"**. It was already blue
+(`|cff40a0ff`) and already the last entry in the shopping-list section, above the *Analysis group*
+header — the position in the request was already the intended one; it simply had never been seen.
+
+**And the mark it shares with its neighbours** (owner, 2026-08-20, follow-up: *"change the plus
+symbol to gold and add a plus symbol in front of New list and New Group"*). The `+` is gold
+(`|cffffd100`) on all three, with only the reagents entry's *words* staying blue — so the menu now
+reads `+New list...`, `+Reagent List`, `+New group...`, and the three "this makes something new"
+verbs carry one mark instead of three near-misses.
+
+Two details worth keeping. The `+` is **one constant**, `AN_PLUS`, not three copies of an escape
+code — a fourth such entry should use it rather than a hand-typed colour. And it is **prepended
+outside the `AZT()` lookup**, so the translation keys stay `"New list..."` and `"New group..."`: a
+locale file carries the words and never the punctuation. That is also what lets the `+` keep its own
+colour while the words keep theirs.
+
+**Why the tests said nothing, which is the part worth keeping.** `analysis-feed-smoke.lua` covers
+`Atr_An_MenuEntries` and passed 31 assertions while this was totally broken, because it loaded only
+`AuctionatorAnalysis.lua` and `AuctionatorScan.lua`. The menu gate reads
+`type (Atr_Craft_ReagentList) == "function"` — with the profession file unloaded that is false, so
+the entry was skipped and the suite happily asserted the menu contents *without* it. A stub would
+have reproduced exactly the same blind spot, since what was wrong was which key the real function
+looks under. The suite now loads the real
+`AuctionatorFinderProfession.lua`, and 11 new assertions build both harvest shapes and check that a
+name alone finds each.
+
+**Proved rather than assumed:** the new assertions were run against the pre-fix file, which returns
+nothing for a window-harvested recipe asked by name, and against the fixed one, which returns its
+reagents.
+
+**Verified:** `luac5.1 -p` clean; all five Auctionator suites pass (27 + 68 + 114 + 25 + 20).
+The colour segmentation was resolved back to plain text rather than eyeballed —
+`[gold:+][blue:Reagent List]`, `[gold:+][default:New list...]`, `[gold:+][default:New group...]`.
+**Not verified in game.**

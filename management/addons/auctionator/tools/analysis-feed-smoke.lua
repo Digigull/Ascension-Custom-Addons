@@ -77,6 +77,14 @@ end
 load_addon_file ("Auctionator-Finder-Ascension/AuctionatorAnalysis.lua")
 load_addon_file ("Auctionator-Finder-Ascension/AuctionatorScan.lua")
 
+-- THE PROFESSION FILE IS LOADED FOR ONE REASON, and it is the reason the
+-- "+Reagent List" entry could be wholly broken in game while this suite passed:
+-- the menu gate is `type (Atr_Craft_ReagentList) == "function"`, and without
+-- this file that is false, so the entry was never built and never checked.  A
+-- stub would have reproduced the same blind spot -- what was wrong was which KEY
+-- the real function looks under.
+load_addon_file ("Auctionator-Finder-Ascension/AuctionatorFinderProfession.lua")
+
 --------------------------------------------------------------------
 -- helpers
 --------------------------------------------------------------------
@@ -249,6 +257,12 @@ reset ()
 Atr_An_AddGroup ("Cloth")
 Atr_An_AddGroup ("Ore")
 
+-- The three "makes something new" entries carry a gold + (owner, 2026-08-20).
+-- Spelled out once here rather than inline in five assertions: if the colour
+-- moves, one line moves with it.
+local PLUS    = "|cffffd100+|r"
+local REAGENT = PLUS .. "|cff40a0ffReagent List|r"
+
 local function texts (entries)
 	local out = {}
 	for i = 1, #entries do out[i] = entries[i].text end
@@ -261,10 +275,10 @@ local function findEntry (entries, text)
 end
 
 local groups = Atr_An_MenuEntries (WATCHED, "groups")
-eq (texts (groups), "(no group) | Cloth | Ore | New group...", "groups mode lists every group")
+eq (texts (groups), "(no group) | Cloth | Ore | " .. PLUS .. "New group...", "groups mode lists every group")
 
 local lists = Atr_An_MenuEntries (WATCHED, "lists")
-eq (texts (lists), "no lists yet | New list...", "lists mode still offers a way in with no lists")
+eq (texts (lists), "no lists yet | " .. PLUS .. "New list...", "lists mode still offers a way in with no lists")
 eq (findEntry (lists, "no lists yet").disabled, true, "... and says so as a disabled line")
 
 local both = Atr_An_MenuEntries (WATCHED, "both")
@@ -339,6 +353,67 @@ eq (texts (Atr_An_GroupMenuEntries ()), "All groups | Ore", "the menu follows th
 reset ()
 eq (texts (Atr_An_GroupMenuEntries ()), "All groups | no groups yet", "with no groups it says so")
 eq (findEntry (Atr_An_GroupMenuEntries (), "no groups yet").disabled, true, "... as a disabled line")
+
+--------------------------------------------------------------------
+-- "+REAGENT LIST" (BACKLOG item 7, reported not working 2026-08-20).
+--
+-- The recipe table is written by two harvests with two different key types: the
+-- profession WINDOW keys by the produced item's numeric ID, the recipe-tooltip
+-- harvest keys by name.  The Analysis menu has only a name, so it found the
+-- second kind and silently missed the first -- which is nearly every recipe a
+-- player actually has.  Both shapes are built here; the ID-keyed one is the case
+-- that was broken.
+--------------------------------------------------------------------
+
+reset ()
+
+local NAMES = { [55055] = "Reflex Scope", [55056] = "Iron Sights Scope" }
+GetItemInfo = function (k) return NAMES[k] end
+
+AUCTIONATOR_CRAFT_RECIPES = {
+	-- window harvest: keyed by the produced item's ID
+	[55055] = { made = 1, reagents = { { id = 3577, name = "Gold Bar", count = 2 },
+									   { id = 4371, name = "Bronze Framework", count = 1 } } },
+	-- tooltip harvest: keyed by name
+	["Scroll of Enchant Boots - Speed"] = { made = 1, byTooltip = true,
+		reagents = { { name = "Greater Planar Essence", count = 1 } } },
+}
+
+eq (Atr_Craft_IdForName ("Reflex Scope"), 55055, "a name resolves to the numeric key holding its recipe")
+eq (Atr_Craft_IdForName ("Iron Sights Scope"), nil, "... and a name with no recipe resolves to nothing")
+
+-- THE BUG. Name-only lookup had to start working for the ID-keyed records.
+local rg, made = Atr_Craft_ReagentList (nil, "Reflex Scope")
+check (rg ~= nil, "a WINDOW-harvested recipe is found by name alone")
+eq (rg and #rg, 2, "... with all its reagents")
+eq (made, 1, "... and its yield")
+
+eq (select (1, Atr_Craft_ReagentList (55055, "Reflex Scope")) ~= nil, true, "the id still works when passed")
+
+local tt = Atr_Craft_ReagentList (nil, "Scroll of Enchant Boots - Speed")
+check (tt ~= nil, "a TOOLTIP-harvested recipe is still found by name")
+
+eq (Atr_Craft_ReagentList (nil, "Iron Sights Scope"), nil, "an item nothing makes has no reagent list")
+
+-- ...and the menu entry that gate controls.
+local entries = Atr_An_MenuEntries ("Reflex Scope", "lists")
+local blue    = findEntry (entries, REAGENT)
+check (blue ~= nil, "the +Reagent List entry appears for a window-harvested craft")
+eq (entries[#entries].text, REAGENT, "... at the bottom of the shopping list section")
+
+eq (findEntry (Atr_An_MenuEntries ("Iron Sights Scope", "lists"), REAGENT), nil,
+	"... and not for an item nothing makes")
+
+-- The + is GOLD and outside the blue, on all three: it marks the same kind of
+-- action in each and reads as one mark, not three near-misses.
+eq (REAGENT:sub (1, #PLUS), PLUS, "the reagents entry opens with the gold +")
+check (REAGENT:find ("|cff40a0ff", 1, true) > #PLUS, "... and its words are blue after it")
+eq (findEntry (Atr_An_MenuEntries ("Reflex Scope", "lists"), PLUS .. "New list...") ~= nil, true,
+	"New list... carries the same gold +")
+eq (findEntry (Atr_An_MenuEntries ("Reflex Scope", "groups"), PLUS .. "New group...") ~= nil, true,
+	"New group... carries the same gold +")
+
+AUCTIONATOR_CRAFT_RECIPES = nil
 
 --------------------------------------------------------------------
 

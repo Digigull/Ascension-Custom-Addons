@@ -620,6 +620,59 @@ function Atr_Craft_HasRecipe(link, name)
     return false;
 end
 
+-- NAME -> THE NUMERIC KEY THAT HOLDS ITS RECIPE.
+--
+-- The window harvest keys AUCTIONATOR_CRAFT_RECIPES by the produced item's ID,
+-- so anything holding only a name -- the Analysis tab's menus, which is where
+-- this was noticed -- cannot find those records at all.  Building the reverse
+-- map means asking the client for the name behind every numeric key, so it is
+-- built once and kept.
+--
+-- REBUILT WHEN THE RECORD COUNT CHANGES, which is the cheap half of the problem:
+-- counting keys is a pairs loop over a table already in memory, while naming
+-- them is ~900 GetItemInfo calls.  Opening another profession window adds
+-- records and the count moves, so the map follows without anything having to
+-- remember to invalidate it.
+--
+-- A key the client cannot name yet is simply not in the map.  That is the
+-- ordinary cold-cache case rather than an error, and it fixes itself: the count
+-- has not changed, but the next rebuild for any reason picks it up, and the
+-- Crafting view's own row draw asks the client about it anyway.
+local gCraftNameIdx   = nil;
+local gCraftNameIdxN  = -1;
+
+local function Atr_Craft_NameIndexCount()
+    local n = 0;
+    local k;
+    for k in pairs(AUCTIONATOR_CRAFT_RECIPES) do n = n + 1; end
+    return n;
+end
+
+function Atr_Craft_IdForName(name)
+
+    if (type(name) ~= "string" or name == "") then return nil; end
+    if (type(AUCTIONATOR_CRAFT_RECIPES) ~= "table") then return nil; end
+    if (type(GetItemInfo) ~= "function") then return nil; end
+
+    local n = Atr_Craft_NameIndexCount();
+
+    if (gCraftNameIdx == nil or n ~= gCraftNameIdxN) then
+
+        gCraftNameIdx  = {};
+        gCraftNameIdxN = n;
+
+        local key, rec;
+        for key, rec in pairs(AUCTIONATOR_CRAFT_RECIPES) do
+            if (type(key) == "number" and type(rec) == "table") then
+                local nm = GetItemInfo(key);
+                if (type(nm) == "string" and nm ~= "") then gCraftNameIdx[nm] = key; end
+            end
+        end
+    end
+
+    return gCraftNameIdx[name];
+end
+
 -- THE REAGENTS FOR ONE ITEM, BY NAME (BACKLOG item 7, 2026-08-21).
 --
 -- Returns { {name=, count=}, ... } and the recipe's yield, or nil when nothing
@@ -659,6 +712,28 @@ function Atr_Craft_ReagentList(link, name)
     -- ID first, then name: the same order Atr_Craft_HasRecipe resolves in, so
     -- the menu entry can never offer a list for a recipe this cannot then read.
     local rec = (itemID and AUCTIONATOR_CRAFT_RECIPES[itemID]) or (name and AUCTIONATOR_CRAFT_RECIPES[name]) or nil;
+
+    -- A NAME ALONE USED TO FIND ALMOST NOTHING, and this is the whole of BACKLOG
+    -- item 7's "it isn't working" (owner, 2026-08-20: the blue entry was simply
+    -- absent from the menu on every craft they tried).
+    --
+    -- The header above this function warns that the two harvests write two
+    -- different shapes and that "a caller reading the table directly would work
+    -- against one and silently return nothing for the other".  This function was
+    -- that caller.  The WINDOW harvest -- the one that fills the Crafting view's
+    -- 891 recipes -- keys by the produced item's ID (`db[madeID]`), while only
+    -- the far rarer tooltip harvest keys by name.  The Analysis menu has a name
+    -- and no link, so the lookup above missed every window-harvested recipe,
+    -- which is very nearly all of them.
+    --
+    -- So resolve the name against the ID-keyed records too.  Memoised, because
+    -- the only way to match a name to a numeric key is to ask the client what
+    -- each key is called, and doing 900 GetItemInfo calls every time a menu opens
+    -- is not a thing to do twice.
+    if (rec == nil and name) then
+        local id = Atr_Craft_IdForName(name);
+        if (id) then rec = AUCTIONATOR_CRAFT_RECIPES[id]; end
+    end
 
     if (type(rec) ~= "table" or type(rec.reagents) ~= "table") then return nil; end
 
