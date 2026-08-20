@@ -5,9 +5,10 @@ the record of what each item actually means against the code as it stands; it is
 doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
-Items marked **DONE** have shipped; the rest have not been implemented. **Nothing here has
-been tested in game** — every "current behaviour" note is read from source, not observed, and
-a shipped item's own section says what was and was not verified.
+Items marked **DONE** have shipped; the rest have not been implemented. Most "current behaviour"
+notes here are read from source, not observed — a shipped item's own section says what was and
+was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14, and
+15 + 16 together).
 
 Anchors are `file:line` at the time of writing and will drift; the symbol names next to them
 are the durable part.
@@ -1792,7 +1793,12 @@ scan, where this helper would have nothing to compare against yet.
 variant of this item is corrected and the repaint requested; a second call writes nothing; a scan
 for a different item is untouched; an empty sell slot, a missing scan and a missing pane are all
 no-ops; and the identity ends correct under every ordering of flagged and unflagged events — which
-is the race itself. **Not verified in game.**
+is the race itself.
+
+**Closed in game 2026-08-20, together with item 16.** This fix was necessary but not sufficient —
+it corrected the identity the sell pane *starts* with, while item 16's bugs overwrote that
+identity again later in the same search. Both were in play, and the symptom only went away with
+both fixed, so neither can claim the in-game result alone.
 
 **What to watch:** the symptom was intermittent, so one successful drag or click proves nothing.
 Load the epic and the rare alternately, by both paths, several times each.
@@ -1872,7 +1878,13 @@ Against the **pre-fix** source it fails 7 of 27, and fails them *only in the rar
 order* — the epic-first order passes untouched. That asymmetry is the intermittency, reproduced.
 Against the fix, 27/27.
 
-**Verified** by `luac5.1 -p` and that test. **Not verified in game.**
+**Verified** by `luac5.1 -p` and that test.
+
+**Verified in game 2026-08-20 — this item is CLOSED.** The owner could not reproduce the
+recolouring after the merge, having tried the sequences that used to bring it back reliably.
+That is the right shape of evidence for this one: the bug was intermittent and order-dependent,
+so a single clean search would have proved nothing, and "the tricks that used to trigger it no
+longer do" is the strongest statement the symptom allows.
 
 **What to watch:** the sell pane now shows the epic's **prices** as well as its name, so a
 Bloodforged epic with no epic listings up will correctly report no current auctions rather than
