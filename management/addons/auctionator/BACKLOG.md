@@ -16,6 +16,11 @@ written up as a diagnosis rather than a fix, because the write path it doubts tu
 2026-08-22** after the first in-game session, which is written up under it. **Item 4 was answered 2026-08-22** and its premise was wrong:
 the feed works, the report's clock was mislabelled. **Item 8 is new, 2026-08-22, nothing built.**
 
+**Item 4 reopened and fixed 2026-08-20.** Only half of it had been answered. The write was never
+the problem; the tooltip read the price by name while a Buy search files it under the item's
+variant key, so a search could not move the tooltip of any item a full scan already knew. Written
+up under the item. **Item 8 remains the only thing on this queue that is not built.**
+
 ---
 
 ## 1. The History sub-tab shows the MARKET's price history, not your own postings — DONE
@@ -248,7 +253,7 @@ the popup's wording at width, and whether (-16, -46) sits where the owner means 
 
 ---
 
-## 4. Do Buy-tab searches update the price database and the tooltip? — ANSWERED: yes; the report was lying
+## 4. Do Buy-tab searches update the price database and the tooltip? — the write: yes. The tooltip: NO, fixed 2026-08-20
 
 **Asked (owner, 2026-08-21):** *"I don't think that Buy tab searches are updating the price data in
 the database or tooltip, it should."*
@@ -346,6 +351,58 @@ estimate, the other the quantity-weighted median of the whole book.
 and after a Buy search: `last search wrote` moving to 0 proves the write. If a tooltip is still
 stale after that, the fault is in the read path rather than the feed — a different bug with a
 different fix, and worth its own item rather than living on under this one.
+
+### Reopened 2026-08-20 — the tooltip half was real, and it was the read
+
+**Owner, after a full update:** *"went to buy tab, searched item, closed AH, price not updated on
+tooltip."* The paragraph above called this correctly and then the item was closed anyway, because
+the write had been proved and the write was never the question.
+
+**The cause is the seam this item's own "LEADING SUSPECT" paragraph named and nobody followed.**
+`AtrSearch:Finish` files a targeted search's price under the listing's variant key —
+`Atr_PriceStore (gAtr_ScanDB, name, price, vkey)`, and a Buy search *always* has a link, so it
+always has a key. `ShowTipWithPricing` (`AuctionatorHints.lua`) asked `Atr_GetAuctionPrice
+(itemName)` **by name alone**, and a name-only lookup answers `dflt`, which `Atr_PriceStore` sets
+to the `ATR_PV_ANY` slot whenever that slot exists. `ATR_PV_ANY` is written by the full scan, the
+Finder feed and the Bazaar — and by nothing else. So the number the search had just written sat one
+slot away from the number the tooltip read, indefinitely, until the next full scan.
+
+Both halves are correct in isolation, which is why reading either one kept exonerating it: the
+store's preference for `ATR_PV_ANY` is deliberate and load-bearing (a stale cheap variant must not
+pin a name below market — the `Large Fang` case recorded at `Atr_PriceStore`), and a name-only
+reader getting the name's default is the documented contract. What was missing is that the tooltip
+is not a name-only reader. **It has the link in its hand and never used it.**
+
+**The asymmetry that hid it, and the reason a quick test kept passing.** On an item the database has
+never seen there is no `ATR_PV_ANY` slot, so `dflt` falls through to the variant and the tooltip is
+correct. The bug appears *only* on an item already known — i.e. on essentially everything, for
+anyone with a full scan behind them, and on nothing in a fresh check. Confirmed against the real
+store rather than reasoned: a row left as `{ ["?"] = 17000, ["1206:0"] = 9500 }` answers 17000 by
+name and 9500 by key.
+
+**Fixed on the read side, at the four sites that hold a link:** the tooltip's Auction line and its
+craft-profit line (`AuctionatorHints.lua`), and the Sell browser's `Atr_SB_BestMethod` and Crafted
+Goods Margin filter (`Auctionator.lua`), all now pass `Atr_VariantKey (link)`. The write path is
+untouched — it was right. This cannot lose a price: `Atr_PriceValue` falls back to the name's
+default whenever the variant slot is empty, which is every row written before variants existed.
+
+**The remaining name-only readers are name-only by construction** and are left alone: the DE
+essence lookups, the profession tabs (a recipe knows a name, not a link), `Atr_GetAuctionBuyout`'s
+string branch, and `/atrprices` itself.
+
+**`/atrprices <item>` was lying too, in the same way**, and that is how this survived the first
+investigation: it printed one name-only number as *"tooltip shows -> auction ..."*. It now lists
+every variant slot for the row and labels the name-only figure as name-only, so the divergence that
+caused this is visible in the instrument that is supposed to find it.
+
+**Pinned:** `management/addons/auctionator/tools/price-variant-smoke.lua`, 20 assertions — the
+stale-vs-fresh pair, the unseen-item case that made the bug invisible, the legacy bare-number rows,
+and the `Large Fang` invariant the store exists to protect. Written because this escaped a whole
+investigation, which is the case the house rule reserves a new test for.
+
+**Verified:** `luac5.1 -p` clean on the three edited files; the four existing Auctionator suites
+still pass (27 + 31 + 114 + 25) and the new one passes. **Not verified in game** — the read path is
+reasoned plus pinned offline.
 
 **One thing worth deciding:** the quality floor is 2, applied as `itemQuality + 1 >= floor`, so
 **grey (quality 0) items are never priced**. Almost certainly wanted; recorded because it is the one
