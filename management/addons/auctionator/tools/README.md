@@ -145,3 +145,20 @@ pre-fix source it fails 7 of its 27 assertions, and only in the rare-listed-firs
 asymmetry is the intermittency the owner reported.
 
 **Do not grow it into a client emulator.** It stubs what that one loop touches and nothing else.
+
+## analysis-feed-smoke.lua — also not vendor-seed tooling
+
+```
+lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua    # 17 assertions
+```
+
+Covers the Analysis tab's feed (BACKLOG item 17): the sold-vs-expired attribution end to end, and
+the guards that stop an **incomplete** scan being observed.
+
+That last part is why it exists. The tab counts a listing that vanished between two scans as sold,
+so a half-fetched result set reports every listing it never fetched as bought — and the mistake
+lands in a saved database where nothing afterwards can tell it from a real sale. In game the
+numbers would simply be wrong, with no symptom to notice. Removing either the completeness guard
+or the level-filter guard fails this test, which is how we know they still do something.
+
+Same rule as the other one: stubs what the batch loop and the observer touch, and stops there.

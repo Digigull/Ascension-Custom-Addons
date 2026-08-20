@@ -307,6 +307,57 @@ function Atr_An_ObserveResults (results)
 	return n;
 end
 
+-- The Finder is not the only thing that scans.  Every SEARCH the addon runs --
+-- Buy, Sell, More -- walks the same listings through AtrSearch:AnalyzeResultsPage,
+-- and that loop is the only place a listing's owner, stack, price and time-left
+-- are all in scope at once.  So it collects them here (BACKLOG item 17) and the
+-- search hands the set over when it finishes.
+--
+-- WHY NOT OBSERVE PER PAGE: a listing missing from the set is what "sold" MEANS.
+-- Observing half a scan would report every listing on the pages not yet fetched
+-- as bought, so the set is banked until the search is known to be complete.
+function Atr_An_CollectListing (srch, itemName, owner, count, buyout, index)
+
+	if (type (srch) ~= "table" or type (itemName) ~= "string") then return; end
+	if (not Atr_An_IsWatched (itemName)) then return; end
+
+	local bag = srch.anListings;
+	if (bag == nil) then bag = {}; srch.anListings = bag; end
+
+	local tl = 0;
+	if (index and type (GetAuctionItemTimeLeft) == "function") then
+		tl = GetAuctionItemTimeLeft ("list", index) or 0;
+	end
+
+	tinsert (bag, { name = itemName, owner = owner, count = count, buyoutPrice = buyout, timeLeft = tl });
+end
+
+-- Hand a finished search's collected listings to the analysis, or throw them
+-- away.  Called from AtrSearch:Finish, which a WATCHDOG can also reach on a
+-- stalled search -- so completeness is asserted by the batch loop rather than
+-- assumed from being here at all.
+function Atr_An_ObserveSearch (srch)
+
+	if (type (srch) ~= "table") then return 0; end
+
+	local rows = srch.anListings;
+	srch.anListings = nil;			-- consumed either way: never observe one scan twice
+
+	if (rows == nil or #rows == 0) then return 0; end
+
+	-- Not a full result set.  Either the search stopped early (too many results,
+	-- duplicate pages, a watchdog) or a page is still outstanding.
+	if (not srch.anComplete) then return 0; end
+
+	-- A level-filtered query returns a SUBSET of an item's listings, and on this
+	-- server that is not hypothetical: gear scales per instance, so one item's
+	-- listings carry many required levels.  The ones outside the filter would
+	-- read as sold.
+	if (srch.anLevelFiltered) then return 0; end
+
+	return Atr_An_ObserveResults (rows);
+end
+
 -- THE TAB -----------------------------------------------------------------
 --
 -- Own panel on its own main tab, the same shape as the Ledger and for the same
@@ -316,6 +367,30 @@ end
 
 local AN_NUM_ROWS = 14;
 local AN_ROW_H    = 20;
+local AN_ROW_W    = 660;
+
+-- ONE definition of the columns, used to build both the headers and the cells.
+-- They were two separate lists and had drifted apart: every header sat at the
+-- LEFT edge of a column whose value was centred or right-aligned, so nothing
+-- lined up, and the right-hand pair overlapped -- "Low" ran under the "Gold/day"
+-- header and "Gold/day" ran under the per-row delete button.  Deriving both from
+-- this table is what stops that happening again.
+--
+-- `x` is relative to a row; a header is the same x shifted by the scroll frame's
+-- own inset (AN_HEAD_X0).  Columns end at 630 because the last 30px of the row
+-- belong to the delete button, and the scroll bar owns 664 and beyond (the same
+-- budget the Ledger's rows use).
+local AN_HEAD_X0 = 14;
+
+local AN_COLS = {
+	{ key = "item",		head = "Item",		x = 6,	 w = 184					},
+	{ key = "grp",		head = "Group",		x = 194, w = 74						},
+	{ key = "sellers",	head = "Sellers",	x = 272, w = 48,  just = "CENTER"	},
+	{ key = "listings",	head = "Listings",	x = 324, w = 54,  just = "CENTER"	},
+	{ key = "rate",		head = "Sold/day",	x = 382, w = 68,  just = "CENTER"	},
+	{ key = "low",		head = "Low",		x = 454, w = 84,  just = "RIGHT"	},
+	{ key = "farm",		head = "Gold/day",	x = 542, w = 88,  just = "RIGHT"	},
+};
 
 local gAn_Group = nil;		-- nil = every group
 
@@ -455,6 +530,141 @@ local function An_GroupDD_Init ()
 	end
 end
 
+-- RESCAN ------------------------------------------------------------------
+--
+-- Watching an item and then having to remember to search for it is the wrong way
+-- round: the tab knows exactly which items it wants a fresh look at.  getAll is
+-- disabled on this server, so there is no one query that covers them -- it is one
+-- exact search per watched item, run in sequence.
+--
+-- It deliberately reuses the ordinary search machinery through gAnalysisPane
+-- rather than driving QueryAuctionItems itself.  One pump owns the auction API;
+-- a second one racing it is how you get duplicate pages and disconnects.  The
+-- cost of that choice is that the pump only advances the CURRENT pane's search,
+-- so leaving the tab stops the run (see Atr_An_OnTabClick).
+
+local gAn_Queue		= nil;		-- names still to scan, or nil when not running
+local gAn_QDone		= 0;
+local gAn_QTotal	= 0;
+
+-- Is this tab the one the pump is currently driving?  It cannot be answered by
+-- comparing against gCurrentPane -- that is a file-local in Auctionator.lua and
+-- reads as nil from here (gAnalysisPane is a global, gCurrentPane is not).  The
+-- SELECTED TAB is what assigns gCurrentPane in the first place, and that is
+-- readable, so ask the question that way round.
+local function An_TabIsCurrent ()
+
+	if (type (Atr_IsTabSelected) ~= "function" or ATR_ANALYSIS_TAB == nil) then return false; end
+
+	return (Atr_IsTabSelected (ATR_ANALYSIS_TAB) == true);
+end
+
+local function An_RefreshUI ()
+
+	if (Atr_An_RefreshButton) then
+		Atr_An_RefreshButton:SetText (gAn_Queue and AZT("Stop") or AZT("Rescan"));
+	end
+
+	if (Atr_An_Progress) then
+		if (gAn_Queue) then
+			Atr_An_Progress:SetText (string.format (AZT("scanning %d of %d"),
+				math.min (gAn_QDone + 1, gAn_QTotal), gAn_QTotal));
+		else
+			Atr_An_Progress:SetText ("");
+		end
+	end
+end
+
+function Atr_An_RefreshStop (quiet)
+
+	local wasRunning = (gAn_Queue ~= nil);
+	local done		 = gAn_QDone;
+
+	gAn_Queue = nil;
+	gAn_QDone = 0;
+	gAn_QTotal = 0;
+
+	An_RefreshUI ();
+
+	if (wasRunning and not quiet and zc and zc.msg_atr) then
+		zc.msg_atr (string.format (AZT("Analysis: rescanned %d item(s)"), done));
+	end
+
+	if (wasRunning) then Atr_An_Redisplay (); end
+end
+
+local function An_RefreshStep ()
+
+	if (gAn_Queue == nil) then return; end
+
+	local name = tremove (gAn_Queue, 1);
+
+	if (name == nil) then
+		Atr_An_RefreshStop ();
+		return;
+	end
+
+	An_RefreshUI ();
+
+	-- rescanThreshold 0: never accept a cached scan.  A cache hit would return
+	-- the PREVIOUS scan's listings, and observing those again would compare a
+	-- snapshot with itself -- zero sales, and elapsed time added for nothing.
+	local ok, cacheHit = pcall (function () return gAnalysisPane:DoSearch (name, true, 0); end);
+
+	if (not ok) then
+		Atr_An_RefreshStop (true);
+		return;
+	end
+
+	if (cacheHit and Atr_OnSearchComplete) then
+		Atr_OnSearchComplete ();		-- nothing to wait for; keeps the queue moving
+	end
+end
+
+-- Called from Atr_OnSearchComplete for EVERY search, so it does nothing at all
+-- unless a rescan of ours is the thing that just finished.
+function Atr_An_OnSearchComplete ()
+
+	if (gAn_Queue == nil) then return; end
+
+	if (gAnalysisPane == nil or not An_TabIsCurrent ()) then
+		Atr_An_RefreshStop (true);		-- someone else owns the pump now
+		return;
+	end
+
+	gAn_QDone = gAn_QDone + 1;
+
+	Atr_An_Redisplay ();				-- watch the numbers fill in
+	An_RefreshStep ();
+end
+
+function Atr_An_RefreshToggle ()
+
+	if (gAn_Queue) then
+		Atr_An_RefreshStop ();
+		return;
+	end
+
+	if (gAnalysisPane == nil or not An_TabIsCurrent ()) then return; end
+
+	local rows = An_Rows ();
+	local q, i = {}, nil;
+	for i = 1, #rows do tinsert (q, rows[i].name); end
+
+	if (#q == 0) then
+		if (zc and zc.msg_atr) then
+			zc.msg_atr (AZT("Analysis: nothing watched here yet -- add an item first"));
+		end
+		return;
+	end
+
+	gAn_Queue	= q;
+	gAn_QDone	= 0;
+	gAn_QTotal	= #q;
+
+	An_RefreshStep ();
+end
+
 function Atr_An_OnTabClick (index)
 
 	if (Atr_An_Panel == nil) then return; end
@@ -463,6 +673,8 @@ function Atr_An_OnTabClick (index)
 		Atr_An_Panel:Show();
 		Atr_An_Redisplay ();
 	else
+		-- the pump follows the current pane, so a run cannot survive the tab
+		Atr_An_RefreshStop (true);
 		Atr_An_Panel:Hide();
 	end
 end
@@ -548,20 +760,15 @@ function Atr_An_Init ()
 	grpLabel:SetPoint ("TOPLEFT", 436, -40);
 	grpLabel:SetText (AZT("New group"));
 
-	local function head (text, x)
+	-- headers: same x, width and justification as the cells beneath them
+	local c;
+	for _, c in ipairs (AN_COLS) do
 		local fs = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
-		fs:SetPoint ("TOPLEFT", x, -74);
-		fs:SetText (text);
-		return fs;
+		fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.x, -74);
+		fs:SetWidth (c.w);
+		fs:SetJustifyH (c.just or "LEFT");
+		fs:SetText (AZT (c.head));
 	end
-
-	head (AZT("Item"),      20);
-	head (AZT("Group"),     230);
-	head (AZT("Sellers"),   320);
-	head (AZT("Listings"),  380);
-	head (AZT("Sold/day"),  450);
-	head (AZT("Low"),       530);
-	head (AZT("Gold/day"),  610);
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
 	scroll:SetPoint ("TOPLEFT", 14, -92);
@@ -573,45 +780,78 @@ function Atr_An_Init ()
 	end);
 
 	local holder = CreateFrame ("Frame", nil, panel);
-	holder:SetPoint ("TOPLEFT", 14, -92);
-	holder:SetSize (660, AN_NUM_ROWS * AN_ROW_H);
+	holder:SetPoint ("TOPLEFT", AN_HEAD_X0, -92);
+	holder:SetSize (AN_ROW_W, AN_NUM_ROWS * AN_ROW_H);
 
 	local i;
 	for i = 1, AN_NUM_ROWS do
 
 		local line = CreateFrame ("Button", "Atr_An_Row"..i, holder);
-		line:SetSize (660, AN_ROW_H);
+		line:SetSize (AN_ROW_W, AN_ROW_H);
 		line:SetPoint ("TOPLEFT", 0, -(i - 1) * AN_ROW_H);
 
-		local function col (x, w, justify)
+		local cc;
+		for _, cc in ipairs (AN_COLS) do
 			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-			fs:SetPoint ("LEFT", x, 0);
-			fs:SetWidth (w);
-			fs:SetJustifyH (justify or "LEFT");
-			return fs;
+			fs:SetPoint ("LEFT", cc.x, 0);
+			fs:SetWidth (cc.w);
+			fs:SetJustifyH (cc.just or "LEFT");
+			line[cc.key] = fs;
 		end
 
-		line.item		= col (6,   210);
-		line.grp		= col (216, 86);
-		line.sellers	= col (306, 50, "CENTER");
-		line.listings	= col (366, 56, "CENTER");
-		line.rate		= col (430, 74, "CENTER");
-		line.low		= col (508, 84, "RIGHT");
-		line.farm		= col (596, 60, "RIGHT");
-
+		-- its own lane past the last column, so it stops sitting on the numbers
 		local del = CreateFrame ("Button", nil, line, "UIPanelCloseButton");
 		del:SetSize (20, 20);
-		del:SetPoint ("RIGHT", 2, 0);
+		del:SetPoint ("RIGHT", -4, 0);
 		del:SetScript ("OnClick", function ()
 			if (line.rec) then Atr_An_Unwatch (line.rec.name); Atr_An_Redisplay (); end
 		end);
 
+		-- the item's own tooltip, the way the Ledger's rows do it.  A watch entry
+		-- stores only a name, so the link comes from the shared cache -- which
+		-- means no tooltip until something has seen the item, and that is better
+		-- than inventing a link from a name.
+		line:SetScript ("OnEnter", function (self)
+			local link = self.rec and Atr_GetItemLink and Atr_GetItemLink (self.rec.name);
+			if (link and GameTooltip) then
+				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+				GameTooltip:SetHyperlink (link);
+				GameTooltip:Show();
+			end
+		end);
+		line:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
 		line:Hide();
 	end
 
+	-- Given a width so it wraps instead of running off the panel and under the
+	-- rescan button; anchored BOTTOMLEFT, so extra lines grow upward.
 	local summary = panel:CreateFontString ("Atr_An_Summary", "ARTWORK", "GameFontNormalSmall");
 	summary:SetPoint ("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 34);
+	summary:SetWidth (520);
+	summary:SetJustifyH ("LEFT");
 	summary:SetText ("");
+
+	-- Rescan, in the Ledger's place for a tab-level action button
+	local refresh = CreateFrame ("Button", "Atr_An_RefreshButton", panel, "UIPanelButtonTemplate");
+	refresh:SetSize (76, 22);
+	refresh:SetPoint ("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -22, 30);
+	refresh:SetText (AZT("Rescan"));
+	refresh:SetScript ("OnClick", function () Atr_An_RefreshToggle (); end);
+	refresh:SetScript ("OnEnter", function (self)
+		if (GameTooltip) then
+			GameTooltip:SetOwner (self, "ANCHOR_LEFT");
+			GameTooltip:SetText (AZT("Rescan the watched items"), 1, 1, 1);
+			GameTooltip:AddLine (AZT("One search per item, in sequence. Stays on this tab -- leaving it stops the run."), 0.8, 0.8, 0.8, true);
+			GameTooltip:Show();
+		end
+	end);
+	refresh:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+	local progress = panel:CreateFontString ("Atr_An_Progress", "ARTWORK", "GameFontNormalSmall");
+	progress:SetPoint ("RIGHT", refresh, "LEFT", -8, 0);
+	progress:SetJustifyH ("RIGHT");
+	progress:SetText ("");
 end
 
 if (SlashCmdList) then
