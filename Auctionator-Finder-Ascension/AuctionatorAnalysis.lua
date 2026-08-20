@@ -42,17 +42,27 @@
 --     numNilOwners for this reason), so unknown sellers are tracked apart rather
 --     than collapsed into one.
 --
--- TWO VIEWS OVER ONE TABLE (group D, 2026-08-20).  Everything above is an
--- ESTIMATE inferred from listings that vanished.  The second view -- "My trades"
--- -- is the opposite kind of number: your own paid, got, margin and sell-through
--- per item, aggregated out of the Ledger by Atr_Ledger_ItemTotals, which is money
--- that actually moved.  They are deliberately two tables rather than extra
--- columns on one: a fact printed in the same row as an estimate reads as an
--- estimate.  This file owns only the view; the arithmetic and the reasoning
--- behind each figure live with the rows, in AuctionatorLedger.lua.
+-- THREE VIEWS OVER ONE TABLE.  Everything above is an ESTIMATE inferred from
+-- listings that vanished.  The other two views are not, and the tab keeps the
+-- three apart rather than mixing them into one table: a fact printed in the same
+-- row as an estimate reads as an estimate.
 --
--- Storage: AUCTIONATOR_ANALYSIS, account-wide, declared in the .toc.  The Ledger
--- view adds none of its own -- it is a reader of AUCTIONATOR_LEDGER.
+--   Market     the watchlist above -- what the market is doing, from scanning.
+--   My trades  (group D, 2026-08-20) your own paid, got, margin and sell-through
+--              per item, out of the Ledger by Atr_Ledger_ItemTotals: money that
+--              actually moved.
+--   Crafting   (B2, 2026-08-20) every recipe this account has harvested, ranked
+--              by what one craft is worth -- Atr_Craft_ProfitRanking, in
+--              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
+--              arithmetic over today's prices, exact if the prices are current.
+--
+-- This file owns only the views; the arithmetic and the reasoning behind each
+-- figure live with the rows, in AuctionatorLedger.lua and
+-- AuctionatorFinderProfession.lua respectively.
+--
+-- Storage: AUCTIONATOR_ANALYSIS, account-wide, declared in the .toc.  The other
+-- two views add none of their own -- they are readers of AUCTIONATOR_LEDGER and
+-- AUCTIONATOR_CRAFT_RECIPES.
 
 local addonName, addonTable = ...;
 local zc = addonTable and addonTable.zc or _G.zc;
@@ -442,11 +452,38 @@ local AN_TCOLS = {
 	  tip = "Of the items whose listings resolved, how many sold rather than expired. Cancelling your own listing is your verdict, not the market's, so it counts on neither side." },
 };
 
--- "market" (the watchlist, above) or "trades" (the Ledger, below).
+-- THE THIRD VIEW (BACKLOG item 8, B2): what is worth CRAFTING.
+--
+-- The profession window already ranks recipes by profit (the "Sort by Profit"
+-- checkbox, AuctionatorFinderProfession.lua) -- but only while that window is
+-- open, and it is never open at the auction house, which is where the question
+-- gets asked.  This view ranks the HARVESTED recipes instead, so the answer is
+-- available standing at the mailbox.  Atr_Craft_ProfitRanking does the
+-- arithmetic and carries the reasoning; this is its table.
+--
+-- Money columns are PER ITEM and the ranked one is PER CRAFT, which is the same
+-- split the trade skill window's own column uses -- one craft is what one press
+-- of Create costs and earns, and a recipe making 3 at 12g beats one making 1 at
+-- 20g.  Makes is right beside them so the two scales are never a guess.
+local AN_CCOLS = {
+	{ key = "citem",	head = "Item",		w = 184, grow = 3					},
+	{ key = "cmakes",	head = "Makes",		w = 48,  grow = 0, just = "CENTER",
+	  tip = "How many one craft yields. A ? is a yield we assumed: the recipe came from hovering a plan rather than from your profession window, so it was read as 1 and you may not even know it yet." },
+	{ key = "ccost",	head = "Cost",		w = 84,  grow = 1, just = "RIGHT",
+	  tip = "What the reagents for ONE of them cost: the vendor price where a vendor sells it, otherwise the auction price you last scanned, otherwise its vendor value as a floor. Blank means one reagent has never been priced -- scan it and the row fills in." },
+	{ key = "csell",	head = "Price",		w = 84,  grow = 1, just = "RIGHT",
+	  tip = "What ONE sells for, from your own scans. An enchant is priced as the scroll it is sold as, and the vellum is counted as a reagent. Blank means you have never scanned it." },
+	{ key = "cprofit",	head = "Profit/craft", w = 96, grow = 4, just = "RIGHT",
+	  tip = "Price less Cost, times the yield -- what ONE press of Create is worth at today's prices. Not an estimate and not a promise: it is exact arithmetic over prices that are only as fresh as your last scan, and it assumes the sale actually happens." },
+	{ key = "cmargin",	head = "Margin",	w = 60,  grow = 1, just = "CENTER",
+	  tip = "Profit as a share of the sale price. 40% means four gold in every ten you take is profit -- a fat margin survives being undercut, a thin one does not." },
+};
+
+-- "market" (the watchlist, above), "trades" (the Ledger) or "craft" (recipes).
 local gAn_View = "market";
 
 -- Widgets that belong to the market view only, filled in by Atr_An_Init and
--- hidden wholesale when the other view is up.
+-- hidden wholesale when another view is up.
 local gAn_MarketOnly = {};
 
 -- Spread the columns over a row `rowW` wide: each keeps its minimum width and
@@ -663,12 +700,190 @@ local function An_RedisplayTrades ()
 	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_TradeSummary (tot)); end
 end
 
--- Swap the two views over the shared table.  Nothing is re-anchored: every row
--- already carries both sets of cells and each header set has its own container,
--- so this is Show and Hide only.
+-- THE CRAFTING VIEW (BACKLOG item 8, B2) -----------------------------------
+
+-- Ranking every harvested recipe means pricing every reagent of every one of
+-- them, and Atr_GetAuctionPrice is not a table lookup -- it falls through to a
+-- recent-sale check and then to a median over an item's variants.  A few hundred
+-- recipes is fine to do once and wasteful to redo on every scroll tick, which is
+-- what Atr_An_Redisplay is called for, so the ranking is cached.
+--
+-- Nothing can invalidate it while it is on screen: prices move only when a scan
+-- finishes, recipes are learned only at a profession window, and neither can
+-- happen without leaving this view -- there is no search control on it and the
+-- panel is hidden the moment another tab is clicked.  So the cache is dropped
+-- where those journeys come back: entering the view, and re-entering the tab.
+local gAn_CraftRows	= nil;
+local gAn_CraftStats	= nil;
+
+local function An_CraftInvalidate ()
+	gAn_CraftRows  = nil;
+	gAn_CraftStats = nil;
+end
+
+local function An_CraftRows ()
+
+	if (gAn_CraftRows) then return gAn_CraftRows, gAn_CraftStats; end
+
+	if (type (Atr_Craft_ProfitRanking) ~= "function") then return {}, nil; end
+
+	gAn_CraftRows, gAn_CraftStats = Atr_Craft_ProfitRanking ();
+
+	return gAn_CraftRows, gAn_CraftStats;
+end
+
+-- Profit as a share of the SALE price, not of the cost.  Markup on cost is the
+-- more flattering number and it explodes -- a 5c reagent making a 40g item is
+-- 80,000% and tells you nothing you could not read off the Profit column.  A
+-- share of the price is bounded above by 100% and answers the question that
+-- actually decides a craft: how far can this be undercut before it stops paying.
+local function An_Margin (r)
+
+	if (r.profit == nil or r.sell == nil or r.sell <= 0) then return "|cff666666--|r"; end
+
+	local pct = math.floor (r.profit * 100 / r.sell + 0.5);
+
+	if (pct < -999) then pct = -999; end		-- a deep loss is a loss; the digits stop meaning anything
+
+	if (pct > 0)  then return string.format ("|cff40ff40%d%%|r", pct); end
+	if (pct == 0) then return "|cffffffff0%|r"; end
+	return string.format ("|cffff6060%d%%|r", pct);
+end
+
+-- What the Cost column is made of, on the item's own tooltip.  A bare cost is a
+-- number you cannot check; the reagent it is waiting on is the thing you would
+-- go and scan, so the row says which one that is rather than leaving the cell
+-- blank and silent.
+local function An_CraftTip (r)
+
+	if (GameTooltip == nil or r.reagents == nil) then return; end
+
+	GameTooltip:AddLine (" ");
+	GameTooltip:AddDoubleLine (AZT("Reagents"), AZT("for one craft"), 1, 1, 1, 0.6, 0.6, 0.6);
+
+	local _, rg;
+	for _, rg in ipairs (r.reagents) do
+
+		local nm = rg.name;
+		if ((nm == nil or nm == "") and rg.id and GetItemInfo) then nm = (GetItemInfo (rg.id)); end
+		nm = nm or ("item "..tostring (rg.id));
+
+		local count = rg.count or 1;
+		local unit  = (Atr_Craft_ReagentPrice) and Atr_Craft_ReagentPrice (rg.id, rg.name) or nil;
+
+		if (unit) then
+			GameTooltip:AddDoubleLine (string.format ("%s x%d", nm, count), An_Money (unit * count),
+				0.9, 0.9, 0.9, 1, 1, 1);
+		else
+			GameTooltip:AddDoubleLine (string.format ("%s x%d", nm, count), AZT("not priced"),
+				0.9, 0.9, 0.9, 1, 0.4, 0.4);
+		end
+	end
+
+	-- An enchant is not sellable until it is on a vellum, so the vellum is as
+	-- much a reagent as the dust is -- and it is the one the recipe never lists.
+	if (r.vellum and Atr_Craft_VellumCost) then
+		GameTooltip:AddDoubleLine (AZT("Vellum").." ("..tostring (r.vellum)..")",
+			An_Money (Atr_Craft_VellumCost (r.vellum)), 0.9, 0.9, 0.9, 1, 1, 1);
+	end
+
+	if (r.cost) then
+		GameTooltip:AddDoubleLine (AZT("Craft cost"), An_Money (r.cost * r.made), 1, 1, 1, 1, 1, 1);
+	end
+
+	if (r.assumed) then
+		GameTooltip:AddLine (AZT("Read from a recipe's tooltip: the yield is assumed to be 1, and you may not have learned it."),
+			0.8, 0.8, 0.8, true);
+	end
+
+	-- The pairing this view needs and cannot answer on its own: a fat margin on
+	-- something nobody buys is a trap, and the Market view is what says whether
+	-- anybody buys it.  One click files the item there.
+	GameTooltip:AddLine (" ");
+	GameTooltip:AddLine (AZT("Click: shopping list, or watch it on the Market view."), 0.5, 0.5, 0.5);
+end
+
+local function An_CraftSummary (stats)
+
+	if (stats == nil or stats.total == 0) then
+		return AZT("No recipes harvested yet. Open a profession window once and this fills itself in.");
+	end
+
+	local s = string.format (AZT("%d recipes -- %d priced"), stats.total, stats.priced);
+
+	if (stats.best) then
+		s = s..string.format (AZT("  |  best %s per craft"), An_Signed (stats.best));
+	end
+
+	-- Not a rounding error to hide: the price database is name-keyed, so an item
+	-- the client cannot name is an item nothing can price.
+	if (stats.unnamed > 0) then
+		s = s..string.format (AZT("  |  %d the client has not cached a name for"), stats.unnamed);
+	end
+
+	return s;
+end
+
+local function An_RedisplayCraft ()
+
+	local rows, stats = An_CraftRows ();
+	local n = #rows;
+
+	if (FauxScrollFrame_Update) then
+		FauxScrollFrame_Update (Atr_An_ScrollFrame, n, AN_NUM_ROWS, AN_ROW_H);
+	end
+
+	local offset = (FauxScrollFrame_GetOffset and FauxScrollFrame_GetOffset (Atr_An_ScrollFrame)) or 0;
+
+	local i;
+	for i = 1, AN_NUM_ROWS do
+
+		local line = _G["Atr_An_Row"..i];
+		if (line) then
+
+			local r = rows[offset + i];
+
+			if (r == nil) then
+				line:Hide();
+			else
+				line.citem:SetText (r.name);
+
+				-- The yield only earns its column when it is not 1, and a ? is
+				-- the honest mark on one that was assumed rather than read.
+				if (r.assumed) then
+					line.cmakes:SetText ("|cff888888"..r.made.."?|r");
+				elseif (r.made > 1) then
+					line.cmakes:SetText ("|cffffffff"..r.made.."|r");
+				else
+					line.cmakes:SetText ("|cff6666661|r");
+				end
+
+				line.ccost:SetText (r.cost and An_Money (r.cost) or "|cff666666--|r");
+				line.csell:SetText (r.sell and An_Money (r.sell) or "|cff666666--|r");
+
+				if (r.perCraft == nil) then
+					line.cprofit:SetText ("|cff666666--|r");
+				else
+					line.cprofit:SetText (An_Signed (r.perCraft));
+				end
+
+				line.cmargin:SetText (An_Margin (r));
+
+				line.rec = r;
+				line:Show();
+			end
+		end
+	end
+
+	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_CraftSummary (stats)); end
+end
+
+-- Swap the views over the shared table.  Nothing is re-anchored: every row
+-- already carries all three sets of cells and each header set has its own
+-- container, so this is Show and Hide only.
 function Atr_An_SetView (view)
 
-	if (view ~= "trades") then view = "market"; end
+	if (view ~= "trades" and view ~= "craft") then view = "market"; end
 	gAn_View = view;
 
 	local market = (view == "market");
@@ -679,7 +894,8 @@ function Atr_An_SetView (view)
 	end
 
 	vis (Atr_An_HeadMarket, market);
-	vis (Atr_An_HeadTrades, not market);
+	vis (Atr_An_HeadTrades, view == "trades");
+	vis (Atr_An_HeadCraft,  view == "craft");
 
 	local i;
 	for i = 1, #gAn_MarketOnly do vis (gAn_MarketOnly[i], market); end
@@ -689,28 +905,34 @@ function Atr_An_SetView (view)
 		if (line) then
 			local _, c;
 			for _, c in ipairs (AN_COLS)  do vis (line[c.key], market); end
-			for _, c in ipairs (AN_TCOLS) do vis (line[c.key], not market); end
+			for _, c in ipairs (AN_TCOLS) do vis (line[c.key], view == "trades"); end
+			for _, c in ipairs (AN_CCOLS) do vis (line[c.key], view == "craft");  end
 			vis (line.del, market);
 		end
 	end
 
-	-- the active view's button is the disabled one: the other is the thing left
-	-- to press, which is what a button should be
-	if (Atr_An_ViewMarket and Atr_An_ViewMarket.Enable) then
-		if (market) then Atr_An_ViewMarket:Disable(); else Atr_An_ViewMarket:Enable(); end
-	end
-	if (Atr_An_ViewTrades and Atr_An_ViewTrades.Enable) then
-		if (market) then Atr_An_ViewTrades:Enable(); else Atr_An_ViewTrades:Disable(); end
+	-- the active view's button is the disabled one: the others are the things
+	-- left to press, which is what a button should be
+	local btn = { market = Atr_An_ViewMarket, trades = Atr_An_ViewTrades, craft = Atr_An_ViewCraft };
+	local k, b;
+	for k, b in pairs (btn) do
+		if (b and b.Enable) then
+			if (k == view) then b:Disable(); else b:Enable(); end
+		end
 	end
 
 	-- a rescan run belongs to the watchlist, and its Stop button has just gone
 	if (not market) then Atr_An_RefreshStop (true); end
 
-	-- Back to the top.  The two views are different lengths, and an offset left
-	-- over from a scrolled watchlist lands past the end of a shorter ledger --
-	-- every row then draws empty, which reads as "no trades" rather than as a
-	-- scroll position.  The bar has to be moved as well as the offset: it is what
-	-- the offset is read back from.
+	-- Re-price on the way in, rather than showing whatever the prices were the
+	-- last time this view was open (see An_CraftInvalidate).
+	if (view == "craft") then An_CraftInvalidate (); end
+
+	-- Back to the top.  The views are different lengths, and an offset left over
+	-- from a scrolled watchlist lands past the end of a shorter ledger -- every
+	-- row then draws empty, which reads as "no trades" rather than as a scroll
+	-- position.  The bar has to be moved as well as the offset: it is what the
+	-- offset is read back from.
 	if (FauxScrollFrame_SetOffset) then FauxScrollFrame_SetOffset (Atr_An_ScrollFrame, 0); end
 	local bar = _G["Atr_An_ScrollFrameScrollBar"];
 	if (bar and bar.SetValue) then bar:SetValue (0); end
@@ -723,6 +945,7 @@ function Atr_An_Redisplay ()
 	if (not Atr_An_Panel or not Atr_An_Panel:IsShown()) then return; end
 
 	if (gAn_View == "trades") then return An_RedisplayTrades (); end
+	if (gAn_View == "craft")  then return An_RedisplayCraft ();  end
 
 	local rows = An_Rows ();
 	local n    = #rows;
@@ -1436,6 +1659,9 @@ function Atr_An_OnTabClick (index)
 
 	if (ATR_ANALYSIS_TAB and Atr_FindTabIndex and index == Atr_FindTabIndex (ATR_ANALYSIS_TAB)) then
 		Atr_An_Panel:Show();
+		-- prices may have moved while another tab had the window: re-price rather
+		-- than redraw what was on screen before (see An_CraftInvalidate)
+		An_CraftInvalidate ();
 		Atr_An_Redisplay ();
 	else
 		-- the pump follows the current pane, so a run cannot survive the tab
@@ -1477,6 +1703,7 @@ function Atr_An_Init ()
 	AN_ROW_W = scrollW;
 	An_LayoutCols (AN_COLS,  AN_ROW_W);
 	An_LayoutCols (AN_TCOLS, AN_ROW_W);
+	An_LayoutCols (AN_CCOLS, AN_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
 	bg:SetTexture (0, 0, 0, 0.85);
@@ -1524,8 +1751,11 @@ function Atr_An_Init ()
 
 	-- group filter
 	if (UIDropDownMenu_Initialize) then
+		-- 244, not 290: the view toggle at the right of this row is three buttons
+		-- wide now rather than two, and on Blizzard's 768px window (a 746 panel)
+		-- its left edge lands at x=526. The group controls used to run to ~558.
 		local dd = CreateFrame ("Frame", "Atr_An_GroupDD", panel, "UIDropDownMenuTemplate");
-		dd:SetPoint ("TOPLEFT", 290, -48);
+		dd:SetPoint ("TOPLEFT", 244, -48);
 		UIDropDownMenu_SetWidth (dd, 110);
 		UIDropDownMenu_Initialize (dd, An_GroupDD_Init);
 		UIDropDownMenu_SetText (dd, AZT("All groups"));
@@ -1533,7 +1763,7 @@ function Atr_An_Init ()
 
 	local newGrp = CreateFrame ("EditBox", "Atr_An_GroupBox", panel, "InputBoxTemplate");
 	newGrp:SetSize (110, 20);
-	newGrp:SetPoint ("TOPLEFT", 440, -52);
+	newGrp:SetPoint ("TOPLEFT", 390, -52);
 	newGrp:SetAutoFocus (false);
 	newGrp:SetMaxBytes (32);
 	newGrp:SetScript ("OnEnterPressed", function (self)
@@ -1549,7 +1779,7 @@ function Atr_An_Init ()
 	newGrp:SetScript ("OnEscapePressed", function (self) self:SetText (""); self:ClearFocus(); end);
 
 	local grpLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-	grpLabel:SetPoint ("TOPLEFT", 436, -40);
+	grpLabel:SetPoint ("TOPLEFT", 386, -40);
 	grpLabel:SetText (AZT("New group"));
 
 	-- Headers: same x, width and justification as the cells beneath them.  They
@@ -1599,6 +1829,7 @@ function Atr_An_Init ()
 
 	headerSet ("Atr_An_HeadMarket", AN_COLS);
 	headerSet ("Atr_An_HeadTrades", AN_TCOLS);
+	headerSet ("Atr_An_HeadCraft",  AN_CCOLS);
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
 	scroll:SetPoint ("TOPLEFT", AN_HEAD_X0, -102);
@@ -1620,23 +1851,17 @@ function Atr_An_Init ()
 		line:SetSize (AN_ROW_W, AN_ROW_H);
 		line:SetPoint ("TOPLEFT", 0, -(i - 1) * AN_ROW_H);
 
-		-- both views' cells, on every row: the keys do not collide and only one
+		-- every view's cells, on every row: the keys do not collide and only one
 		-- set is ever shown, which is what makes the switch free of re-anchoring
-		local cc;
-		for _, cc in ipairs (AN_COLS) do
-			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-			fs:SetPoint ("LEFT", cc.cx, 0);
-			fs:SetWidth (cc.cw);
-			fs:SetJustifyH (cc.just or "LEFT");
-			line[cc.key] = fs;
-		end
-
-		for _, cc in ipairs (AN_TCOLS) do
-			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-			fs:SetPoint ("LEFT", cc.cx, 0);
-			fs:SetWidth (cc.cw);
-			fs:SetJustifyH (cc.just or "LEFT");
-			line[cc.key] = fs;
+		local cols, cc;
+		for _, cols in ipairs ({ AN_COLS, AN_TCOLS, AN_CCOLS }) do
+			for _, cc in ipairs (cols) do
+				local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+				fs:SetPoint ("LEFT", cc.cx, 0);
+				fs:SetWidth (cc.cw);
+				fs:SetJustifyH (cc.just or "LEFT");
+				line[cc.key] = fs;
+			end
 		end
 
 		-- its own lane past the last column, so it stops sitting on the numbers
@@ -1656,14 +1881,40 @@ function Atr_An_Init ()
 			-- a ledger row carries the real link, which on a same-name variant is
 			-- the exact item; a watch entry stores only a name, so that one still
 			-- goes through the shared cache
-			local link = self.rec and (self.rec.link or (Atr_GetItemLink and Atr_GetItemLink (self.rec.name)));
-			if (link and GameTooltip) then
+			local rec = self.rec;
+			if (rec == nil or GameTooltip == nil) then return; end
+
+			local link = rec.link or (Atr_GetItemLink and Atr_GetItemLink (rec.name));
+
+			if (link) then
 				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
 				GameTooltip:SetHyperlink (link);
-				GameTooltip:Show();
+			elseif (gAn_View == "craft") then
+				-- an enchant sells as a scroll and a scroll may never have been
+				-- seen, so the craft view still has something to say without one
+				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+				GameTooltip:SetText (rec.name, 1, 1, 1);
+			else
+				return;
 			end
+
+			-- where the Cost column came from, reagent by reagent
+			if (gAn_View == "craft") then An_CraftTip (rec); end
+
+			GameTooltip:Show();
 		end);
 		line:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+		-- Craft view only: the same menu the Buy tab's two buttons open (item 18),
+		-- so a recipe worth making can be watched or shopped for without retyping
+		-- its name.  The other two views leave the click alone -- the watchlist has
+		-- its own delete button on the row and the Ledger has nothing to file.
+		line:SetScript ("OnClick", function (self)
+			if (gAn_View ~= "craft" or self.rec == nil) then return; end
+			if (type (Atr_An_ShowItemMenu) == "function") then
+				Atr_An_ShowItemMenu (self, self.rec.name, "both");
+			end
+		end);
 
 		line:Hide();
 	end
@@ -1702,22 +1953,24 @@ function Atr_An_Init ()
 	progress:SetJustifyH ("RIGHT");
 	progress:SetText ("");
 
-	-- THE VIEW TOGGLE (BACKLOG item 8, group D).
+	-- THE VIEW TOGGLE (BACKLOG item 8, group D; a third view added for B2).
 	--
 	-- Top right, which is the one part of the control row that is empty: the add
-	-- box, the group dropdown and the new-group box already run from x=72 to
-	-- x=550, and the panel is wider than that on every window this addon has
-	-- been measured on.  Anchored to the panel's own TOPRIGHT rather than a fixed
-	-- x for the reason the panel width itself is measured -- 768 is not the only
+	-- box, the group dropdown and the new-group box run along the left of it, and
+	-- the panel is wider than they are on every window this addon has been
+	-- measured on.  Anchored to the panel's own TOPRIGHT rather than a fixed x
+	-- for the reason the panel width itself is measured -- 768 is not the only
 	-- auction house.
 	local function viewButton (name, label, view, tipTitle, tipBody)
 
-		-- 72 and not 80: on Blizzard's 768 window the panel is 746 wide, so the
-		-- pair starts at x=572 against the new-group box's right edge at 550.
-		-- At 80 apiece that clearance is 6px, which is a collision on the first
-		-- window that is narrower than the one it was measured on.
+		-- 62 apiece and a 4px gap: three of those is 194, so on Blizzard's 768
+		-- window (a 746 panel) the row runs 526..720 and the group controls,
+		-- moved left to end at ~508, clear it by 18. The pair used to be 72 wide
+		-- against controls ending at ~558, which a third button would have run
+		-- straight into. 62 still fits "My trades" at GameFontNormalSmall, which
+		-- is the widest of the three labels.
 		local b = CreateFrame ("Button", name, panel, "UIPanelButtonTemplate");
-		b:SetSize (72, 22);
+		b:SetSize (62, 22);
 		b:SetText (AZT (label));
 		b:SetNormalFontObject ("GameFontNormalSmall");
 		b:SetHighlightFontObject ("GameFontHighlightSmall");
@@ -1735,10 +1988,17 @@ function Atr_An_Init ()
 		return b;
 	end
 
+	-- Right to left, in the order they are read: what the market is doing, what
+	-- you made, what you could make.
+	local vCraft = viewButton ("Atr_An_ViewCraft", "Crafting", "craft",
+		"What is worth crafting",
+		"Every recipe your professions have harvested, ranked by what one craft is worth at today's prices. The profession window's own profit sort, available where you are actually standing when you decide.");
+	vCraft:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -26, -50);
+
 	local vTrades = viewButton ("Atr_An_ViewTrades", "My trades", "trades",
 		"What you actually made",
 		"Your own buys and sales out of the ledger: paid, got, margin and sell-through, per item. The only numbers on this tab that are not estimates.");
-	vTrades:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -26, -50);
+	vTrades:SetPoint ("RIGHT", vCraft, "LEFT", -4, 0);
 
 	local vMarket = viewButton ("Atr_An_ViewMarket", "Market", "market",
 		"What the market is doing",
@@ -1837,10 +2097,10 @@ if (SlashCmdList) then
 			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
 		elseif (cmd == "group" and rest ~= "") then
 			Atr_An_AddGroup (rest);
-		elseif (cmd == "trades" or cmd == "market") then
-			-- the two buttons do this; the command exists because a button on this
-			-- tab has been reported dead three times (item 22) and a second way in
-			-- costs two lines
+		elseif (cmd == "trades" or cmd == "market" or cmd == "craft") then
+			-- the toggle buttons do this; the command exists because a button on
+			-- this tab has been reported dead three times (item 22) and a second
+			-- way in costs two lines
 			Atr_An_SetView (cmd);
 		elseif (cmd == "diag") then
 
@@ -1899,7 +2159,7 @@ if (SlashCmdList) then
 			end
 		else
 			if (zc and zc.msg_atr) then
-				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  menu [item name]  |  diag"));
+				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  craft  |  menu [item name]  |  diag"));
 			end
 		end
 		Atr_An_Redisplay ();
