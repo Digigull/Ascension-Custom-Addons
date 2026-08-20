@@ -6,9 +6,9 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
-and deliberately declined. Three items do not carry that label and are the ones to know about:
-**item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built, and
-**item 10** closed without any code. **"Suggested order" at the foot of the file is the live view
+and deliberately declined. Four items do not carry that label and are the ones to know about:
+**item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
+**item 10** closed without any code, and **item 28** is a new request with nothing built yet. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
 was and was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14,
@@ -1128,6 +1128,100 @@ retention rule, not a new subsystem.
 entries, several megabytes, immediately after item 13 clawed back 384 KB. A watchlist of 20–50
 items at a daily close for 90 days is ~4,500 entries and about 100 KB. Another reason E1 comes
 first.
+
+#### What C is actually for — the owner's market, 2026-08-20
+
+Recorded because it changes C's *shape*, not just its priority. The owner's worked example is
+**copper ore**, and it is the best argument in the file for why a cheap item can still matter:
+
+> Copper ore is only used for levelling blacksmithing and engineering, and for Call Board quest
+> turn-ins. The ore nodes are in low-level zones, which are the **most** crowded on the server —
+> new players plus veterans rerolling classes — so the nodes are often stripped bare. Meanwhile
+> the people who *buy* it are high-level players with gold who want a profession levelled and
+> will not farm it. And the Call Board quests, which reward gear caches that high-level players
+> want, **change every week** — so one week the ore is scarce and dear, the next week nobody
+> wants it.
+
+Three things follow, and they are the design.
+
+**1. The variable is movement, not level.** Copper ore at 40s says nothing. Copper ore at 40s
+*when it was 12s last week* is a farm worth doing. Every view on the Analysis tab is present-tense
+and cannot tell those apart. That is the whole of C in one sentence, and it is a better statement
+of it than "ore is up go mine" was.
+
+**2. The period is a week, so C is a DELTA and not a trend line.** The demand driver rotates
+weekly. What that needs is "vs seven days ago", not a 90-day curve — which is a far smaller thing
+to build, and it means one sample a day is not merely enough, it is generous. **No chart.** One
+column reading `+240%`.
+
+**3. The mechanism is visible in data the addon already has, one week earlier than price.**
+A weekly demand shock on a congestion-limited supply shows up as three things moving together:
+
+| The mechanism | Signature | Already instrumented? |
+|---|---|---|
+| Call Board rotation drives demand | listings vanish fast | **yes** — Market view's Sold/day |
+| low-level zones stripped by the newbie crush | listings and sellers fall | **yes** — Sellers / Listings |
+| price responds | unit price rises | only in the present tense |
+
+Two of the three are shipped. So a watched copper ore would show "listings collapsed, Sold/day
+tripled" *before* any price series could report the spike — which is an argument for the
+watchlist, not against C, but it does move C down the order.
+
+**A corollary that settles an open design question.** B3's folding rule (proposed 2026-08-20:
+hide any reagent under ~2% *of the bill*) survives this scenario where an absolute rule would not.
+If copper quadruples, its share of the bill quadruples with it and the row **unfolds itself**. A
+"unit price below X = ignore" rule would have hidden it exactly when it mattered. The filter stays
+proportional.
+
+#### The shortcut that does NOT work, and why it looked like it did
+
+**Timestamping the existing mean-database samples is a dead end.** `AUCTIONATOR_MEAN_PRICE_DATABASE`
+already carries up to 15 samples per item — 8898 of them across 5267 names — so it looks like a
+series waiting for a date column. It is not. `Atr_MeanAppend` (`AuctionatorHints.lua:508`) does
+`tremove (cur, math.random (1, #cur))` and then `table.sort (cur)`: the array is **sorted by price
+and thinned at random**. Dates carried alongside would survive neither — the sort destroys temporal
+order, and one unlucky thin can drop every sample from the week you are asking about. FRAMEWORK §5
+says the array cannot be retrofitted into a series; this is the same fact read off the write path,
+and it is worth having here because the retrofit is the obvious idea and it is wrong.
+
+#### Where a dated series does fit, cheaply
+
+**`AUCTIONATOR_ANALYSIS.obs[name]`** — the per-watched-item record the Analysis tab already writes
+on every observation, which already holds `low` (that scan's lowest unit price) and `last` (when).
+Appending `{ t, low }` there, **once per day at most and capped**, gives week-over-week for exactly
+the items the player has said they care about. It is bounded twice over: by the watchlist, and by
+the per-item cap. Nothing else in the addon needs to change, and no new capture is required —
+the number is already computed and already thrown away.
+
+#### "What limits do we hit if we keep history for everything?" — owner's question, 2026-08-20
+
+File size is the least of it, but start there. Arithmetic from the real dump's own counts (Blizzard
+serialises array entries one per line with an index comment, so ~18–20 bytes an element — estimated,
+not measured):
+
+| Scope | Samples at 1/day | Rough cost | Against today's 1.14 MB |
+|---|---|---|---|
+| every name, 30 days | 5267 × 30 = 158,010 | ~3.8–6.3 MB | **4–6×the whole file** |
+| every name, 90 days | 474,030 | ~11–19 MB | unusable |
+| watchlist of 50, 90 days | 4,500 | ~110–180 KB | +10–15% |
+
+The four limits that actually bite, in the order they would hurt:
+
+- **All-or-nothing corruption.** A SavedVariables file truncated by a client crash fails to parse
+  and the client discards **the whole file** — the ledger, the vendor learning, the harvested
+  recipes, the watchlist, not just the history. A bigger file takes longer to write and is exposed
+  for longer. This is the real reason to scope, and it has nothing to do with disk space.
+- **Parse on load.** SavedVariables are executed as a Lua chunk at every login and every reload,
+  on the critical path. Multi-megabyte tables are a visible stall, and this is a server people
+  reload on constantly.
+- **Memory shape, which is a hard design constraint rather than a preference.** 158,000 samples
+  stored as `{ t = , p = }` is 158,000 Lua tables. It must be flat parallel arrays or a packed
+  string per sample, decided before the first line is written — the same call item 13 made.
+- **It is ~99% waste.** 5267 names in the database; a player trades perhaps thirty.
+
+**So the rule is: scoped by watchlist, capped per item, one sample a day — three independent
+bounds, any one of which alone would be enough.** Storing everything is not a bigger version of
+the same feature; it is a different feature with a failure mode that eats unrelated data.
 
 ---
 
@@ -2962,34 +3056,115 @@ the first time it is listed, or the first time the player owns one and something
 
 ---
 
+## 28. NEW — the Call Board: capture demand before the price moves
+
+**Asked (owner, 2026-08-20):** "we can maybe add a scan Call Board ability, so the user opens the
+callboard once a week and it scans which profession quests are available."
+
+**Why this is the strongest idea in the file.** Every number on the Analysis tab is an *effect*.
+Sold/day is demand after it has happened; a price series is demand after it has moved the price.
+The Call Board is the **cause** — a published list of what the server will want this week, readable
+before a single listing has changed hands. Nothing else the addon can reach is a leading indicator,
+and this one is free of inference: the quest says it wants sixty Copper Bars, so sixty Copper Bars
+are wanted. See item 8's group C for the mechanism the owner described and why a weekly rotation is
+what makes this worth capturing at all.
+
+**It is the fourth passive harvester, and that is exactly the pattern to copy.** The profession
+window, the merchant window and the mail sweep all capture from a window the player was going to
+open anyway, store what they saw, and never ask the player to do anything. The owner's framing —
+"the user opens the callboard once a week" — is the same shape, and it is right: the addon cannot
+know the rotation without being shown it, and should not pretend otherwise.
+
+### The unknown, which is the whole of the risk
+
+**Whether the client can read the board at all.** Two cases and they are very different:
+
+- **A standard quest giver.** Then the board is a gossip or quest-greeting frame and the titles
+  come straight off `GetNumGossipAvailableQuests` / `GetGossipAvailableQuests`, or
+  `GetNumAvailableQuests` / `GetAvailableTitle`. Required items are on the detail frame
+  (`GetQuestItemInfo("required", i)`) or, after accepting, in the log
+  (`GetQuestLogLeaderBoard(i)` returns objective strings of the "Copper Bar: 0/60" shape, which is
+  the form we actually want).
+- **A custom Ascension UI.** Then none of the above returns anything and the whole item is dead
+  in that form — a bespoke frame is not required to expose its contents to Lua.
+
+**Nothing offline can answer which it is**, and that is the stated exception in
+`management/docs/CLAUDE.md`'s "in-game debug command is the last resort" rule rather than a way
+around it.
+
+### Stage 0 is reconnaissance, not a feature
+
+One command, run standing at a Call Board, that dumps what the standard quest APIs return —
+gossip counts and titles, available/active titles, the detail frame's required items, and the log
+objectives for anything already accepted — **into a copy/paste window, never chat**
+(`Atr_An_ShowDebugBox` is the working implementation; chat text cannot be selected on this
+client, so anything printed there can only come back as a screenshot). One paste answers the
+question outright and decides whether stages 1–3 exist.
+
+Events worth registering while it is open: `GOSSIP_SHOW`, `QUEST_GREETING`, `QUEST_DETAIL`,
+`QUEST_LOG_UPDATE`. Recording *which* of them fires is itself half the answer.
+
+### If it reads — what to store, and what it feeds
+
+Storage is trivial and needs no scoping argument at all: a dozen quests a week, each a title plus
+a handful of item names and counts, keyed by the week it was seen. Keeping several weeks is what
+makes the rotation visible — "this material came up in 3 of the last 8 weeks" is a better farming
+signal than any single week's snapshot, and it costs a few kilobytes.
+
+What it would then feed, in rising order of ambition:
+
+1. A **wanted this week** mark on Market and Reagents rows — the cheapest possible use, and enough
+   on its own.
+2. A prompt to watch the named materials, since the watchlist is what turns a demand hint into
+   measured turnover.
+3. Once weeks accumulate, a **recurrence** figure, which is the thing that separates a material
+   worth stockpiling from one worth farming on the day.
+
+### Honest limits, to design around rather than discover
+
+- **Only what the player visits.** Same as every other harvester here.
+- **The addon cannot know the reset.** Comparing "this week" to "last week" needs no knowledge of
+  the schedule; anything that names a reset day does, and should be a setting rather than a guess.
+- **A quest naming a material does not say how many players will chase it.** This is a demand
+  *signal*, not a demand *quantity*, and the tab must say so — the same rule the turnover estimates
+  already follow.
+
+---
+
 ## Suggested order
 
-Every numbered item has now shipped or closed: 1–9 and 11–27 are **DONE** or deliberately parked,
-and item 10 closed without any code (2026-08-19). Rewritten twice that day — once after the first
-real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is unstarted.** What
-is left is follow-on work inside shipped items, two standing deferrals, and two questions that
-need no code at all. In order:
+Items 1–9 and 11–27 are **DONE** or deliberately parked, and item 10 closed without any code
+(2026-08-19). **Item 28 is the one unstarted request**, added 2026-08-20. What is otherwise left is
+follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
+all. In order:
 
 1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
    all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
    inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing
    lifetime, undercut churn), which are arithmetic over data the addon already holds. **C** (price
-   trend) ranks last — it needs a dated series that does not exist, so it is a writer plus a
-   retention rule, and it must be watchlist-scoped: the naive all-names version is several
-   megabytes, immediately after item 13 clawed back 384 KB.
-2. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+   trend) ranks last, and 2026-08-20 reshaped it: it is a **week-over-week delta, not a trend
+   line**, because the demand it tracks rotates weekly — and its cheap home is a capped daily
+   `{ t, low }` on each watched item's existing `obs` record, not a retrofit of the mean database,
+   which sorts by price and evicts at random. The item carries the owner's worked example, the
+   storage limits of keeping history for everything, and why the obvious shortcut fails.
+2. **Item 28's stage 0** — one diagnostic at a Call Board, pasted back. It is minutes of work and
+   it decides whether the addon can see the server's *published* weekly demand at all. Everything
+   else on this list measures effects; this is the only candidate cause, so it is worth knowing
+   before more effort goes into inferring what it would simply state. If it reads, it outranks C
+   outright — a leading indicator beats a lagging one built from a series that does not exist yet.
+3. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
-3. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+4. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
    all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
    data has never been seen.
-4. **Item 12's sizing question** — how many names on this server carry more than one variant.
+5. **Item 12's sizing question** — how many names on this server carry more than one variant.
    Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
    only whether extending part 3 is worth it, not what shape it would take.
-5. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+6. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
    purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
    comparison against a real mismatched pair, never an imagined one.
-6. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+7. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
    price. The craft cost reproduces exactly from real data, so this is an auction-house question
    rather than an addon one, and there may be no work here at all.
 
@@ -3094,6 +3269,10 @@ to become visible.
   8898 samples carry no timestamps. The advisor is a data-plumbing project before it is a
   feature.
 - **Item 9:** parked by the owner until item 7 lands.
+- **Item 28:** whether Ascension's Call Board is a standard quest giver — in which case the
+  standard quest APIs read it and the whole item is cheap — or a custom frame, in which case they
+  return nothing and it is dead in that form. **This is the gate on the item and nothing offline
+  can answer it**; stage 0 in the item is the one diagnostic that does.
 - **Item 12:** how many item names on this server carry more than one variant. **Part 1's
   blocker is answered** (3 trailing-space rows, no twins — see the item), but the wider question
   is not: the texture test caught 3 in 5267 and misses gear, which is the case that was

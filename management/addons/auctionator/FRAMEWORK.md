@@ -213,6 +213,13 @@ dated series exists and is reusable (`ToTightTime`/`FromTightTime` at `:6221`/`:
 condenser); the *market* series does not. That makes item 8 a data-plumbing project first, and
 it is the reason the backlog orders the Ledger ahead of it.
 
+**What the series should be, decided 2026-08-20** (`BACKLOG.md` item 8, group C): a **week-over-week
+delta on watched items only**, stored as a capped daily `{ t, low }` on each item's existing
+`AUCTIONATOR_ANALYSIS.obs` record — not a general history, and explicitly **not** a retrofit of the
+mean database, whose random eviction and price sort are re-confirmed above. The backlog carries the
+market mechanism that decided the weekly period, and the file-size, load-time and
+corruption limits that rule out storing history for all 5267 names.
+
 ---
 
 ## 6. The de-facto internal APIs
@@ -480,6 +487,13 @@ view of what is left; what this table is still good for is the *world* column an
 | 7 | **Ledger** | **new file** + 15 tab sites, or a sub-tab | 2 | Own panel, own file, `F` surface. Rename existing tab to History (§8 sub-tab recipe). |
 | 8 | Advisor | new file | 2 | Blocked on §5 — no market series exists. |
 | 9 | Grovewood Log/Plank | investigation | — | Parked until 7 lands. |
+
+**Item 28 (Call Board demand capture, added 2026-08-20) is the next one that would need a new
+home**, and it is the §8 "adding a subsystem file" recipe almost exactly: own file, own event
+frame, no UI of its own at first, and a passive harvest from a window the player opens anyway —
+the same shape as the profession, merchant and mail captures. Its stage 0 is a diagnostic rather
+than a subsystem, and the question it answers (can the client read that board at all) decides
+whether the file is ever written.
 
 Item 7 is the only one needing a genuinely new home, and the pattern for it is fully
 established: `AuctionatorLedger.lua`, own panel in Lua, `F` surface, own event frame, tagged
