@@ -1,0 +1,227 @@
+-- analysis-feed-smoke.lua -- pins BACKLOG item 17's feed.
+--
+-- Run from the repo root:  lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua
+--
+-- The Analysis tab counts a listing that VANISHED between two scans as sold. That
+-- makes an incomplete scan actively dangerous: every listing on a page that was
+-- never fetched looks bought, and the mistake lands in a saved database where it
+-- is indistinguishable from a real sale afterwards. The guards that prevent it
+-- are cheap to write and impossible to see in game -- the numbers would just be
+-- wrong -- so they are asserted here.
+--
+-- Stubs only what the batch loop and the observer touch. Not a client emulator.
+
+local passed, failed = 0, 0
+
+local function check (ok, what)
+	if (ok) then passed = passed + 1 else failed = failed + 1; print ("FAIL: " .. what) end
+end
+
+local function eq (got, want, what)
+	check (got == want, string.format ("%s -- got %s, wanted %s", what, tostring (got), tostring (want)))
+end
+
+--------------------------------------------------------------------
+-- stubs
+--------------------------------------------------------------------
+
+local WATCHED   = "Thorium Ore"
+local IGNORED   = "Copper Ore"
+local LINK_OF   = { [WATCHED] = "|cffffffff|Hitem:10620|h["..WATCHED.."]|h|r",
+                    [IGNORED] = "|cffffffff|Hitem:2770|h["..IGNORED.."]|h|r" }
+
+local gNow      = 1000000
+local gListings = {}
+
+tinsert  = table.insert
+tremove  = table.remove
+time     = function () return gNow end
+
+function GetItemInfo (link)			return "x", link, 1, 60, 60, "Trade Goods", "Metal & Stone" end
+function GetNumAuctionItems ()		return #gListings, #gListings end
+function GetAuctionItemLink (_, x)	return LINK_OF[gListings[x].name] end
+function GetAuctionItemTimeLeft (_, x)	return gListings[x].tl end
+
+function GetAuctionItemInfo (_, x)
+	local L = gListings[x]
+	return L.name, "tex", L.count or 1, 1, true, 60, 100, 1, L.buyout, 0, nil, L.owner
+end
+
+function Atr_AddToItemLinkCache ()			end
+function Atr_GetItemLink (n)				return LINK_OF[n] end
+function Atr_ItemType2AuctionClass ()		return 0 end
+function Atr_SubType2AuctionSubclass ()		return 0 end
+function Atr_AddToLowPrices ()				end
+function Atr_SetMessage ()					end
+function Atr_Error_Display ()				end
+function ZT (s)								return s end
+function Atr_NewQuery ()					return { numDupPages = 0 } end
+function CanSendAuctionQuery ()				return false end		-- keep Continue() inert
+
+local zc = {}
+function zc.StringSame (a, b)	return string.lower (a or "") == string.lower (b or "") end
+function zc.md ()				end
+function zc.msg_red ()			end
+function zc.msg_atr ()			end
+function zc.round (n)			return math.floor ((n or 0) + 0.5) end
+
+--------------------------------------------------------------------
+-- load the real files
+--------------------------------------------------------------------
+
+local function load_addon_file (path)
+	local chunk = assert (loadfile (path))
+	return chunk ("Auctionator-Finder-Ascension", { zc = zc })
+end
+
+load_addon_file ("Auctionator-Finder-Ascension/AuctionatorAnalysis.lua")
+load_addon_file ("Auctionator-Finder-Ascension/AuctionatorScan.lua")
+
+--------------------------------------------------------------------
+-- helpers
+--------------------------------------------------------------------
+
+-- Finish() does the whole price-database pass after handing the listings over,
+-- and that pass needs a great deal more of the addon than this stubs. The
+-- analysis call is the FIRST thing in it, so pcall is enough to exercise the
+-- real wiring -- and if that call ever stops being reached, these assertions
+-- fail, which is the point of running Finish rather than the observer directly.
+local function finish (srch)
+	pcall (function () srch:Finish() end)
+end
+
+local function scan (listings, opts)
+
+	opts = opts or {}
+
+	gListings = listings
+
+	AUCTIONATOR_ANALYSIS = AUCTIONATOR_ANALYSIS		-- keep the DB across scans
+
+	local srch = Atr_NewSearch (opts.searchText or WATCHED, opts.exact ~= false, 0)
+	srch.current_page = 1
+
+	srch:AnalyzeResultsPage ()
+
+	if (opts.levelFiltered) then srch.anLevelFiltered = true end
+
+	finish (srch)
+
+	return srch
+end
+
+local function obs (name)	return Atr_An_DB().obs[name] end
+
+local function reset ()
+	AUCTIONATOR_ANALYSIS = nil
+	Atr_ClearScanCache ()
+	Atr_An_Watch (WATCHED)
+end
+
+--------------------------------------------------------------------
+-- 1.  A complete search feeds the watched item, and only it.
+--------------------------------------------------------------------
+
+reset ()
+
+scan {
+	{ name = WATCHED, owner = "alice", count = 20, buyout = 10000, tl = 3 },
+	{ name = WATCHED, owner = "bob",   count = 20, buyout = 12000, tl = 3 },
+	{ name = IGNORED, owner = "carol", count = 20, buyout =   500, tl = 3 },
+}
+
+local o = obs (WATCHED)
+check (o ~= nil, "a complete search records the watched item")
+eq (o and o.scans,    1,   "... as one scan")
+eq (o and o.listings, 2,   "... with both of its listings")
+eq (o and o.sellers,  2,   "... and both sellers")
+eq (o and o.low,      500, "... priced per unit")
+eq (obs (IGNORED), nil,    "an unwatched item in the same batch is not recorded")
+
+--------------------------------------------------------------------
+-- 2.  Sold vs expired, which is the whole point of the time-left buckets.
+--------------------------------------------------------------------
+
+-- bob's listing was on "Long" (min 2h left) and is gone 30 minutes later: it
+-- cannot have expired.
+gNow = gNow + 1800
+scan {
+	{ name = WATCHED, owner = "alice", count = 20, buyout = 10000, tl = 3 },
+}
+
+o = obs (WATCHED)
+eq (o and o.sold, 1, "a listing that could not yet have expired counts as SOLD")
+eq (o and o.amb,  0, "... and not as ambiguous")
+
+-- alice's is on "Short" (min 0) and gone: unknowable, so it must not be a sale.
+gNow = gNow + 1800
+scan {
+	{ name = WATCHED, owner = "dave", count = 5, buyout = 3000, tl = 1 },
+}
+-- (alice was last seen on tl 3 -> min 2h; 30m gap, so this one IS attributable)
+o = obs (WATCHED)
+eq (o and o.sold, 2, "... a second attributable disappearance is also a sale")
+
+gNow = gNow + 7200			-- two hours: dave's Short listing could have expired
+scan {
+	{ name = WATCHED, owner = "erin", count = 5, buyout = 3000, tl = 4 },
+}
+o = obs (WATCHED)
+eq (o and o.sold, 2, "a disappearance that could be an expiry adds no sale")
+eq (o and o.amb,  1, "... it is counted as ambiguous instead")
+
+--------------------------------------------------------------------
+-- 3.  THE DANGEROUS CASE: an incomplete scan must observe nothing.
+--     A full page (50) means more pages are coming; the listings on them are
+--     not missing, they are unfetched.
+--------------------------------------------------------------------
+
+reset ()
+
+local full = {}
+for i = 1, 50 do
+	full[i] = { name = WATCHED, owner = "seller"..i, count = 1, buyout = 100 * i, tl = 3 }
+end
+
+scan (full)
+eq (obs (WATCHED), nil, "a full page (more to come) is never observed")
+
+--------------------------------------------------------------------
+-- 4.  A level-filtered query returns a subset of an item's listings.
+--------------------------------------------------------------------
+
+reset ()
+
+scan ({ { name = WATCHED, owner = "alice", count = 1, buyout = 100, tl = 3 } },
+	  { levelFiltered = true })
+eq (obs (WATCHED), nil, "a level-filtered search is never observed")
+
+--------------------------------------------------------------------
+-- 5.  The bank is consumed exactly once: a second Finish cannot re-observe
+--     the same snapshot and invent a scan interval out of nothing.
+--------------------------------------------------------------------
+
+reset ()
+
+local srch = scan { { name = WATCHED, owner = "alice", count = 1, buyout = 100, tl = 3 } }
+eq (obs (WATCHED).scans, 1, "one search, one scan")
+
+gNow = gNow + 3600
+finish (srch)
+eq (obs (WATCHED).scans, 1, "finishing the same search again observes nothing")
+
+--------------------------------------------------------------------
+-- 6.  Unwatched items cost nothing: nothing is banked for them at all.
+--------------------------------------------------------------------
+
+reset ()
+Atr_An_Unwatch (WATCHED)
+
+srch = scan { { name = WATCHED, owner = "alice", count = 1, buyout = 100, tl = 3 } }
+eq (srch.anListings, nil, "nothing is banked when nothing is watched")
+eq (obs (WATCHED), nil,   "... and nothing is recorded")
+
+--------------------------------------------------------------------
+
+print (string.format ("%d passed, %d failed", passed, failed))
+os.exit (failed == 0 and 0 or 1)

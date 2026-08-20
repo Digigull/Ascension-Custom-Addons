@@ -67,6 +67,13 @@ function AtrSearch:Init (searchText, exact, rescanThreshold, callback)
 	self.sortedScans		= nil;
 	self.sortHow			= ATR_SORTBY_PRICE_ASC;
 	self.callback			= callback;
+
+	-- ANALYSIS (BACKLOG item 17).  Raw listings banked for the turnover tab, and
+	-- the two facts that decide whether they may be used at all.  Abort() calls
+	-- Init(), so a cancelled search cannot leave half a result set behind.
+	self.anListings			= nil;
+	self.anComplete			= false;
+	self.anLevelFiltered	= false;
 	
 	if (exact) then	
 
@@ -317,6 +324,7 @@ function AtrSearch:AnalyzeResultsPage()
 	self.processing_state = KM_ANALYZING;
 
 	if (self.query.numDupPages > 10) then 	 -- hopefully this will never happen but need check to avoid looping
+		self.anComplete = false;			 -- ANALYSIS (item 17): stopped early, not finished
 		return true;						 -- done
 	end
 
@@ -325,6 +333,7 @@ function AtrSearch:AnalyzeResultsPage()
 
 	if (self.current_page == 1 and totalAuctions > 3000) then -- give Blizz servers a break
 		Atr_Error_Display (ZT("Too many results\n\nPlease narrow your search"));
+		self.anComplete = false;			 -- ANALYSIS (item 17): stopped early, not finished
 		return true;  -- done
 	end
 
@@ -411,6 +420,16 @@ function AtrSearch:AnalyzeResultsPage()
 					scn = vscn;
 				end
 
+				-- ANALYSIS (BACKLOG item 17).  Turnover needs the listing itself --
+				-- who is selling it, for how much, and how long it has left -- and
+				-- this loop is the only place all four are in scope.  Collected
+				-- for WATCHED items only (the helper's first test) and banked on
+				-- the search until it finishes; see Atr_An_ObserveSearch for why
+				-- it cannot be observed a page at a time.
+				if (Atr_An_CollectListing) then
+					Atr_An_CollectListing (self, name, owner, count, buyoutPrice, x);
+				end
+
 				local curpage = (tonumber(self.current_page)-1);
 
 				scn:AddScanItem (name, count, buyoutPrice, owner, 1, curpage);
@@ -443,6 +462,12 @@ function AtrSearch:AnalyzeResultsPage()
 	end
 	
 	local done = (numBatchAuctions < 50);
+
+	-- ANALYSIS (item 17): the ONLY place completeness is asserted.  A short page
+	-- means the server had nothing more to give; anything else -- an early-out
+	-- above, or a watchdog reaching Finish while a page is outstanding -- leaves
+	-- this false and the collected listings are discarded rather than believed.
+	self.anComplete = done;
 
 	if (not done) then
         self.processing_state = KM_PREQUERY;
@@ -678,6 +703,11 @@ function AtrSearch:Continue()
 
 		queryString = zc.UTF8_Truncate (queryString,63);	-- attempting to reduce number of disconnects
 
+		-- ANALYSIS (item 17): remember that this query was narrowed by level.  Such
+		-- a result set is a SUBSET of a watched item's listings, and the ones it
+		-- cannot return would read as sold.
+		if (minLevel or maxLevel) then self.anLevelFiltered = true; end
+
 		QueryAuctionItems (queryString, minLevel, maxLevel, nil, itemClass, itemSubclass, self.current_page, nil, nil);
 
 		self.query_sent_when	= gAtr_ptime;
@@ -714,7 +744,12 @@ end
 function AtrSearch:Finish()
 
 	local finishTime = time();
-	
+
+	-- ANALYSIS (BACKLOG item 17).  Every completed search feeds the turnover tab,
+	-- not just the Finder's own scanner -- which is what makes an ordinary Buy
+	-- search count.  pcall'd and guarded: analysis must never break a search.
+	if (Atr_An_ObserveSearch) then pcall (Atr_An_ObserveSearch, self); end
+
 	self.processing_state	= KM_NULL_STATE;
 	self.current_page		= -1;
 	self.query_sent_when	= nil;

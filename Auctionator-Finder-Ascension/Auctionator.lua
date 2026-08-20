@@ -3355,6 +3355,8 @@ function Atr_OnSearchComplete ()
 
 	Atr_CheckingActive_OnSearchComplete();
 
+	if (Atr_An_OnSearchComplete) then Atr_An_OnSearchComplete(); end		-- ANALYSIS_TAB: advances a rescan run, no-op otherwise
+
     -- Ensure results list is scrolled to the top so new results are visible without user interaction
     if (AuctionatorScrollFrame and AuctionatorScrollFrameScrollBar and AuctionatorScrollFrameScrollBar.SetValue) then
         FauxScrollFrame_SetOffset(AuctionatorScrollFrame, 0);

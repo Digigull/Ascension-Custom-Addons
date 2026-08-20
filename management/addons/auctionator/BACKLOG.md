@@ -1892,9 +1892,103 @@ quietly quoting the rare's. That is the intended change, not a new bug.
 
 ---
 
+## 17. Analysis tab — fed by every search, and able to scan on its own — DONE
+
+**Asked 2026-08-20:** the Analysis tab only updates from the **Finder**, not from a **Buy** tab
+search; the UI needs adjusting; and a **refresh scan** button on the tab itself would help.
+
+### Why only the Finder fed it
+
+Because the Finder is the only scanner that keeps `timeLeft`. The tab's whole method rests on it:
+a listing that vanished between two scans was *bought* only if less time passed than its last-seen
+countdown bucket guaranteed it had left (item 8). The Finder's result rows already carry owner,
+stack, price **and** time-left, so wiring it up was one call.
+
+Every other search — Buy, Sell, More — runs through `AtrSearch:AnalyzeResultsPage`, and that loop
+reads `GetAuctionItemInfo` but never `GetAuctionItemTimeLeft`; what it keeps
+(`AtrScan:AddScanItem`) is stack, price, owner and page. So there was nothing downstream to feed
+the analysis *with*, which is why the Finder was special.
+
+### The feed
+
+`Atr_An_CollectListing` is called from that loop, for **watched items only**, and reads the
+time-left the loop never bothered with. The listings are **banked on the search** and handed over
+in `AtrSearch:Finish`, not observed per page — because *a listing that is absent is what "sold"
+means*, and observing half a scan would report every listing on the pages not yet fetched as
+bought. That mistake would land in a saved database, indistinguishable from real sales
+afterwards.
+
+So completeness is asserted, never assumed. `anComplete` is set **only** where the batch loop
+finds a short page — the server had nothing more to give. Three routes to `Finish` deliberately
+leave it false and discard the bank:
+
+- the **too many results** early-out (>3000 on page 1),
+- the **duplicate page** bail (>10),
+- the two **watchdogs** in `Atr_OnUpdate`, which finish a stalled search with pages outstanding.
+
+A fourth guard is about the query rather than the scan: a **level-filtered** compound search
+(`Atr_ParseCompoundSearch` returning min/max level) returns a *subset* of an item's listings, and
+on this server that is not hypothetical — gear scales per instance, so one item's listings carry
+many required levels. Those outside the filter would read as sold, so such a search is not
+observed at all.
+
+The result is broader than asked: **any** completed search feeds the tab, so ordinary Sell-tab
+and More-tab scans count too. That is the same rule, not a wider one — a complete result set for
+a watched name is a valid observation whichever tab asked for it.
+
+### The Rescan button
+
+Watching an item and then having to remember to go and search for it is the wrong way round, so
+the tab now has a **Rescan** button: one exact search per watched item in the current group, run
+in sequence, with progress beside the button and a second click to stop.
+
+It drives `gAnalysisPane` through the **ordinary search machinery** rather than calling
+`QueryAuctionItems` itself. One pump owns the auction API; a second racing it is how duplicate
+pages and disconnects happen. The cost of that choice is real and is stated in the button's
+tooltip: the pump only advances the **current pane's** search, so leaving the tab stops the run
+(`Atr_An_OnTabClick` cancels it rather than leaving a half-run wedged).
+
+Each item is searched with `rescanThreshold` **0** — never accept a cached scan. A cache hit
+would re-observe the previous scan's listings, comparing a snapshot against itself: zero sales,
+and elapsed time added for nothing.
+
+**One trap worth recording:** the obvious "is this tab being pumped" test — `gCurrentPane ==
+gAnalysisPane` — silently never fires. `gCurrentPane` is a **file-local** in `Auctionator.lua`
+(line 204) and reads as nil from another file, while `gAnalysisPane` happens to be a global. The
+selected tab is what assigns `gCurrentPane` in the first place and *is* readable, so
+`An_TabIsCurrent` asks `Atr_IsTabSelected (ATR_ANALYSIS_TAB)` instead.
+
+### The UI
+
+The headers and the row cells were two separate lists of coordinates and had drifted apart:
+
+- every header sat at the **left edge** of a column whose value was centred or right-aligned, so
+  nothing lined up with its own heading;
+- **Low**'s right edge (606) sat under the **Gold/day** header (610);
+- **Gold/day**'s cell ran to 656, under the per-row delete button;
+- the summary line — three sentences — was a `FontString` with no width, so it ran off the panel.
+
+Both are now generated from **one** `AN_COLS` table, which is what stops them drifting again; the
+delete button has its own lane past the last column; and the summary has a width and wraps
+upward. Rows also gained the Ledger's item tooltip on hover, from the shared link cache.
+
+**Verified** by `luac5.1 -p` and a new offline test,
+`management/addons/auctionator/tools/analysis-feed-smoke.lua` (17 assertions): the sold-vs-expired
+attribution end to end, unwatched items costing nothing, and the three guards above — a full page,
+a level-filtered query and a second `Finish` on the same search each observe nothing. Removing
+either the completeness or the level guard fails it, which is how we know they are load-bearing
+rather than decorative. `sell-variant-smoke.lua` still passes 27/27 over the same batch loop.
+**Not verified in game.**
+
+**What to watch:** the layout numbers are reasoned from the Ledger's budget (columns end at 630,
+delete button 636–656, scroll bar owns 664+), not seen. And a rescan of a large watchlist is one
+AH query per item — cancellable, but not quick.
+
+---
+
 ## Suggested order
 
-Items 1–6, 11, 14, 15 and 16 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16 and 17 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
