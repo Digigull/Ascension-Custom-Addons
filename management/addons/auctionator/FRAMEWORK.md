@@ -488,8 +488,15 @@ view of what is left; what this table is still good for is the *world* column an
 | 8 | Advisor | new file | 2 | Blocked on §5 — no market series exists. |
 | 9 | Grovewood Log/Plank | investigation | — | Parked until 7 lands. |
 
-**Item 28 (Call Board demand capture, added 2026-08-20) is the next one that would need a new
-home**, and it is the §8 "adding a subsystem file" recipe almost exactly: own file, own event
+**Two of the 2026-08-20 additions would need new homes, and they take different recipes.**
+**Item 30 (the Advisor)** is a §8 *main tab* — 15 sites in `Auctionator.lua`, tagged the way
+`-- LEDGER_TAB` and `-- ANALYSIS_TAB` are — and it is deliberately a renderer: it reads
+`Atr_Craft_ProfitRanking`, `Atr_Craft_ReagentPressure`, `Atr_An_Stats` and `Atr_Ledger_ItemTotals`
+and computes nothing of its own, which is §6's "one function per view" rule applied to a whole tab.
+It is also what relieves the Analysis control row, since it is the fifth view that is now not going
+to be crammed onto that toggle.
+
+**Item 28 (Call Board demand capture)** is the §8 "adding a subsystem file" recipe almost exactly: own file, own event
 frame, no UI of its own at first, and a passive harvest from a window the player opens anyway —
 the same shape as the profession, merchant and mail captures. Its stage 0 is a diagnostic rather
 than a subsystem, and the question it answers (can the client read that board at all) decides

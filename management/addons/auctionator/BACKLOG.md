@@ -6,9 +6,10 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
-and deliberately declined. Five items do not carry that label and are the ones to know about:
+and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 28 and 29** are new, with nothing built yet. **"Suggested order" at the foot of the file is the live view
+**item 10** closed without any code, and **items 28, 29 and 30** are new, with nothing built yet.
+Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
 was and was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14,
@@ -778,6 +779,12 @@ centred under the title, anchored to the title itself so it follows if that move
 ## 8. NEW — Analysis tab (was: Advisor)
 
 **Asked, originally:** "Ore is up go mine, crafting profit good make this..."
+
+**And the Advisor came back — as item 30, 2026-08-20.** The rescope below did not reject the
+original ask; it put the data question first, because an advisor with no turnover figures and no
+price series would have been guessing. That deferral is now spent: the four views built under this
+item are the evidence an advisor needs, and item 30 is the half of the original request that was
+always going to be built on top of them.
 
 **Rescoped with the owner 2026-08-19**, once items 7, 12 and 13 had settled what data exists.
 It becomes its own main tab called **Analysis**, and the owner's own idea leads it:
@@ -3138,6 +3145,12 @@ What it would then feed, in rising order of ambition:
 
 ## 29. NEW — the Reagents view ranks dependence; you decide with money
 
+**Revised the same day it was written.** The owner's Advisor idea (item 30) took the verdict-text
+stage out of this item entirely and supplied a better driver for the plan. What is left here is
+narrower and better for it: this item is now about **the figures on one table**, and item 30 is
+about the sentences. The two sections marked *superseded* below are kept rather than deleted,
+because the first draft's reasoning is what shows why the split is right.
+
 **Reported in game by the owner, 2026-08-20, the day B3 shipped:** "it says cured feralhide is the
 biggest profit number on the reagents page but the Essence of Fire and Cleansed Plague Leather are
 the real value in these leather working crafts."
@@ -3226,47 +3239,164 @@ owner picked out by eye are the top two rows, in order, with the reason printed 
    question neither view can answer. **`Atr_An_Observe` already reads every listing's stack size to
    compute the unit price and then discards it** — summing it into the `obs` record turns Supply
    into "330 available, you need 25".
-4. **Say the risk in words.** Three states are enough — *most of the bill* / *thin market* / fine.
-   The same line belongs on a Crafting row's tooltip: "74% of this cost is Essence of Fire, from
-   10 sellers" is what a margin is really a bet on.
+4. **Say the risk in words — but not on this table.** *Superseded 2026-08-20.* Three states are
+   enough (*most of the bill* / *thin market* / fine) and the first draft put them in a Verdict
+   column here. **That belongs to item 30.** A table carrying both figures and verdicts is doing
+   two jobs, and it is why this page reads as cluttered whatever the columns are — the owner's
+   call, and it is right. What survives on this view is the one input those sentences are built
+   from: the share-of-bill percentage, which is a number and belongs with the numbers.
 
-### Driving it
+### Driving it — superseded 2026-08-20, and the replacement is better
 
-One control, on the Crafting view because that is where profit is already being read: **a tick box
-per recipe and a batch size**. With nothing ticked it falls back to today's behaviour — every
-paying recipe, one craft of each — so the page is never empty and never demands setup. The
-difference is that "one of each" stops being presented as a plan, which it is not; it is the
-baseline reading of what your professions depend on.
+**The first draft was a tick box per recipe on the Crafting view, plus a batch size.** That still
+works and is kept here as the fallback if item 30 is never built. But item 30 supplies a better
+driver: its **Make** card already names one recipe and a quantity, so a single `[Plan 5]` button on
+that card hands this view a plan without anyone assembling one. Fewer controls, and the flow runs
+*advice → shopping list* instead of asking a player to build a plan before being told what to make.
 
-Beyond that, a **gold budget** ("I have 500g — what should I make") is the version an ordinary
-player would use every session, but it is a genuine feature rather than a presentation fix and it
-goes last.
+Either way, with **no** plan set this view falls back to today's behaviour — every paying recipe,
+one craft of each — so it is never empty and never demands setup. What changes is that "one of
+each" stops being presented as a plan, which it is not; it is the baseline reading of what your
+professions depend on.
 
-### Stages
+A **gold budget** ("I have 500g — what should I make") is the version an ordinary player would use
+every session. That is now clearly item 30's, not this one's.
+
+### Stages — three of them, since 2026-08-20
 
 1. **Cost column, sorted by default, trivia folded.** No new data, no new capture — the outlay is
    already computed and already in the tooltip. On its own it answers the report that opened this
    item.
 2. **Count units in the scan.** Sum each listing's stack size where `Atr_An_Observe` already reads
    it and store it beside the listing count. Old watched items backfill on their next scan.
-3. **The plan** — tick, batch, and the spend/sell/keep line. This is the reform; stages 1 and 2 are
-   what make it readable when it arrives.
-4. **Verdict text**, and the risk line on craft tooltips. Cheap, and the part a layman actually
-   reads — last only because the thresholds want tuning against a few weeks of real numbers rather
-   than guessed ones.
+3. **The plan** — a batch, a bill, and the spend/sell/keep line under it: driven from item 30's
+   Make card where that exists, and from a tick box on the Crafting view where it does not.
+
+**Stage 4 was verdict text and is now item 30 in full.** Stages 1 and 2 are worth doing first
+whatever happens to the rest, and not only for this table: the Advisor reads the same figures, so a
+Cost column that sorts and a Supply column that counts units make its *cards* more accurate as
+well.
+
+---
+
+## 30. NEW — the Advisor: a tab that tells you what to do
+
+**Asked (owner, 2026-08-20):** "separate some of this and possibly rehash the Advisor idea into a
+new tab that could give more layman type instructions to do? That way we can preserve the good data
+but then have the Advisor insight."
+
+**This is item 8's original request, returning on its own terms.** Item 8 was called *Advisor* and
+asked for "ore is up go mine, crafting profit good make this". It was rescoped to *Analysis* on
+2026-08-19 — not because the ask was wrong, but because there was no turnover data and no price
+series, so an advisor would have been inventing. **That deferral is now spent.** Four views'
+worth of real evidence exist, and the half of the request that was always going to sit on top of
+them can be built.
+
+It also fixes a mistake in item 29's first draft: verdict text was proposed *inside* the Reagents
+table. One table cannot carry both figures and conclusions without becoming cluttered, whatever the
+columns are. The owner's split is the right one.
+
+### The split
+
+| | Analysis tab | Advisor tab |
+|---|---|---|
+| Holds | evidence | conclusions |
+| Shape | four dense, sortable tables | five or six cards, in sentences |
+| For | checking the working | deciding in ten seconds |
+| Says | what is true | what to do about it |
+
+### The one rule: the Advisor computes nothing
+
+Every card is a **reading of a figure Analysis already holds**, and every card links back to the
+row it came from. This is the same rule that keeps the Crafting view and the trade skill window
+from disagreeing about a recipe (`FRAMEWORK.md` §6: the arithmetic lives with the data). An Advisor
+that did its own sums would be a second opinion nobody asked for, and the first time it disagreed
+with a table on the next tab the whole addon would stop being trustworthy.
+
+Which means it is a *renderer*, and cheap. What it reads:
+
+| Card | Fires on | Reads |
+|---|---|---|
+| **Make** | best `perCraft` with a margin above the floor | `Atr_Craft_ProfitRanking` |
+| **Buy** | one reagent dominating the bill, or few sellers | `Atr_Craft_ReagentPressure` |
+| **Watch** | a high-share reagent that is not on the watchlist | `Atr_Craft_ReagentPressure` + `watch` |
+| **Careful** | `topShare >= 0.8`, or a negative ledger margin | `Atr_An_Stats` / `Atr_Ledger_ItemTotals` |
+| **Farm** | high Gold/day on a watched item | `Atr_An_Stats` |
+| **Stale** | last scan older than N days | `Atr_An_Stats().last` |
+
+Four existing globals, no new capture, no new saved variable.
+
+### What the cards say, from the owner's own 2026-08-20 data
+
+- **Make** — *"Devilsaur Gambeson — 304g 98s a craft, 69% margin. Catch: 74% of the cost is Essence
+  of Fire, and ten sellers hold it."*  `[Plan 5]`  `[Show me]`
+- **Buy** — *"Essence of Fire is 57% of your shopping bill. Check its price before you commit to
+  the batch."*
+- **Watch** — *"Your watchlist is empty, so I cannot tell you whether any of this is actually
+  buyable. Your best crafts lean on Essence of Fire, Cleansed Plague Leather and Sulfur-Tanned
+  Stegodon Hide."*  `[Watch all three]`
+- **Careful** — *"Cured Savage Meat: one seller holds most of the listings and can move the price
+  at will."*
+- **Stale** — *"Nothing scanned in six days. Every rate below is guesswork until you rescan."*
+  `[Rescan]`
+
+### Three things that make or break it
+
+- **The number is in the sentence.** Never a bare "make this". A card that cannot name the figure
+  it is arguing from is a card that should not have fired.
+- **It must be willing to say it has nothing.** "Not enough data yet, and here is what would give
+  me some" is a legitimate state and, on a fresh install, the most useful thing the tab can say —
+  every row on the owner's Reagents page currently reads *not watched*, and an Advisor that
+  invented advice over that would be worse than an empty one.
+- **Five or six cards, ranked by gold at stake.** An advisor that lists forty things has become a
+  table again, which is the tab next door.
+
+### A main tab, not a fifth Analysis view
+
+Two reasons, and the first is a hard constraint. **The Analysis control row is full**: the fourth
+toggle button (B3) cost every widget on that row pixels and forced "My trades" down to "Trades",
+and `FRAMEWORK.md` §8 already warns that a fifth needs the layout arithmetic redone rather than a
+width guessed. Second and better: conclusions and evidence are different kinds of thing, and the
+tab strip is where this addon separates kinds of thing.
+
+`FRAMEWORK.md` §8's "adding a main tab" recipe applies unchanged — 15 sites, all in
+`Auctionator.lua`, the path the Ledger and Analysis tabs both took, tagged at every core
+touch-point the way `-- LEDGER_TAB` and `-- ANALYSIS_TAB` are.
+
+### What it wants from item 29 first
+
+Stages 1 and 2 of item 29 — the sortable Cost column and counting units instead of listings. Not
+for the table's sake: **the Advisor reads the same figures**, so "Essence of Fire is 57% of your
+bill" needs the share computed, and "you need 25 and 66 are listed" is a misleading sentence until
+Supply counts units. Build those first and the cards are accurate on the day they appear.
+
+### Honest limits, to design around rather than discover
+
+- **It can only advise from what has been scanned.** Most cards cannot fire on an empty watchlist,
+  and the tab says so instead of lowering its standards.
+- **Turnover needs two scans.** A card must never argue from a single observation; the Market
+  view already refuses to and the Advisor inherits that.
+- **"Ranked by gold at stake" is itself an estimate.** The ordering is a ranking, not a promise,
+  and the tab should say so once rather than per card.
+- **Never recommend buying something it cannot price.** An unpriced reagent is a reason to go and
+  scan, which is a different card.
 
 ---
 
 ## Suggested order
 
 Items 1–9 and 11–27 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28 and 29 are unstarted**, both added 2026-08-20. What is otherwise left is
+(2026-08-19). **Items 28, 29 and 30 are unstarted**, all added 2026-08-20. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
-**Reordered 2026-08-20 after the first in-game session with the Reagents view.** What moved to the
-top is not the biggest item but the cheapest correction to a thing that was actually confusing in
-use, followed by the one diagnostic that could change the value of everything below it. In order:
+**Reordered 2026-08-20**, after the first in-game session with the Reagents view and the owner's
+Advisor request. The shape of it: the cheapest correction to something that was actually confusing
+in use goes first, then the one diagnostic that could change the value of everything below it, then
+**item 30, which is where this whole run of work has been heading** — four tabs of evidence exist so
+that something can finally read them out in sentences. The inference work left in item 8 (A5/A6, C)
+ranks below that: it makes the evidence richer, but nobody is short of evidence right now, they are
+short of a readout. In order:
 
 1. **Item 29, stages 1 and 2** — the Reagents view ranks dependence, so a 29s filler reagent sits
    above the two that own the craft cost. Stage 1 promotes the outlay the addon already computes
@@ -3279,7 +3409,13 @@ use, followed by the one diagnostic that could change the value of everything be
    else on this list measures effects; this is the only candidate cause, so it is worth knowing
    before more effort goes into inferring what it would simply state. If it reads, it outranks C
    outright — a leading indicator beats a lagging one built from a series that does not exist yet.
-3. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
+3. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
+   five or six cards in plain sentences over figures four existing functions already return. No
+   new capture and no new saved variable — it is a renderer, and its whole discipline is that it
+   computes nothing. Wants entry 1 under it, because it reads those same figures.
+4. **Item 29's stage 3** — the plan: a batch, a bill, and the spend/sell/keep line. It sits after
+   item 30 because item 30's Make card is the better way to drive it.
+5. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
    all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
    inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing
    lifetime, undercut churn), which are arithmetic over data the addon already holds. **C** (price
@@ -3288,21 +3424,19 @@ use, followed by the one diagnostic that could change the value of everything be
    `{ t, low }` on each watched item's existing `obs` record, not a retrofit of the mean database,
    which sorts by price and evicts at random. The item carries the owner's worked example, the
    storage limits of keeping history for everything, and why the obvious shortcut fails.
-4. **Item 29's stages 3 and 4** — the plan (tick recipes, name a batch, get a bill) and the
-   plain-English verdicts. The reform proper, and it wants stages 1 and 2 under it first.
-5. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+6. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
-6. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+7. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
    all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
    data has never been seen.
-7. **Item 12's sizing question** — how many names on this server carry more than one variant.
+8. **Item 12's sizing question** — how many names on this server carry more than one variant.
    Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
    only whether extending part 3 is worth it, not what shape it would take.
-8. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+9. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
    purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
    comparison against a real mismatched pair, never an imagined one.
-9. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+10. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
    price. The craft cost reproduces exactly from real data, so this is an auction-house question
    rather than an addon one, and there may be no work here at all.
 
@@ -3409,10 +3543,13 @@ to become visible.
 - **Item 9:** parked by the owner until item 7 lands.
 - **Item 29:** where the folding threshold actually sits. ~2% of the bill is a guess that reads
   well against one screenshot and wants a few sessions of real bills before it is fixed in code —
-  and it must stay a share rather than a copper figure, for the reason the item gives. Also open:
-  whether the plan is driven by tick boxes or by a gold budget. The item recommends tick boxes
-  first because they need no allocation logic; the budget is the version an ordinary player would
-  actually use.
+  and it must stay a share rather than a copper figure, for the reason the item gives. (The
+  "tick boxes or a gold budget" question left with the driver for item 30, 2026-08-20.)
+- **Item 30:** whether a card can be dismissed — the only thing on that tab that would need
+  storage of its own, since everything else is computed on show from tables that already exist.
+  And where the thresholds sit: what margin earns a Make card, what share earns a Buy card, how
+  many days stale is stale. All want real sessions rather than guesses, which is the same call
+  item 29's folding threshold is waiting on, and they should be made together.
 - **Item 28:** whether Ascension's Call Board is a standard quest giver — in which case the
   standard quest APIs read it and the whole item is cheap — or a custom frame, in which case they
   return nothing and it is dead in that form. **This is the gate on the item and nothing offline
