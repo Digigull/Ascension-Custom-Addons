@@ -955,6 +955,7 @@ function Atr_Init()
 	recommendElements[5] = _G["Atr_RecommendPerStack_Price"];
 	recommendElements[6] = _G["Atr_Recommend_Basis_Text"];
 	recommendElements[7] = _G["Atr_RecommendItem_Tex"];
+	recommendElements[8] = _G["Atr_An_BuyWatchButton"];		-- ANALYSIS_TAB: created by Atr_An_Init, just above
 
 	-- create the lines that appear in the item history scroll pane
 
@@ -3824,6 +3825,7 @@ function Atr_UpdateRecommendation (updatePrices)
 	local new_Item_StartPrice = Atr_CalcStartPrice (new_Item_BuyoutPrice);
 
 	Atr_ShowElems (recommendElements);
+	if (Atr_An_UpdateBuyButton) then Atr_An_UpdateBuyButton(); end		-- ANALYSIS_TAB: strip is shown on SELL too; Buy tab only
 	AuctionatorMessageFrame:Hide();
 	AuctionatorMessage2Frame:Hide();
 

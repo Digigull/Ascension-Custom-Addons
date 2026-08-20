@@ -387,9 +387,11 @@ local AN_COLS = {
 	{ key = "grp",		head = "Group",		x = 194, w = 74						},
 	{ key = "sellers",	head = "Sellers",	x = 272, w = 48,  just = "CENTER"	},
 	{ key = "listings",	head = "Listings",	x = 324, w = 54,  just = "CENTER"	},
-	{ key = "rate",		head = "Sold/day",	x = 382, w = 68,  just = "CENTER"	},
+	{ key = "rate",		head = "Sold/day",	x = 382, w = 68,  just = "CENTER",
+	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count." },
 	{ key = "low",		head = "Low",		x = 454, w = 84,  just = "RIGHT"	},
-	{ key = "farm",		head = "Gold/day",	x = 542, w = 88,  just = "RIGHT"	},
+	{ key = "farm",		head = "Gold/day",	x = 542, w = 88,  just = "RIGHT",
+	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise." },
 };
 
 local gAn_Group = nil;		-- nil = every group
@@ -527,6 +529,278 @@ local function An_GroupDD_Init ()
 		info.func		= function () gAn_Group = g; UIDropDownMenu_SetText (Atr_An_GroupDD, g); Atr_An_Redisplay(); CloseDropDownMenus(); end;
 		info.checked	= (gAn_Group == g);
 		UIDropDownMenu_AddButton (info);
+	end
+end
+
+-- ADDING FROM ELSEWHERE ---------------------------------------------------
+--
+-- BACKLOG item 18.  The watchlist was only reachable from this tab -- an edit box
+-- you type a name into.  But the two places you actually decide an item is worth
+-- watching are the Finder (you just found it) and the Buy tab (you are looking at
+-- its market), and in both of those the item is already in your hand.
+--
+-- One menu serves both.  It is built here rather than in either caller because
+-- the groups live here; the shopping-list branch calls into AuctionatorShop.lua
+-- by name, guarded, so the two features stay independent -- the Buy tab's button
+-- asks for the group half only.
+
+local gAnMenu_Item		= nil;		-- what the open menu is about
+local gAnMenu_Shop		= false;	-- offer the shopping-list branch
+local gAnMenu_Frame		= nil;
+local gAn_PendingItem	= nil;		-- survives the menu closing, for a popup
+
+-- Watch an item, optionally filing it in a group.  Choosing a group for an item
+-- that is ALREADY watched moves it (Atr_An_Watch updates the group and reports
+-- that it added nothing), which is the behaviour a user expects from picking a
+-- group off a menu.
+function Atr_An_AddToGroup (itemName, group)
+
+	if (itemName == nil or itemName == "") then return false; end
+
+	if (group) then Atr_An_AddGroup (group); end
+
+	local added = Atr_An_Watch (itemName, group);
+
+	if (zc and zc.msg_atr) then
+		if (added and group) then
+			zc.msg_atr (string.format (AZT("Analysis: watching %s in %s"), itemName, group));
+		elseif (added) then
+			zc.msg_atr (string.format (AZT("Analysis: watching %s"), itemName));
+		elseif (group) then
+			zc.msg_atr (string.format (AZT("Analysis: moved %s to %s"), itemName, group));
+		else
+			zc.msg_atr (string.format (AZT("Analysis: already watching %s"), itemName));
+		end
+	end
+
+	Atr_An_Redisplay ();
+	return true;
+end
+
+local function An_AddToShoppingList (listIndex, listName)
+
+	if (type (Atr_Shop_AddNameToList) ~= "function") then return; end
+
+	local ok, why = Atr_Shop_AddNameToList (listIndex, gAnMenu_Item);
+
+	if (zc and zc.msg_atr) then
+		if (ok) then
+			zc.msg_atr (string.format (AZT("Added %s to %s"), tostring (gAnMenu_Item), tostring (listName)));
+		elseif (why == "already") then
+			zc.msg_atr (string.format (AZT("%s is already on %s"), tostring (gAnMenu_Item), tostring (listName)));
+		elseif (why == "full") then
+			zc.msg_atr (string.format (AZT("%s is full (50 items)"), tostring (listName)));
+		end
+	end
+end
+
+local function An_Menu_Groups (level)
+
+	local db = Atr_An_DB ();
+	local info, i;
+
+	info = UIDropDownMenu_CreateInfo();
+	info.text			= AZT("(no group)");
+	info.notCheckable	= true;
+	info.func			= function () Atr_An_AddToGroup (gAnMenu_Item, nil); CloseDropDownMenus(); end;
+	UIDropDownMenu_AddButton (info, level);
+
+	for i = 1, #db.groups do
+		local g = db.groups[i];
+		info = UIDropDownMenu_CreateInfo();
+		info.text			= g;
+		info.notCheckable	= true;
+		info.func			= function () Atr_An_AddToGroup (gAnMenu_Item, g); CloseDropDownMenus(); end;
+		UIDropDownMenu_AddButton (info, level);
+	end
+
+	info = UIDropDownMenu_CreateInfo();
+	info.text			= AZT("New group...");
+	info.notCheckable	= true;
+	info.func			= function ()
+		gAn_PendingItem = gAnMenu_Item;
+		CloseDropDownMenus();
+		if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_GROUP"); end
+	end;
+	UIDropDownMenu_AddButton (info, level);
+end
+
+local function An_Menu_Lists (level)
+
+	local lists = (type (Atr_Shop_UserLists) == "function") and Atr_Shop_UserLists() or {};
+	local info, i;
+
+	for i = 1, #lists do
+		local L = lists[i];
+		info = UIDropDownMenu_CreateInfo();
+		info.text			= L.name;
+		info.notCheckable	= true;
+		info.func			= function () An_AddToShoppingList (L.index, L.name); CloseDropDownMenus(); end;
+		UIDropDownMenu_AddButton (info, level);
+	end
+
+	-- "Recent Searches" is not offered above: it is a rolling log this addon
+	-- rewrites, so filing anything there would not survive.  With no other list
+	-- the branch would be empty, hence both this line and New list...
+	if (#lists == 0) then
+		info = UIDropDownMenu_CreateInfo();
+		info.text			= AZT("no lists yet");
+		info.notCheckable	= true;
+		info.disabled		= true;
+		UIDropDownMenu_AddButton (info, level);
+	end
+
+	info = UIDropDownMenu_CreateInfo();
+	info.text			= AZT("New list...");
+	info.notCheckable	= true;
+	info.func			= function ()
+		gAn_PendingItem = gAnMenu_Item;
+		CloseDropDownMenus();
+		if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_SLIST"); end
+	end;
+	UIDropDownMenu_AddButton (info, level);
+end
+
+local function An_Menu_Init (self, level)
+
+	level = level or 1;
+
+	local info;
+
+	if (level == 1) then
+
+		info = UIDropDownMenu_CreateInfo();
+		info.text			= gAnMenu_Item or "";
+		info.isTitle		= true;
+		info.notCheckable	= true;
+		UIDropDownMenu_AddButton (info, level);
+
+		if (gAnMenu_Shop) then
+			info = UIDropDownMenu_CreateInfo();
+			info.text			= AZT("Add to shopping list");
+			info.notCheckable	= true;
+			info.hasArrow		= true;
+			info.value			= "SLIST";
+			UIDropDownMenu_AddButton (info, level);
+		end
+
+		info = UIDropDownMenu_CreateInfo();
+		info.text			= AZT("Add to Analysis group");
+		info.notCheckable	= true;
+		info.hasArrow		= true;
+		info.value			= "GROUP";
+		UIDropDownMenu_AddButton (info, level);
+
+	elseif (level == 2) then
+
+		if (UIDROPDOWNMENU_MENU_VALUE == "SLIST") then
+			An_Menu_Lists (level);
+		elseif (UIDROPDOWNMENU_MENU_VALUE == "GROUP") then
+			An_Menu_Groups (level);
+		end
+	end
+end
+
+-- `anchor` is a frame, or "cursor" for a right-click.  Returns false when the
+-- dropdown API is not there to drive, so a caller can fall back rather than error.
+function Atr_An_ShowItemMenu (anchor, itemName, withShoppingList)
+
+	if (itemName == nil or itemName == "") then return false; end
+	if (type (UIDropDownMenu_Initialize) ~= "function" or type (ToggleDropDownMenu) ~= "function") then return false; end
+	if (type (CreateFrame) ~= "function") then return false; end
+
+	gAnMenu_Item = itemName;
+	gAnMenu_Shop = (withShoppingList == true);
+
+	if (gAnMenu_Frame == nil) then
+		gAnMenu_Frame = CreateFrame ("Frame", "Atr_An_ItemMenu", UIParent, "UIDropDownMenuTemplate");
+	end
+
+	UIDropDownMenu_Initialize (gAnMenu_Frame, An_Menu_Init, "MENU");
+	ToggleDropDownMenu (1, nil, gAnMenu_Frame, anchor or "cursor", 0, 0);
+
+	return true;
+end
+
+if (StaticPopupDialogs) then
+
+	StaticPopupDialogs["ATR_AN_NEW_GROUP"] = {
+		text			= AZT("Name for the new Analysis group"),
+		button1			= ACCEPT,
+		button2			= CANCEL,
+		hasEditBox		= 1,
+		maxLetters		= 32,
+		OnAccept		= function (self)
+			local g = self.editBox:GetText();
+			if (g and g ~= "" and gAn_PendingItem) then Atr_An_AddToGroup (gAn_PendingItem, g); end
+			gAn_PendingItem = nil;
+		end,
+		EditBoxOnEnterPressed = function (self)
+			local g = self:GetParent().editBox:GetText();
+			if (g and g ~= "" and gAn_PendingItem) then Atr_An_AddToGroup (gAn_PendingItem, g); end
+			gAn_PendingItem = nil;
+			self:GetParent():Hide();
+		end,
+		OnShow			= function (self) self.editBox:SetText(""); self.editBox:SetFocus(); end,
+		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
+	};
+
+	StaticPopupDialogs["ATR_AN_NEW_SLIST"] = {
+		text			= AZT("Name for the new shopping list"),
+		button1			= ACCEPT,
+		button2			= CANCEL,
+		hasEditBox		= 1,
+		maxLetters		= 32,
+		OnAccept		= function (self)
+			local n = self.editBox:GetText();
+			if (n and n ~= "" and gAn_PendingItem and type (Atr_Shop_CreateListWithItem) == "function") then
+				Atr_Shop_CreateListWithItem (n, gAn_PendingItem);
+			end
+			gAn_PendingItem = nil;
+		end,
+		EditBoxOnEnterPressed = function (self)
+			local n = self:GetParent().editBox:GetText();
+			if (n and n ~= "" and gAn_PendingItem and type (Atr_Shop_CreateListWithItem) == "function") then
+				Atr_Shop_CreateListWithItem (n, gAn_PendingItem);
+			end
+			gAn_PendingItem = nil;
+			self:GetParent():Hide();
+		end,
+		OnShow			= function (self) self.editBox:SetText(""); self.editBox:SetFocus(); end,
+		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
+	};
+end
+
+-- THE BUY TAB'S WAY IN ----------------------------------------------------
+--
+-- The item the Buy tab is showing, or nil.  gCurrentPane is a file-local in
+-- Auctionator.lua; Atr_GetCurrentPane exists precisely so other modules can ask.
+function Atr_An_BuyItemName ()
+
+	if (type (Atr_GetCurrentPane) ~= "function") then return nil; end
+
+	local pane = Atr_GetCurrentPane ();
+	local scn  = pane and pane.activeScan;
+	local nm   = scn and scn.itemName;
+
+	if (nm == nil or nm == "") then return nil; end
+
+	return nm;
+end
+
+-- The button lives under the recommend icon and travels with the rest of that
+-- strip (it is in recommendElements), so it hides wherever they hide.  What that
+-- cannot express is "Buy tab only" -- the strip is shown on SELL as well -- so
+-- this runs straight after the strip is shown and takes it back.
+function Atr_An_UpdateBuyButton ()
+
+	local b = Atr_An_BuyWatchButton;
+	if (b == nil) then return; end
+
+	if (type (Atr_IsModeBuy) == "function" and Atr_IsModeBuy() and Atr_An_BuyItemName ()) then
+		b:Show();
+	else
+		b:Hide();
 	end
 end
 
@@ -763,11 +1037,32 @@ function Atr_An_Init ()
 	-- headers: same x, width and justification as the cells beneath them
 	local c;
 	for _, c in ipairs (AN_COLS) do
+
 		local fs = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
 		fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.x, -74);
 		fs:SetWidth (c.w);
 		fs:SetJustifyH (c.just or "LEFT");
 		fs:SetText (AZT (c.head));
+
+		-- A FontString cannot take scripts, so a column with something to explain
+		-- gets an invisible hit frame over its header.  It stops above the scroll
+		-- frame (-92) so it cannot eat a click meant for a row.
+		if (c.tip) then
+			local col = c;
+			local hit = CreateFrame ("Frame", nil, panel);
+			hit:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.x, -72);
+			hit:SetSize (col.w, 16);
+			hit:EnableMouse (true);
+			hit:SetScript ("OnEnter", function (self)
+				if (GameTooltip) then
+					GameTooltip:SetOwner (self, "ANCHOR_BOTTOMRIGHT");
+					GameTooltip:SetText (AZT (col.head), 1, 1, 1);
+					GameTooltip:AddLine (AZT (col.tip), 0.8, 0.8, 0.8, true);
+					GameTooltip:Show();
+				end
+			end);
+			hit:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+		end
 	end
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
@@ -852,6 +1147,39 @@ function Atr_An_Init ()
 	progress:SetPoint ("RIGHT", refresh, "LEFT", -8, 0);
 	progress:SetJustifyH ("RIGHT");
 	progress:SetText ("");
+
+	-- BUY TAB (BACKLOG item 18): a Watch button under the item's icon.  It is
+	-- built here, with the rest of the analysis UI, but it belongs to the SHARED
+	-- main panel -- so it is parented to the icon's own parent and anchored to the
+	-- icon, which keeps it correct if that strip is ever moved.  The band below
+	-- the icon is empty: the recommend text and prices all sit at x >= 109, and
+	-- the auction list starts at y -213.
+	local icon = _G["Atr_RecommendItem_Tex"];
+	if (icon and icon.GetParent) then
+
+		local watch = CreateFrame ("Button", "Atr_An_BuyWatchButton", icon:GetParent(), "UIPanelButtonTemplate");
+		watch:SetSize (58, 18);
+		watch:SetPoint ("TOPLEFT", icon, "BOTTOMLEFT", -2, -6);
+		watch:SetText (AZT("Watch"));
+		watch:SetNormalFontObject ("GameFontNormalSmall");
+		watch:SetHighlightFontObject ("GameFontHighlightSmall");
+		watch:Hide();
+
+		watch:SetScript ("OnClick", function (self)
+			local nm = Atr_An_BuyItemName ();
+			if (nm) then Atr_An_ShowItemMenu (self, nm, false); end
+		end);
+
+		watch:SetScript ("OnEnter", function (self)
+			if (GameTooltip) then
+				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+				GameTooltip:SetText (AZT("Watch on the Analysis tab"), 1, 1, 1);
+				GameTooltip:AddLine (AZT("Adds this item to an Analysis group, so searches start counting what sells."), 0.8, 0.8, 0.8, true);
+				GameTooltip:Show();
+			end
+		end);
+		watch:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+	end
 end
 
 if (SlashCmdList) then
