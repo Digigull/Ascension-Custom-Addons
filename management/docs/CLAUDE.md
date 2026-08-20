@@ -69,6 +69,22 @@ a per-addon doc; link it from the table below in one line rather than summarisin
     so it stays fixed.
   - **An in-game debug command is the last resort, not the first.** Add one only when no
     offline route can answer the question, and say at the call site why that is.
+  - **When you do add one, its output MUST go into a copy/paste window — never chat.**
+    `zc.msg_atr`, `print` and `DEFAULT_CHAT_FRAME:AddMessage` are all dead ends here: **chat text
+    cannot be selected on this client**, so anything printed there can only come back as a
+    screenshot, and a screenshot of forty numbers is not evidence anybody can work from. A
+    diagnostic whose output cannot be pasted back has not been delivered.
+
+    The window is the one in the strata table below: `FULLSCREEN_DIALOG`, a dark backdrop, a
+    multi-line `EditBox` in a `UIPanelScrollFrameTemplate`, `SetAutoFocus(false)`, and on show
+    `SetText` → `HighlightText()` → `SetCursorPosition(0)` → `SetFocus()`, so the text arrives
+    already selected and **Ctrl+C** works immediately. Title the window with that instruction.
+    Working implementation to copy: `PassLootBiS_Scanner/Core/Scanner.lua`'s `/plbisscan debug`
+    box (`PLBiSScannerDebugBox`), and `Atr_An_ShowDebugBox` in
+    `Auctionator-Finder-Ascension/AuctionatorAnalysis.lua`.
+
+    This applies to every addon here and to one-off diagnostics as much as to permanent ones —
+    a throwaway that prints to chat is exactly the case where the output was needed most.
   - Match verification effort to the size of the change. A fixed ritual per edit — dozens of
     checks for a small update — is the failure mode to avoid, in both directions.
 - **Do not re-raise the owner's parked in-game checks.** Where a doc lists something as

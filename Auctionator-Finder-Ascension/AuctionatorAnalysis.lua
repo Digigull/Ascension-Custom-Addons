@@ -674,6 +674,82 @@ function Atr_An_MenuEntries (itemName, mode)
 	return out;
 end
 
+-- A DEBUG BOX YOU CAN ACTUALLY COPY OUT OF ---------------------------------
+--
+-- Chat text cannot be selected on this client, so a diagnostic printed there can
+-- only come back as a screenshot -- which is no use for forty numbers, and is
+-- exactly what happened with the first version of /atranalysis diag.  Repo rule
+-- now (management/docs/CLAUDE.md): in-game debug output goes in a window like
+-- this one.  Same shape as PassLootBiS_Scanner's /plbisscan debug box, which is
+-- where this was learned first.
+--
+-- FULLSCREEN_DIALOG for the reason the strata table gives for copy/paste boxes:
+-- you opened it deliberately to read and select text out of, so it must clear
+-- whatever is underneath.  Never toplevel -- DRAG-FREEZE.md.
+local gAnDebugBox = nil;
+
+function Atr_An_ShowDebugBox (title, text)
+
+	if (type (CreateFrame) ~= "function") then return false; end
+
+	if (gAnDebugBox == nil) then
+
+		local f = CreateFrame ("Frame", "Atr_An_DebugBox", UIParent);
+		f:SetWidth (560);
+		f:SetHeight (420);
+		f:SetPoint ("CENTER");
+		f:SetFrameStrata ("FULLSCREEN_DIALOG");
+		f:EnableMouse (true);
+		f:SetMovable (true);
+		f:RegisterForDrag ("LeftButton");
+		f:SetScript ("OnDragStart", function (self) self:StartMoving(); end);
+		f:SetScript ("OnDragStop", function (self) self:StopMovingOrSizing(); end);
+
+		if (f.SetBackdrop) then
+			f:SetBackdrop ({
+				bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+				edgeFile = "Interface\\Buttons\\WHITE8X8",
+				edgeSize = 1,
+				insets   = { left = 1, right = 1, top = 1, bottom = 1 },
+			});
+			f:SetBackdropColor (0.05, 0.05, 0.07, 0.95);
+			f:SetBackdropBorderColor (0.30, 0.30, 0.34, 1);
+		end
+
+		f.title = f:CreateFontString (nil, "OVERLAY", "GameFontNormal");
+		f.title:SetPoint ("TOP", 0, -14);
+
+		local close = CreateFrame ("Button", nil, f, "UIPanelCloseButton");
+		close:SetPoint ("TOPRIGHT", -6, -6);
+
+		local scroll = CreateFrame ("ScrollFrame", "Atr_An_DebugBoxScroll", f, "UIPanelScrollFrameTemplate");
+		scroll:SetPoint ("TOPLEFT", 16, -44);
+		scroll:SetPoint ("BOTTOMRIGHT", -34, 16);
+
+		local eb = CreateFrame ("EditBox", "Atr_An_DebugBoxEdit", scroll);
+		eb:SetMultiLine (true);
+		eb:SetAutoFocus (false);
+		eb:SetFontObject (ChatFontNormal);
+		eb:SetWidth (500);
+		eb:SetScript ("OnEscapePressed", function (self) self:ClearFocus(); end);
+		scroll:SetScrollChild (eb);
+
+		f.eb = eb;
+		gAnDebugBox = f;
+	end
+
+	gAnDebugBox.title:SetText (tostring (title or AZT("Auctionator debug")));
+
+	-- arrives already selected, so Ctrl+C is the only key needed
+	gAnDebugBox.eb:SetText (tostring (text or ""));
+	gAnDebugBox.eb:HighlightText ();
+	gAnDebugBox.eb:SetCursorPosition (0);
+	gAnDebugBox:Show ();
+	gAnDebugBox.eb:SetFocus ();
+
+	return true;
+end
+
 -- THE FRAME ---------------------------------------------------------------
 
 function Atr_An_HideItemMenu ()
@@ -1365,7 +1441,8 @@ if (SlashCmdList) then
 			-- menu drawing somewhere invisible -- produces exactly the same report
 			-- from outside the client.  This prints the three facts that separate
 			-- them, in one command, instead of another round trip per guess.
-			local function say (t) if (zc and zc.msg_atr) then zc.msg_atr (t); end end
+			local out = {};
+			local function say (t) tinsert (out, tostring (t)); end
 
 			local function frameLine (label, f)
 				if (f == nil) then say (label..": MISSING"); return; end
@@ -1395,6 +1472,9 @@ if (SlashCmdList) then
 				local mf = GetMouseFocus();
 				say ("mouse is over: "..tostring (mf and mf.GetName and mf:GetName() or mf));
 			end
+
+			-- into a window, not chat: the whole point is that this comes BACK
+			Atr_An_ShowDebugBox (AZT("Auctionator diag -- Ctrl+C to copy"), table.concat (out, "\n"));
 
 		elseif (cmd == "menu") then
 			-- DIAGNOSTIC, and the reason it exists is worth stating: the Buy tab's

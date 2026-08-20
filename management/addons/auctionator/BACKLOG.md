@@ -2271,7 +2271,7 @@ this repo cannot see.
 
 ---
 
-## 22. The dead Buy-tab buttons — stop guessing, measure — IN PROGRESS
+## 22. The dead Buy-tab buttons — a frame level, all along — DONE
 
 **Reported 2026-08-20, third time.** Item 21 replaced the Blizzard dropdown with our own frame and
 the buttons still do nothing. The owner's question — *could they be drawing behind the AH UI?* — is
@@ -2322,11 +2322,41 @@ nothing if it was never the problem.
 not, the diag output says which of the three rows it is, and the next change is aimed rather than
 guessed.
 
+### It was the frame level
+
+**Confirmed in game 2026-08-20:** the buttons work. The diagnostic never had to be read — the
+candidate fix shipped beside it was the answer, which is the top row of the table: **the click was
+never reaching the button.** Something else in `Atr_Main_Panel` shares its strata at a higher frame
+level and was taking the mouse first. The buttons were drawn (that is why they were visible and
+looked fine) but were not the frame under the cursor.
+
+Worth naming plainly, because three fixes were aimed at the wrong half of the problem: **items 20
+and 21 were both fixing the menu, and the menu was never broken.** The evidence available at the
+time — a button that renders correctly and does nothing — reads as "the thing the click opens is
+broken", and it was not. Nothing in the menu code needed to change; the two rewrites were paid for
+the lesson only.
+
+That said, item 21's rewrite is kept and is not wasted: the dropdown's four shared globals really
+were an untestable dependency, and the menu that replaced it has its contents under offline test.
+
+### The rule this produced
+
+The first `/atranalysis diag` printed to chat, and **chat cannot be selected on this client** — so
+its output could only have come back as a screenshot. That is now a repo-wide rule in
+`management/docs/CLAUDE.md`: in-game debug output goes into a copy/paste window, never chat.
+`Atr_An_ShowDebugBox` in `AuctionatorAnalysis.lua` is this addon's implementation (the pattern
+comes from `PassLootBiS_Scanner`'s `/plbisscan debug` box, which had already learned it), and
+`/atranalysis diag` now uses it: `FULLSCREEN_DIALOG`, dark backdrop, multi-line `EditBox`, text
+pre-selected so **Ctrl+C** is the only key needed.
+
+The diag stays. It cost nothing to keep, the next unexplained UI failure gets it for free, and it
+is now in a form whose output can actually be pasted back.
+
 ---
 
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20 and 21 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20, 21 and 22 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
