@@ -441,25 +441,37 @@ function Atr_An_Stats (itemName)
 		perDayMax = ((o.sold or 0) + (o.amb or 0)) / days;
 	end
 
+	-- What the table SHOWS is the midpoint of those two (owner's call, 2026-08).
+	-- Both bounds are still returned, because the pair is what the midpoint means.
+	--
+	-- The low end counts only listings that provably could not have expired; the
+	-- high end also counts the ambiguous ones.  How far apart they sit is decided
+	-- by YOUR SCAN CADENCE, not by the market: a listing on Very Long is only a
+	-- certain sale if you look again within 12 hours, and one on Long within 2.
+	-- Scan twice a day and almost everything is ambiguous; scan every couple of
+	-- hours -- which is what the owner described wanting -- and the two collapse
+	-- onto the same number, which is when the average IS the count.
+	--
+	-- Printing the range was the honest shape of that evidence, and it was also
+	-- two numbers where reading down a column wants one: "0.4-11.2" is not a
+	-- figure you compare at a glance.  Showing only the low end would read as
+	-- "nothing sells here" for anyone who scans slowly, which is a statement about
+	-- them and not about the item.  The midpoint splits that difference and keeps
+	-- the column one number wide; the header tooltip says what it is a midpoint of.
+	local perDayAvg = nil;
+	if (perDay) then perDayAvg = (perDay + perDayMax) / 2; end
+
 	-- Farm score: gold per day this item would have returned at its current
 	-- lowest price, IF you had supplied the sales we can attribute.  A rate, not
 	-- a promise.
 	--
-	-- Reported as a RANGE, and that is not hedging -- it is the honest shape of
-	-- the evidence.  The low end counts only listings that provably could not
-	-- have expired; the high end also counts the ambiguous ones.  How far apart
-	-- they sit is decided by YOUR SCAN CADENCE, not by the market: a listing on
-	-- Very Long is only a certain sale if you look again within 12 hours, and one
-	-- on Long within 2.  Scan twice a day and almost everything is ambiguous;
-	-- scan every couple of hours -- which is what the owner described wanting --
-	-- and the range collapses onto the real number.
-	--
-	-- Showing only the low end would read as "nothing sells here" for anyone who
-	-- scans slowly, which is a statement about them and not about the item.
-	local farm, farmMax = nil, nil;
+	-- The same three numbers as above, for the same reasons: the table shows
+	-- farmAvg, and the two bounds are kept because they are what it averages.
+	local farm, farmMax, farmAvg = nil, nil, nil;
 	if (perDay and o.low) then
 		farm    = perDay * o.low;
 		farmMax = perDayMax * o.low;
+		farmAvg = perDayAvg * o.low;
 	end
 
 	return {
@@ -472,8 +484,10 @@ function Atr_An_Stats (itemName)
 		amb			= o.amb or 0,
 		perDay		= perDay,
 		perDayMax	= perDayMax,
+		perDayAvg	= perDayAvg,		-- the midpoint: what the Sold/day column shows
 		farm		= farm,
 		farmMax		= farmMax,
+		farmAvg		= farmAvg,			-- ditto, for Gold/day
 		topShare	= o.topShare or 0,
 		secs		= o.secs or 0,
 		scans		= o.scans or 0,
@@ -621,9 +635,10 @@ local AN_ROW_W    = 660;		-- a placeholder: Atr_An_Init recomputes it from the r
 -- third of the tab sat empty while the two money columns were squeezed hard
 -- enough to wrap onto two lines.  Nothing here may assume a window width.
 --
--- Sold/day and Gold/day are the greedy ones because they are the two that can
--- print a RANGE -- "279g 10s-310g 28s" is twice the width of the value beside
--- it, and a cell that overflows wraps onto a second line rather than clipping.
+-- Gold/day is the greedy one: a money value carries a coin icon per unit, so
+-- "279g 10s" is the widest thing in a row, and a cell that overflows wraps onto
+-- a second line rather than clipping.  Sold/day was greedy too while it printed
+-- a RANGE; an average is one short number, so it hands that width back.
 --
 -- A header is the same cx shifted by the scroll frame's own inset (AN_HEAD_X0).
 local AN_HEAD_X0  = 14;
@@ -640,14 +655,25 @@ local AN_PLAN_LANE = 24;	-- the crafting view's plan tick, at the START of a row
 -- nothing, it has told us nothing, and ranking it as the worst row would be a
 -- statement about the market that the data does not support.
 --
--- Sold/day and Gold/day sort on the UPPER bound of their range for the reason
--- the original ranking did: for anyone scanning slowly the lower bound is zero
--- on almost every item, and a ranking where everything ties is no ranking.
+-- Sold/day and Gold/day sort on the same average they print.  Ranking on a
+-- number the row does not show is its own bug report -- "why is that row above
+-- this one" -- so the two moved together when the cells became averages.  The
+-- average ranks for the reason the upper bound used to: for anyone scanning
+-- slowly the lower bound is zero on almost every item, and a ranking where
+-- everything ties is no ranking.
 -- WIDTHS PAID FOR THE WEEK COLUMN (item 31 stage 3), the same way the Reagents
 -- view paid for Outlay: Item 184->176, Group 74->60, Sellers 48->44, Listings
 -- 54->48, Sold/day 80->74, Low 84->78, Gold/day 96->88.  Eight columns is 624 of
 -- minimum plus 28 of gap plus AN_LEAD and AN_DEL_LANE = 684, which clears the
 -- 702px row Blizzard's 768 auction house gives by 18.
+--
+-- Sold/day gave back a point of `grow` when it stopped printing a range, but NOT
+-- its minimum width: what sets that floor is not the number, it is the words
+-- "not scanned" printed in the same cell, and they are as long as they ever were.
+--
+-- ORDER: Sold/day sits immediately left of Gold/day (owner's call, 2026-08).
+-- One is the other multiplied by Low, so reading them side by side is reading
+-- the estimate and its arithmetic together; they were three columns apart.
 local AN_COLS = {
 	{ key = "item",		head = "Item",		w = 176, grow = 3,					text = true,
 	  val = function (r) return string.lower (r.name or ""); end },
@@ -657,9 +683,6 @@ local AN_COLS = {
 	  val = function (r) return r.st and r.st.scans > 0 and r.st.sellers or nil; end },
 	{ key = "listings",	head = "Listings",	w = 48,  grow = 0, just = "CENTER",
 	  val = function (r) return r.st and r.st.scans > 0 and r.st.listings or nil; end },
-	{ key = "rate",		head = "Sold/day",	w = 74,  grow = 2, just = "CENTER",
-	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count.",
-	  val = function (r) return r.st and r.st.perDay and r.st.perDayMax or nil; end },
 	{ key = "low",		head = "Low",		w = 78,  grow = 1, just = "RIGHT",
 	  -- the scans guard matches the cell: an unscanned row prints "--" here, and
 	  -- what prints "--" sorts as unknown
@@ -669,9 +692,12 @@ local AN_COLS = {
 	  -- the ratio, not the printed percent, so two rows rounding to the same
 	  -- whole number are still in a real order
 	  val = function (r) return r.wow and r.wow.pct or nil; end },
+	{ key = "rate",		head = "Sold/day",	w = 74,  grow = 1, just = "CENTER",
+	  tip = "An estimate, and an average of two: listings that vanished between two scans and provably could not have expired are certain sales, the rest might have expired instead, and this is the midpoint. Scan more often and the two converge on the real count.",
+	  val = function (r) return r.st and r.st.perDayAvg or nil; end },
 	{ key = "farm",		head = "Gold/day",	w = 88,  grow = 3, just = "RIGHT",
-	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise.",
-	  val = function (r) return r.st and r.st.farmMax or nil; end },
+	  tip = "An estimate: Sold/day -- the average, the same one the column beside this shows -- valued at the current lowest price. A rate, not a promise.",
+	  val = function (r) return r.st and r.st.farmAvg or nil; end },
 };
 
 -- THE SECOND VIEW (BACKLOG item 8, group D): the same table, over the Ledger.
@@ -2751,24 +2777,23 @@ function Atr_An_Redisplay ()
 					line.sellers:SetText (sc..st.sellers.."|r");
 					line.listings:SetText (tostring (st.listings));
 
-					if (st.perDay == nil) then
+					-- the average of the certain and the ambiguous count, not a
+					-- range: one number is what reading down a column wants, and
+					-- the header tooltip says what it is an average of
+					if (st.perDayAvg == nil) then
 						line.rate:SetText ("|cff666666"..AZT("one scan").."|r");
-					elseif (st.perDayMax > st.perDay + 0.05) then
-						line.rate:SetText (string.format ("%.1f|cff888888-%.1f|r", st.perDay, st.perDayMax));
 					else
-						line.rate:SetText (string.format ("%.1f", st.perDay));
+						line.rate:SetText (string.format ("%.1f", st.perDayAvg));
 					end
 
 					line.low:SetText (An_Money (st.low));
 
 					line.week:SetText (An_WeekDelta (r));
 
-					if (st.farm == nil) then
+					if (st.farmAvg == nil) then
 						line.farm:SetText ("|cff666666--|r");
-					elseif (st.farmMax > st.farm * 1.05) then
-						line.farm:SetText (An_Money (math.floor (st.farm)).."|cff888888-|r"..An_Money (math.floor (st.farmMax)));
 					else
-						line.farm:SetText (An_Money (math.floor (st.farm)));
+						line.farm:SetText (An_Money (math.floor (st.farmAvg)));
 					end
 				end
 

@@ -2324,6 +2324,9 @@ frame at -92 so it cannot swallow a click meant for a row.
   a floor, not an exact count.*
 - **Gold/day** — *An estimate: Sold/day valued at the current lowest price. A rate, not a promise.*
 
+**Both were rewritten by item 33**, which turned the two cells from ranges into averages: a
+tooltip whose job is to say what a number means has to change when the number does.
+
 ### The right-click menu — which is also a bug fix
 
 Finder rows have always called `RegisterForClicks ("LeftButtonUp", "RightButtonUp")`, and
@@ -3864,6 +3867,53 @@ agree, the old store is redundant rather than wrong, which is the safe case for 
 disagreement means one of them is wrong, and that has to be understood rather than deleted past.
 
 **Should not start** until the history has a month of real data behind it.
+
+---
+
+## 33. Analysis tab — Sold/day and Gold/day read as averages, and sit together — DONE
+
+**Asked 2026-08-20:** make the two rate columns **averages instead of ranges**, and move
+**Sold/day** to sit immediately left of **Gold/day**.
+
+### The average
+
+Both cells printed a range — `0.4-11.2`, `41g 3s-279g 10s` — whose ends are the two readings
+`Atr_An_Stats` has always computed: `perDay` counts only listings that vanished between two scans
+and provably could not have expired, `perDayMax` also counts the ambiguous ones, and `farm`/
+`farmMax` are those two valued at the item's lowest price. The gap between them is a fact about
+**your scan cadence**, not about the market (item 17 and the comment in `Atr_An_Stats` carry that
+reasoning, and it still holds — nothing about the evidence changed here).
+
+What changed is what the column *prints*. A range is two numbers where reading down a column wants
+one, and the low end alone would read as "nothing sells here" to anyone who scans slowly. The
+midpoint — `perDayAvg`, `farmAvg`, both added to the `Atr_An_Stats` return beside the bounds they
+average — splits that difference at one number wide. The bounds are still returned, because the
+pair is what the midpoint *means*, and the header tooltips now say so.
+
+**The sort moved with the cells.** Both columns sorted on their **upper** bound, which was right
+while the cell showed that bound; ranking on a number the row does not display is its own bug
+report. `val` on both is now the same average the cell prints.
+
+The two dead branches went with it: no `perDayMax > perDay + 0.05` test, no `farmMax > farm * 1.05`
+test, no grey `-` glue between two `An_Money` calls. `--` and *"one scan"* are unchanged — an
+unscanned row still says so rather than showing a zero.
+
+### The order
+
+`Sold/day` was column 5 of 8 with `Low` and `Week` between it and `Gold/day`; it is now column 7,
+immediately left of it. One is the other multiplied by `Low`, so side by side the estimate and its
+arithmetic read together. Headers, cells and sort all derive from `AN_COLS` (item 23), so the move
+is the table entry and nothing else — which is exactly what deriving all three from one list bought.
+
+### Widths
+
+`Sold/day` gave back a point of `grow` (2 → 1): it was greedy because it could print a range, and it
+cannot any more. Its **minimum stays 74**, because what sets that floor is not the number — it is
+the words *"not scanned"* printed in the same cell, and those are as long as they ever were. The
+eight-column budget is therefore unchanged at 684 against Blizzard's 702px row.
+
+**Not verified in game** — parsed and reasoned. `analysis-feed-smoke.lua` passes (31 assertions),
+which covers the feed rather than the cells.
 
 ---
 
