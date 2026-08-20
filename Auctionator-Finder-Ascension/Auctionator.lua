@@ -3907,6 +3907,16 @@ function Atr_ShowingHints ()
 	return false;
 end
 
+-----------------------------------------
+
+function Atr_ShowingLedger ()
+	if (gCurrentPane) then
+		return gCurrentPane:ShowLedger();
+	end
+	
+	return false;
+end
+
 
 
 -----------------------------------------
@@ -4618,6 +4628,9 @@ function Atr_UpdateUI ()
 		elseif (gCurrentPane:ShowHistory()) then
 			PanelTemplates_SetTab(Atr_ListTabs, 2);
 			Atr_ShowHistory();
+		elseif (gCurrentPane:ShowLedger()) then
+			PanelTemplates_SetTab(Atr_ListTabs, 4);
+			Atr_ShowItemLedger();
 		else
 			PanelTemplates_SetTab(Atr_ListTabs, 3);
 			Atr_ShowHints();
@@ -4644,6 +4657,20 @@ function Atr_UpdateUI ()
 
 			local haveRows = (gCurrentPane.marketHist and #gCurrentPane.marketHist > 0);
 			local msg      = Atr_Hist_PaneMessage (haveRows);
+
+			if (msg) then Atr_SetMessage (msg); end
+		end
+
+		-- THE LEDGER SUB-TAB'S EMPTY STATE (BACKLOG item 8), on the same terms and
+		-- for the same reason -- except that here empty is the NORMAL answer.  Most
+		-- items you look up you have never traded, so a blank list would be the
+		-- usual sight rather than the rare one, and "you have not bought or sold
+		-- this" is a real answer where drawing nothing is not.
+		if (Atr_ShowingLedger() and not gCurrentPane:IsScanEmpty()
+			and type (Atr_Ledger_PaneMessage) == "function") then
+
+			local haveRows = (gCurrentPane.itemLedger and #gCurrentPane.itemLedger > 0);
+			local msg      = Atr_Ledger_PaneMessage (haveRows);
 
 			if (msg) then Atr_SetMessage (msg); end
 		end
@@ -5025,6 +5052,8 @@ function Atr_ShowWhichRB (id)
 		gCurrentPane:SetToShowCurrent();
 	elseif (id == 2) then
 		gCurrentPane:SetToShowHistory();
+	elseif (id == 4) then
+		gCurrentPane:SetToShowLedger();
 	else
 		gCurrentPane:SetToShowHints();
 	end
@@ -5044,6 +5073,8 @@ function Atr_RedisplayAuctions ()
 		Atr_ShowCurrentAuctions();
 	elseif Atr_ShowingHistory() then
 		Atr_ShowHistory();
+	elseif Atr_ShowingLedger() then
+		Atr_ShowItemLedger();
 	else
 		Atr_ShowHints();
 	end
@@ -5434,6 +5465,13 @@ function Atr_ShowHistory ()
 	-- daily closes now, not the log of your own postings it used to be.
 	Atr_Col3_Heading:SetText (ZT("Price history"));
 
+	-- Set explicitly, though it only ever held this.  Atr_ShowCurrentAuctions was
+	-- the one writer of this heading and both other tabs simply Show()ed whatever
+	-- it had left there -- fine while every tab meant the same thing by it, and no
+	-- longer true now the Ledger labels this column with YOUR price (BACKLOG item
+	-- 8).  Without this line, one visit to that tab renames this one.
+	Atr_Col1_Heading:SetText (ZT("Item Price"));
+
 	local numrows = gCurrentPane.marketHist and #gCurrentPane.marketHist or 0;
 
 --zc.msg ("gCurrentPane.marketHist: "..numrows,1,0,0);
@@ -5507,6 +5545,141 @@ function Atr_ShowHistory ()
 	else
 		Atr_HighlightEntry (-1);
 	end
+end
+
+
+-----------------------------------------
+
+-- THE LEDGER SUB-TAB (BACKLOG item 8): what YOU did with this item.
+--
+-- Third of the strip, beside Current (what is listed right now) and History
+-- (what the market did).  The rows come from AUCTIONATOR_LEDGER by way of
+-- Atr_Ledger_PaneRows, which hands back text and a number per row -- this
+-- function never sees a `src` tag or a copper field, the same division of labour
+-- Atr_ShowHistory has with AuctionatorHistory.lua.
+--
+-- The summary goes in the COLUMN HEADING rather than into a row.  An item you
+-- have traded is two or three rows, and "bought 20 for 34g, sold 20 for 51g,
+-- realised +17g" is the number the tab is opened for -- put it in the list and it
+-- scrolls away from the thing it summarises.
+function Atr_ShowItemLedger ()
+
+	local scn  = gCurrentPane.activeScan;
+	local name = scn and scn.itemName or nil;
+
+	-- CACHED BY ITEM AND BY LEDGER REVISION, not just "is it nil".
+	--
+	-- Nil-checking alone is what the History tab does, and it is only safe there
+	-- because every path that changes the item happens to clear marketHist.  This
+	-- view has two more ways to go stale: picking a different item out of a
+	-- multi-item search summary swaps activeScan without any search starting, and
+	-- the ledger itself GROWS while the auction house is open -- buy something and
+	-- the row should be here when you next look. Comparing the name and
+	-- gAtr_LedgerRev answers both without re-totalling on every frame, and without
+	-- needing every future caller of activeScan to remember this field exists.
+	if (type (Atr_Ledger_PaneRows) == "function"
+		and (gCurrentPane.itemLedger == nil
+			 or gCurrentPane.itemLedgerFor ~= name
+			 or gCurrentPane.itemLedgerRev ~= gAtr_LedgerRev)) then
+
+		gCurrentPane.itemLedger    = Atr_Ledger_PaneRows (name);
+		gCurrentPane.itemLedgerFor = name;
+		gCurrentPane.itemLedgerRev = gAtr_LedgerRev;
+	end
+
+	local rows    = gCurrentPane.itemLedger or {};
+	local numrows = #rows;
+
+	Atr_Col1_Heading:Hide();
+	Atr_Col3_Heading:Hide();
+	Atr_Col4_Heading:Hide();
+
+	if (numrows > 0) then
+
+		local summary = (type (Atr_Ledger_PaneSummary) == "function") and Atr_Ledger_PaneSummary (name) or nil;
+
+		Atr_Col3_Heading:SetText (summary or ZT("Your trades"));
+
+		-- YOUR price, not the item's: this column is what you paid or were paid,
+		-- which is the whole difference between this tab and the two beside it.
+		Atr_Col1_Heading:SetText (ZT("Your price"));
+		Atr_Col1_Heading:Show();
+		Atr_Col3_Heading:Show();
+	end
+
+	local line;							-- 1 through visibleLines of our window to scroll
+	local dataOffset;					-- an index into our data calculated from the scroll offset
+
+	-- Same short-list guard Atr_ShowHistory carries: on SELL and BUY the results
+	-- area is only a few rows tall, and a hardcoded 12 renders the spare rows
+	-- past the bottom of it (the "infinite scroll" bleed).
+	local visibleLines = 12;
+	if (Atr_IsTabSelected and (Atr_IsTabSelected(SELL_TAB) or Atr_IsTabSelected(BUY_TAB)) and AuctionatorScrollFrame and AuctionatorScrollFrame.GetHeight) then
+		local h = AuctionatorScrollFrame:GetHeight() or 196;
+		visibleLines = math.max(1, math.min(12, math.floor(h / 16)));
+	end
+
+	FauxScrollFrame_Update (AuctionatorScrollFrame, numrows, visibleLines, 16);
+
+	for line = 1,visibleLines do
+
+		dataOffset = line + (FauxScrollFrame_GetOffset (AuctionatorScrollFrame) or 0);
+
+		local lineEntry = _G["AuctionatorEntry"..line];
+
+		lineEntry:SetID(dataOffset);
+
+		if (dataOffset <= numrows and rows[dataOffset]) then
+
+			local data = rows[dataOffset];
+
+			local lineEntry_item_tag = "AuctionatorEntry"..line.."_PerItem_Price";
+
+			local lineEntry_item		= _G[lineEntry_item_tag];
+			local lineEntry_itemtext	= _G["AuctionatorEntry"..line.."_PerItem_Text"];
+			local lineEntry_text		= _G["AuctionatorEntry"..line.."_EntryText"];
+			local lineEntry_stack		= _G["AuctionatorEntry"..line.."_StackPrice"];
+
+			lineEntry_stack:SetText ("");
+
+			-- A ROW THAT MOVED NO MONEY SHOWS NO MONEY.  An expiry and a
+			-- cancellation cost you nothing and earn you nothing, and a money
+			-- frame cannot render that -- zero in a price column reads as "sold
+			-- for nothing".  So the frame is hidden and the gray text beside it
+			-- carries a dash, which is what the rest of this addon does with an
+			-- absent price.
+			if (data.money and data.money > 0) then
+				lineEntry_itemtext:Hide();
+				lineEntry_item:Show();
+				Atr_SetMFcolor (lineEntry_item_tag, true);
+				MoneyFrame_Update (lineEntry_item_tag, zc.round (data.money));
+			else
+				lineEntry_item:Hide();
+				lineEntry_itemtext:SetText ("--");
+				lineEntry_itemtext:Show();
+			end
+
+			lineEntry_text:SetText (data.text);
+			lineEntry_text:SetTextColor (0.8, 0.8, 1.0);
+
+			lineEntry:Show();
+		else
+			lineEntry:Hide();
+		end
+	end
+
+	-- Hide any extra rows beyond visibleLines on SELL/BUY so they don't bleed outside
+	if (Atr_IsTabSelected and (Atr_IsTabSelected(SELL_TAB) or Atr_IsTabSelected(BUY_TAB))) then
+		local i;
+		for i = visibleLines + 1, 15 do
+			local extra = _G["AuctionatorEntry"..i];
+			if (extra) then extra:Hide(); end
+		end
+	end
+
+	-- Nothing in this list is selectable: these are records of things that have
+	-- already happened, not auctions you can act on.
+	Atr_HighlightEntry (-1);
 end
 
 
@@ -5595,6 +5768,19 @@ function Atr_EntryOnClick(entry)
 	Atr_Clear_Owner_Item_Indices();
 
 	local entryIndex = entry:GetID();
+
+	-- A LEDGER ROW IS NOT A SELECTION (BACKLOG item 8).  Everything else in this
+	-- list is a price you might act on -- a listing to buy, a reading to price
+	-- against -- and the click sets an index the sell recommendation then reads.
+	-- A ledger row is a record of something that already happened, so clicking
+	-- one must not move the recommendation, and without this it would: the else
+	-- below files the index under hintsIndex and then calls
+	-- Atr_UpdateRecommendation, which would price your auction off whichever
+	-- purchase you happened to click.
+	if (Atr_ShowingLedger()) then
+		PlaySound ("igMainMenuOptionCheckBoxOn");
+		return;
+	end
 
 	if     (Atr_ShowingSearchSummary()) 	then	
 	elseif (Atr_ShowingCurrentAuctions())	then		gCurrentPane.currIndex = entryIndex;

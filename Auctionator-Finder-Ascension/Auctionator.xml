@@ -997,19 +997,34 @@
 				<Anchors><Anchor point="BOTTOMRIGHT" relativeTo="Atr_HeadingsBar" relativePoint="TOPRIGHT"><Offset><AbsDimension x="0" y="-22"/></Offset></Anchor></Anchors>
 				
 				<Frames>
-					<!-- Tab3 (hints) is HIDDEN, not deleted: Atr_UpdateUI still has an
-					     else branch that calls PanelTemplates_SetTab(Atr_ListTabs, 3),
-					     and Atr_ShowWhichRB(3) must still resolve.  That branch is now
-					     unreachable, since showWhich can only become ATR_SHOW_HINTS
-					     through this button, but leaving the frame in place keeps both
-					     calls safe.  Its hint sources were gAtr_ScanDB, your own last
-					     posting, and Wowecon / GoingPrice, which are not installed. -->
+					<!-- Tab3 (hints) has no button of its own on screen and is NOT
+					     dead code, which an earlier note here got wrong.  It said the
+					     branch was unreachable "since showWhich can only become
+					     ATR_SHOW_HINTS through this button", but Atr_OnSearchComplete
+					     calls SetToShowHints() directly when a CREATE-AUCTION search
+					     finds no current listings, and Atr_BuildHints still has two
+					     live sources here (gAtr_ScanDB and your own most recent
+					     posting; only Wowecon and GoingPrice are absent).  So the view
+					     really does appear, on the Sell tab, precisely when there is
+					     nothing to price against.  It stays hidden because you cannot
+					     ASK for it (it offers itself), and it keeps id 3 because
+					     taking that slot for the Ledger (BACKLOG item 8) would have
+					     replaced a pricing hint with a trade record at the one moment
+					     the hint is worth having. -->
 					<Button name="$parentTab3" inherits="TabButtonTemplate" id="3" text="Other" hidden="true">
 						<Anchors><Anchor point="BOTTOMRIGHT" ><Offset><AbsDimension x="-8" y="0"/></Offset></Anchor></Anchors>
 						<Scripts><OnClick>PanelTemplates_SetTab(Atr_ListTabs, 3);Atr_ShowWhichRB(3);</OnClick></Scripts>
 					</Button>
-					<Button name="$parentTab2" inherits="TabButtonTemplate" id="2" text="History">
+					<!-- LEDGER (BACKLOG item 8): what YOU did with this item, beside
+					     what the market did (History) and what is listed now (Current).
+					     Rightmost, so the strip reads Current | History | Ledger, and
+					     the two older tabs now anchor leftwards off this one. -->
+					<Button name="$parentTab4" inherits="TabButtonTemplate" id="4" text="Ledger">
 						<Anchors><Anchor point="BOTTOMRIGHT" ><Offset><AbsDimension x="-8" y="0"/></Offset></Anchor></Anchors>
+						<Scripts><OnClick>PanelTemplates_SetTab(Atr_ListTabs, 4);Atr_ShowWhichRB(4);</OnClick></Scripts>
+					</Button>
+					<Button name="$parentTab2" inherits="TabButtonTemplate" id="2" text="History">
+						<Anchors><Anchor point="RIGHT" relativeTo="$parentTab4" relativePoint="LEFT"><Offset><AbsDimension x="-2" y="0"/></Offset></Anchor></Anchors>
 						<Scripts><OnClick>PanelTemplates_SetTab(Atr_ListTabs, 2);Atr_ShowWhichRB(2);</OnClick></Scripts>
 					</Button>
 					<Button name="$parentTab1" inherits="TabButtonTemplate" id="1" text="Current">
@@ -1019,7 +1034,7 @@
 				</Frames>
 				<Scripts>
 					<OnLoad>
-						PanelTemplates_SetNumTabs(Atr_ListTabs, 2);
+						PanelTemplates_SetNumTabs(Atr_ListTabs, 4);
 						PanelTemplates_SetTab(Atr_ListTabs, 1);
 					</OnLoad>
 					<OnShow>

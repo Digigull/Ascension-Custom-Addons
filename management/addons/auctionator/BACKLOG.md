@@ -19,7 +19,8 @@ the feed works, the report's clock was mislabelled. **Item 8 is new, 2026-08-22,
 **Item 4 reopened and fixed 2026-08-20.** Only half of it had been answered. The write was never
 the problem; the tooltip read the price by name while a Buy search files it under the item's
 variant key, so a search could not move the tooltip of any item a full scan already knew. Written
-up under the item. **Item 8 remains the only thing on this queue that is not built.**
+up under the item. **Item 8 was built 2026-08-20** and its one open premise turned out to be
+wrong in a way that changed the design: slot 3 is not free. **Nothing on this queue is unbuilt.**
 
 ---
 
@@ -676,7 +677,7 @@ duplicates the list nor doubles its contents (39 passed). The four shipped suite
 
 ---
 
-## 8. NEW — a "Ledger" sub-tab beside Current and History, per item
+## 8. A "Ledger" sub-tab beside Current and History, per item — DONE
 
 **Asked (owner, 2026-08-22):** *"add new tab next to 'Current' and 'History' called Ledger on the
 original 3 tabs, to reference any ledger data about the item."*
@@ -718,3 +719,73 @@ pane should not learn the ledger's row shape.
 
 **Related, already shipped:** item 1 made the History sub-tab read the market series and left your
 own postings unread there; this is where the "what did *I* do with this item" question goes.
+
+### Built 2026-08-20
+
+**The tab is id 4, not 3, because slot 3 was not free — this item's own premise was wrong.**
+The note above (and the XML comment it was drawn from) called the hint view dead, "whose sources
+(Wowecon, GoingPrice, `gAtr_ScanDB`) are not installed". Two of those three are indeed absent, and
+the third is the point: `Atr_BuildHints` reads `gAtr_ScanDB` *and* `Atr_GetMostRecentSale`, both of
+which exist on this install. Worse, the branch is not reachable "only through this button" as the
+XML claimed — `Atr_OnSearchComplete` calls `SetToShowHints()` directly when a **create-auction**
+search comes back with no current listings. So the hint view really does appear, on the Sell tab,
+at precisely the moment you have nothing to price against, and taking its slot would have replaced
+a pricing hint with a trade record exactly when the hint is worth having. A fourth id costs
+nothing: `PanelTemplates` only indexes the tabs it is told about, and a hidden one in the middle is
+invisible to it. The stale XML comment has been corrected in place rather than left to mislead the
+next reader.
+
+**On the three things this item said to settle:**
+
+1. **Rows *and* a summary, not one or the other.** The summary goes in the **column heading**
+   (`Atr_Col3_Heading`), not into a row: an item you have traded is two or three rows, and the
+   number the tab is opened for — *bought 20 for 3g40s | sold 20 for 4g84s | realised +1g44s* —
+   would scroll away from the thing it summarises if it were a row. Bought and sold only. Postings
+   and deposits are on the rows and are deliberately not in the sentence: an auction still up has
+   not resolved, and a margin quoted over it would be inventing a result. The margin line only
+   appears once both sides exist.
+2. **The strip's `IsScanEmpty` behaviour is inherited, not fought**, as the item said.
+3. **The empty state is the common case and says so** — "You have not bought or sold this", with a
+   different line when the whole ledger is empty, since those are different answers. Delivered the
+   way item 1 did it: `Atr_Ledger_PaneMessage` through `Atr_SetMessage`, in the block that already
+   runs after the draw.
+
+**What is where.** The reader is three functions in `AuctionatorLedger.lua` — `Atr_Ledger_PaneRows`
+(one item's rows, newest first), `Atr_Ledger_PaneSummary`, `Atr_Ledger_PaneMessage` — plus
+`Atr_Ledger_ItemRecord`, which pulls one name out of `Atr_Ledger_ItemTotals` so there is exactly
+one definition of "realised margin" and the Advisor's is it. The renderer, `Atr_ShowItemLedger`, is
+in `Auctionator.lua` beside `Atr_ShowHistory`, because the strip is World 1 chrome. The pane never
+sees a `src` tag or a copper field.
+
+**Three decisions inside it that are not obvious:**
+
+- **The money column is the UNIT price, not the total.** Current lists per-item buyouts and History
+  lists per-item daily closes; the same column meaning the same thing across all three is what
+  makes "I sold at 2g42, the market was at 2g40 that week" one tab-click to check. The total is in
+  the row text where the quantity makes it differ.
+- **A row that moved no money shows no money.** An expiry costs and earns nothing, and a money
+  frame cannot render that — a zero in a price column reads as "sold for nothing". The frame is
+  hidden and the gray text beside it carries a dash.
+- **A ledger row is not a selection.** Clicking one used to fall through to the `else` that files
+  the index under `hintsIndex` and then calls `Atr_UpdateRecommendation` — which would have priced
+  your auction off whichever past purchase you happened to click. `Atr_EntryOnClick` now returns
+  early on this tab.
+
+**The cache is keyed by item and by a new `gAtr_LedgerRev`, not by "is it nil".** Nil-checking is
+what the History tab does, and it is only safe there because every path that changes the item
+happens to clear `marketHist`. This view has two more ways to go stale — picking a different item
+out of a multi-item search summary swaps `activeScan` with no search starting, and the ledger
+*grows while the auction house is open*, which is the whole point of buying something and then
+looking. `Atr_Ledger_Add` and `Atr_Ledger_Clear` bump the revision; the pane compares it.
+
+**One latent bug fixed in passing:** `Atr_Col1_Heading` had exactly one writer
+(`Atr_ShowCurrentAuctions`, "Item Price") and the other tabs just `Show()`ed whatever it had left
+there. Harmless while every tab meant the same thing by that column, and not harmless now the
+Ledger labels it "Your price" — one visit would have renamed it everywhere. Both tabs now set it.
+
+**Verified:** `luac5.1 -p` clean, `ET.parse` clean on `Auctionator.xml`, the five Auctionator
+suites still pass (27 + 31 + 114 + 25 + 20). The reader was run against a synthetic ledger (buy /
+post / sale / expire across two items) and its rows, summary, both empty states and the revision
+counter check out; that caught the summary separator rendering as an empty string
+(`|cff555555|r` with nothing between the codes). **Not verified in game** — the tab strip itself is
+reasoned.
