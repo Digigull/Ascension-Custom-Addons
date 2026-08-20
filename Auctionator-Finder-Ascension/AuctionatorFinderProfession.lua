@@ -521,6 +521,81 @@ function Atr_Craft_GetCraftCost(link, name)
     return math.floor(total / made), made;
 end
 
+-- WHICH REAGENT THE CRAFT'S COST ACTUALLY IS ---------------------------------
+--
+-- BACKLOG item 30.  The Advisor's Make card has to be able to say "and 74% of
+-- that cost is Essence of Fire", because a margin with no catch attached is the
+-- half of the advice that gets somebody into trouble: a 69% margin on a recipe
+-- whose cost is one reagent ten people sell is a different proposition from the
+-- same margin spread over eight cheap ones.
+--
+-- IT LIVES HERE AND NOT IN THE ADVISOR, and that is the point of it.  The
+-- Advisor's one rule is that it computes nothing (FRAMEWORK.md section 6: the
+-- arithmetic lives with the data).  This walks the SAME reagent list through the
+-- SAME cascade and adds the SAME vellum that Atr_Craft_GetCraftCost does, so the
+-- share can never be a share of a total the craft cost disagrees with.
+--
+-- `entry` is a Atr_Craft_ProfitRanking row -- it already carries `reagents` and
+-- `vellum`, so nothing is looked up twice.  Returns  top, total  where top is
+--   { name, id, count, unit, spend, share }
+-- spend being unit x count for the whole craft and share its fraction of total,
+-- or nil,nil when nothing on the list could be priced.  An unpriced reagent is
+-- skipped rather than fatal: unlike a craft COST, which must be all-or-nothing
+-- or it would understate, a dominant-reagent reading over a partly priced list
+-- is still true of the part it can see -- and `total` is returned so a caller
+-- that cares can compare it with the craft cost and notice the gap.
+--
+-- Guarded around every WoW API it touches, like the two functions above it.
+function Atr_Craft_TopReagent(entry)
+
+    if (type(entry) ~= "table" or type(entry.reagents) ~= "table") then return nil, nil; end
+
+    local total, top = 0, nil;
+
+    local function weigh(id, name, count)
+        local unit = Atr_Craft_ReagentPrice(id, name);
+        if (unit == nil or unit <= 0) then return; end
+        local spend = unit * (count or 1);
+        total = total + spend;
+        if (top == nil or spend > top.spend) then
+            top = { name = name, id = id, count = count or 1, unit = unit, spend = spend };
+        end
+    end
+
+    for _, r in ipairs(entry.reagents) do
+        local nm = r.name;
+        if ((nm == nil or nm == "") and r.id and type(GetItemInfo) == "function") then
+            nm = (GetItemInfo(r.id));
+        end
+        weigh(r.id, nm, tonumber(r.count) or 1);
+    end
+
+    -- The vellum an enchant never lists, added as the reagent it is -- the same
+    -- omission Atr_Craft_ReagentPressure fixes, and for the same reason: on a
+    -- cheap enchant the vellum IS the dominant cost, so leaving it out would
+    -- name the wrong reagent rather than merely a smaller number.
+    if (entry.vellum) then
+        local vcost, vname = Atr_Craft_VellumCost(entry.vellum);
+        if (vcost and vcost > 0) then
+            -- counted into the total even when the name came back nil, because
+            -- Atr_Craft_GetCraftCost counts its cold fallback too and a total
+            -- that quietly dropped it would inflate every OTHER reagent's share.
+            -- It only becomes the named winner when there is a name to print.
+            total = total + vcost;
+            if (vname and (top == nil or vcost > top.spend)) then
+                top = { name = vname, id = Atr_Craft_IDForName(vname), count = 1,
+                        unit = vcost, spend = vcost };
+            end
+        end
+    end
+
+    if (top == nil or total <= 0) then return nil, nil; end
+
+    top.share = top.spend / total;
+
+    return top, total;
+end
+
 -- True when we have a harvested recipe for this item at all, regardless of
 -- whether its reagents can be priced.  Atr_Craft_GetCraftCost returns nil both
 -- for "not a recipe" and for "a recipe with a reagent we can't price yet"; this

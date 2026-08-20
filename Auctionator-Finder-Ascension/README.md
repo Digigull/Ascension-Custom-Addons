@@ -68,7 +68,7 @@ house's own confirmations and your mail, so nothing has to be entered by hand.
 
 ### Analysis tab
 
-Three views over one table, switched by the toggle at the top right.
+Four views over one table, switched by the toggles at the top right.
 
 - **Market** — a watchlist, and what scanning has learned about it. Every
   listing is fingerprinted by seller, stack and price, so a listing that has
@@ -83,11 +83,29 @@ Three views over one table, switched by the toggle at the top right.
   profit sort, available at the auction house where the decision actually gets
   made. Hovering a row shows the reagents and their prices beside the item's
   tooltip.
+- **Reagents** — that same map inverted: what the recipes worth making would
+  have you buy, how much of it you already hold, what the rest costs, and
+  whether the auction house has it. Tick recipes on the Crafting view and it
+  becomes a shopping bill for exactly that batch.
 
 Every column sorts (click a header, click again to reverse) and the filter box
-narrows all three views as you type. On any row: hover for the item's tooltip,
+narrows all four views as you type. On any row: hover for the item's tooltip,
 left click to look it up — gear on the Finder tab, everything else on Buy —
 and right click to add it to a shopping list or an Analysis group.
+
+### Advisor tab
+
+Five or six cards, in sentences, saying what to do about all of that. The
+Analysis tab holds the evidence; this one holds the conclusions — what to make
+and what it earns, which reagent your shopping bill actually is, who is holding
+a market, what is worth farming, and when your prices have gone stale. Every
+card names the figure it is arguing from and has a button that takes you to the
+row it came from.
+
+It computes nothing of its own: every number on it is read from a view on the
+Analysis tab, so the two can never disagree. When nothing clears the bar it
+says so and lists what would give it something, which on a fresh install is the
+most useful thing it can tell you.
 
 ### Profession scanning
 
