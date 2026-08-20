@@ -2208,9 +2208,72 @@ this rests on matching a known-good call in the same client. **Not verified in g
 
 ---
 
+## 21. The menu is no longer a Blizzard dropdown — DONE
+
+**Reported 2026-08-20, second time:** item 20's fix landed, the labels are right, and clicking the
+buttons *still* does nothing.
+
+### Why stop debugging it
+
+Item 20's diagnosis was sound as far as it went — initialising a dropdown on every click really is
+wrong, and the Finder's Categories button really is the working recipe. It did not fix the symptom.
+
+`UIDropDownMenu` is driven by four globals — `UIDROPDOWNMENU_MENU_LEVEL`, `_VALUE`, `_OPEN_MENU`,
+`_INIT_MENU` — that **every other dropdown in the UI writes**, including Blizzard's own and any
+other addon's. A menu that ends up on the wrong level, or against a stale open-menu name, does not
+error: it silently draws nothing. That is a bad thing to depend on from here, because **no offline
+check in this repo can reach any of it**, so every attempt costs a full round trip through the
+client to learn one bit.
+
+Three rounds is the answer to "how many guesses is an opaque API worth".
+
+### What replaced it
+
+About 90 lines of plain frame in `AuctionatorAnalysis.lua`: a backdrop, one row button per entry,
+and a full-screen click-eater behind it. No shared globals, no initialise/toggle lifecycle, nothing
+another addon can perturb.
+
+- **The eater cannot outlive the menu.** It covers the screen, so a stuck one would leave the UI
+  unclickable. The menu's `OnHide` hides it — that is the single point of truth, rather than every
+  close path remembering.
+- `FULLSCREEN_DIALOG`, frame level 10, **not toplevel** — deliberately opened, must clear the
+  auction house, and that strata is near-empty. See `DRAG-FREEZE.md` for why toplevel is never the
+  answer.
+- It flips above the anchor when there is no room below, so a Finder row near the bottom of the
+  list does not drop its menu off the screen.
+- Submenus are gone. The Finder's menu shows both sections one after the other with headers — a
+  flat list of eight is easier to hit than two fly-outs, and there is no submenu machinery left to
+  get wrong.
+
+### The part that is now testable
+
+Splitting "what is on the menu" from "how it is drawn" made the first half a pure function,
+`Atr_An_MenuEntries (itemName, mode)`, returning `{ text, func, disabled, header }`.
+`analysis-feed-smoke.lua` grew ten assertions over it (17 → 27): every group appears, the empty
+shopping-list case still offers a way in, `both` is the two sections plus headers, no item means no
+menu — and the entries' `func`s really watch and really move an item between groups.
+
+The frame is still beyond reach. But the half that was ever likely to be wrong in a *content* sense
+is now checked in a second, and the half that remains is code with no hidden dependencies.
+
+### One diagnostic, deliberately
+
+`/atranalysis menu [item name]` opens the same menu with no button in the way.
+
+The house rule puts an in-game debug command last, so the reason is recorded here: from outside the
+client, **"the click never fired" and "the menu never showed" look identical**, and that ambiguity
+is exactly what cost rounds 19–21. This separates them in one step. If the buttons stay dead but
+the command works, the fault is the button's `OnClick`, not the menu.
+
+**Verified** by `luac5.1 -p` and the two offline suites (27 + 27). **Not verified in game** — but
+unlike the last two attempts, what is left to be wrong is code in this repo rather than a global
+this repo cannot see.
+
+---
+
 ## Suggested order
 
-Items 1–6, 11, 14, 15, 16, 17, 18, 19 and 20 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20 and 21 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was

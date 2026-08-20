@@ -531,7 +531,6 @@ local function An_GroupDD_Init ()
 		UIDropDownMenu_AddButton (info);
 	end
 end
-
 -- ADDING FROM ELSEWHERE ---------------------------------------------------
 --
 -- BACKLOG item 18.  The watchlist was only reachable from this tab -- an edit box
@@ -539,15 +538,25 @@ end
 -- watching are the Finder (you just found it) and the Buy tab (you are looking at
 -- its market), and in both of those the item is already in your hand.
 --
--- One menu serves both.  It is built here rather than in either caller because
--- the groups live here; the shopping-list branch calls into AuctionatorShop.lua
--- by name, guarded, so the two features stay independent -- the Buy tab's button
--- asks for the group half only.
+-- WHY THIS IS NOT A BLIZZARD DROPDOWN (BACKLOG item 21).  It was, twice, and it
+-- opened nothing either time.  UIDropDownMenu is driven by four globals
+-- (UIDROPDOWNMENU_MENU_LEVEL, _VALUE, _OPEN_MENU, _INIT_MENU) that every other
+-- dropdown in the UI writes, and a menu that lands on the wrong level is not an
+-- error -- it is silence.  Nothing offline can reach it, so each attempt cost a
+-- round trip through the client to learn nothing.
+--
+-- So this is ~90 lines of plain frame: a backdrop, a row per entry, and a
+-- full-screen click-eater behind it.  No shared globals, no lifecycle, and the
+-- half that decides WHAT is on the menu is a pure function this repo can test.
+-- Not the smallest diff; the one that can be reasoned about to the end.
 
-local gAnMenu_Item		= nil;		-- what the open menu is about
-local gAnMenu_Mode		= "both";	-- "both" | "groups" | "lists"
-local gAnMenu_Frame		= nil;
-local gAn_PendingItem	= nil;		-- survives the menu closing, for a popup
+local AN_MENU_ROW_H	= 16;
+local AN_MENU_PAD	= 8;
+local AN_MENU_TOP	= 20;		-- room for the title line
+
+local gAnMenuFrame	= nil;
+local gAnMenuEater	= nil;
+local gAn_PendingItem = nil;	-- survives the menu closing, for a popup
 
 -- Watch an item, optionally filing it in a group.  Choosing a group for an item
 -- that is ALREADY watched moves it (Atr_An_Watch updates the group and reports
@@ -577,184 +586,232 @@ function Atr_An_AddToGroup (itemName, group)
 	return true;
 end
 
-local function An_AddToShoppingList (listIndex, listName)
+function Atr_An_AddToShoppingList (itemName, listIndex, listName)
 
-	if (type (Atr_Shop_AddNameToList) ~= "function") then return; end
+	if (type (Atr_Shop_AddNameToList) ~= "function") then return false; end
 
-	local ok, why = Atr_Shop_AddNameToList (listIndex, gAnMenu_Item);
+	local ok, why = Atr_Shop_AddNameToList (listIndex, itemName);
 
 	if (zc and zc.msg_atr) then
 		if (ok) then
-			zc.msg_atr (string.format (AZT("Added %s to %s"), tostring (gAnMenu_Item), tostring (listName)));
+			zc.msg_atr (string.format (AZT("Added %s to %s"), tostring (itemName), tostring (listName)));
 		elseif (why == "already") then
-			zc.msg_atr (string.format (AZT("%s is already on %s"), tostring (gAnMenu_Item), tostring (listName)));
+			zc.msg_atr (string.format (AZT("%s is already on %s"), tostring (itemName), tostring (listName)));
 		elseif (why == "full") then
 			zc.msg_atr (string.format (AZT("%s is full (50 items)"), tostring (listName)));
 		end
 	end
+
+	return ok;
 end
 
-local function An_Menu_Groups (level)
+-- WHAT IS ON THE MENU -- a pure function, and the half worth testing.
+--
+-- `mode` is "groups", "lists", or "both" (the Finder's row menu, which shows both
+-- sections one after the other rather than in submenus -- a flat list of eight is
+-- easier to hit than two fly-outs, and there is no submenu machinery to get
+-- wrong).  Entries are { text, func, disabled, header }.
+function Atr_An_MenuEntries (itemName, mode)
 
-	local db = Atr_An_DB ();
-	local info, i;
+	local out = {};
 
-	info = UIDropDownMenu_CreateInfo();
-	info.text			= AZT("(no group)");
-	info.notCheckable	= true;
-	info.func			= function () Atr_An_AddToGroup (gAnMenu_Item, nil); CloseDropDownMenus(); end;
-	UIDropDownMenu_AddButton (info, level);
+	if (itemName == nil or itemName == "") then return out; end
 
-	for i = 1, #db.groups do
-		local g = db.groups[i];
-		info = UIDropDownMenu_CreateInfo();
-		info.text			= g;
-		info.notCheckable	= true;
-		info.func			= function () Atr_An_AddToGroup (gAnMenu_Item, g); CloseDropDownMenus(); end;
-		UIDropDownMenu_AddButton (info, level);
-	end
+	mode = mode or "both";
 
-	info = UIDropDownMenu_CreateInfo();
-	info.text			= AZT("New group...");
-	info.notCheckable	= true;
-	info.func			= function ()
-		gAn_PendingItem = gAnMenu_Item;
-		CloseDropDownMenus();
-		if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_GROUP"); end
-	end;
-	UIDropDownMenu_AddButton (info, level);
-end
+	local both = (mode == "both");
 
-local function An_Menu_Lists (level)
+	if (both or mode == "lists") then
 
-	local lists = (type (Atr_Shop_UserLists) == "function") and Atr_Shop_UserLists() or {};
-	local info, i;
+		if (both) then tinsert (out, { text = AZT("Shopping list"), header = true }); end
 
-	for i = 1, #lists do
-		local L = lists[i];
-		info = UIDropDownMenu_CreateInfo();
-		info.text			= L.name;
-		info.notCheckable	= true;
-		info.func			= function () An_AddToShoppingList (L.index, L.name); CloseDropDownMenus(); end;
-		UIDropDownMenu_AddButton (info, level);
-	end
+		-- "Recent Searches" is deliberately absent: it is a rolling log this addon
+		-- rewrites, so anything filed there would not survive.
+		local lists = (type (Atr_Shop_UserLists) == "function") and Atr_Shop_UserLists() or {};
 
-	-- "Recent Searches" is not offered above: it is a rolling log this addon
-	-- rewrites, so filing anything there would not survive.  With no other list
-	-- the branch would be empty, hence both this line and New list...
-	if (#lists == 0) then
-		info = UIDropDownMenu_CreateInfo();
-		info.text			= AZT("no lists yet");
-		info.notCheckable	= true;
-		info.disabled		= true;
-		UIDropDownMenu_AddButton (info, level);
-	end
-
-	info = UIDropDownMenu_CreateInfo();
-	info.text			= AZT("New list...");
-	info.notCheckable	= true;
-	info.func			= function ()
-		gAn_PendingItem = gAnMenu_Item;
-		CloseDropDownMenus();
-		if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_SLIST"); end
-	end;
-	UIDropDownMenu_AddButton (info, level);
-end
-
-local function An_Menu_Init (self, level)
-
-	level = level or 1;
-
-	local info;
-
-	if (level == 1) then
-
-		info = UIDropDownMenu_CreateInfo();
-		info.text			= gAnMenu_Item or "";
-		info.isTitle		= true;
-		info.notCheckable	= true;
-		UIDropDownMenu_AddButton (info, level);
-
-		-- A button that already says what it does gets the choices FLAT; only the
-		-- Finder's row menu, which offers both destinations, needs submenus.
-		if (gAnMenu_Mode == "groups") then
-
-			An_Menu_Groups (level);
-
-		elseif (gAnMenu_Mode == "lists") then
-
-			An_Menu_Lists (level);
-
-		else
-
-			info = UIDropDownMenu_CreateInfo();
-			info.text			= AZT("Add to shopping list");
-			info.notCheckable	= true;
-			info.hasArrow		= true;
-			info.value			= "SLIST";
-			UIDropDownMenu_AddButton (info, level);
-
-			info = UIDropDownMenu_CreateInfo();
-			info.text			= AZT("Add to Analysis group");
-			info.notCheckable	= true;
-			info.hasArrow		= true;
-			info.value			= "GROUP";
-			UIDropDownMenu_AddButton (info, level);
+		local i;
+		for i = 1, #lists do
+			local L = lists[i];
+			tinsert (out, { text = L.name, func = function () Atr_An_AddToShoppingList (itemName, L.index, L.name); end });
 		end
 
-	elseif (level == 2) then
-
-		if (UIDROPDOWNMENU_MENU_VALUE == "SLIST") then
-			An_Menu_Lists (level);
-		elseif (UIDROPDOWNMENU_MENU_VALUE == "GROUP") then
-			An_Menu_Groups (level);
+		if (#lists == 0) then
+			tinsert (out, { text = AZT("no lists yet"), disabled = true });
 		end
+
+		tinsert (out, { text = AZT("New list..."), func = function ()
+			gAn_PendingItem = itemName;
+			if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_SLIST"); end
+		end });
 	end
+
+	if (both or mode == "groups") then
+
+		if (both) then tinsert (out, { text = AZT("Analysis group"), header = true }); end
+
+		local db = Atr_An_DB ();
+
+		tinsert (out, { text = AZT("(no group)"), func = function () Atr_An_AddToGroup (itemName, nil); end });
+
+		local i;
+		for i = 1, #db.groups do
+			local g = db.groups[i];
+			tinsert (out, { text = g, func = function () Atr_An_AddToGroup (itemName, g); end });
+		end
+
+		tinsert (out, { text = AZT("New group..."), func = function ()
+			gAn_PendingItem = itemName;
+			if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_NEW_GROUP"); end
+		end });
+	end
+
+	return out;
 end
 
--- `anchor` is the frame the menu should hang off -- the button or row that was
--- clicked.  `mode` is "both" (the Finder's row menu), "groups" or "lists".
--- Returns false when the dropdown API is not there to drive, so a caller can
--- fall back rather than error.
---
--- THIS COPIES THE ONE RECIPE KNOWN TO WORK IN THIS ADDON: the Finder's
--- Categories button (`Atr_Finder_CatDDMenu`, AuctionatorFinder.lua).  The first
--- version opened nothing at all, and differed from it in exactly two ways --
--- both of which are the bug (BACKLOG item 20):
---
---  * It called UIDropDownMenu_Initialize on EVERY click, just before toggling.
---    Initialize runs the init function immediately, so the buttons were built
---    against whatever UIDROPDOWNMENU_MENU_LEVEL / _VALUE the last menu in the UI
---    had left behind -- and any level but the one about to be shown puts them
---    where nobody looks.  ToggleDropDownMenu sets those globals itself and THEN
---    calls the init function, which is why initialising once at creation is not
---    an optimisation but the whole trick.  The menu's content still varies per
---    click: the init function reads gAnMenu_Item and gAnMenu_Mode when Toggle
---    calls it, and those are set below.
---  * The frame was never Hidden.  A UIDropDownMenuTemplate frame is a visible
---    widget by default.
+-- THE FRAME ---------------------------------------------------------------
+
+function Atr_An_HideItemMenu ()
+	if (gAnMenuFrame) then gAnMenuFrame:Hide(); end		-- its OnHide takes the eater with it
+end
+
+local function An_EnsureMenu ()
+
+	if (gAnMenuFrame) then return gAnMenuFrame; end
+	if (type (CreateFrame) ~= "function") then return nil; end
+
+	-- One click anywhere else closes the menu.  It covers the screen, so it MUST
+	-- never be able to outlive the menu -- see the OnHide below, which is the only
+	-- thing standing between a bug here and an unclickable UI.
+	local eat = CreateFrame ("Frame", "Atr_An_ItemMenuEater", UIParent);
+	eat:SetFrameStrata ("FULLSCREEN_DIALOG");
+	eat:SetFrameLevel (1);
+	eat:SetAllPoints (UIParent);
+	eat:EnableMouse (true);
+	eat:Hide();
+	eat:SetScript ("OnMouseDown", function () Atr_An_HideItemMenu (); end);
+
+	-- FULLSCREEN_DIALOG because this is deliberately opened, must clear the
+	-- auction house, and that strata is near-empty (see the strata table in
+	-- management/docs/CLAUDE.md).  NOT toplevel, ever: DRAG-FREEZE.md.
+	local f = CreateFrame ("Frame", "Atr_An_ItemMenu", UIParent);
+	f:SetFrameStrata ("FULLSCREEN_DIALOG");
+	f:SetFrameLevel (10);
+	f:EnableMouse (true);
+	f:Hide();
+
+	if (f.SetBackdrop) then
+		f:SetBackdrop ({
+			bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+			edgeFile = "Interface\\Buttons\\WHITE8X8",
+			edgeSize = 1,
+			insets   = { left = 1, right = 1, top = 1, bottom = 1 },
+		});
+		f:SetBackdropColor (0.05, 0.05, 0.07, 0.95);
+		f:SetBackdropBorderColor (0.30, 0.30, 0.34, 1);
+	end
+
+	f:SetScript ("OnHide", function ()
+		if (gAnMenuEater) then gAnMenuEater:Hide(); end
+	end);
+
+	f.title = f:CreateFontString (nil, "OVERLAY", "GameFontNormalSmall");
+	f.title:SetPoint ("TOPLEFT", AN_MENU_PAD, -6);
+
+	f.rows = {};
+
+	gAnMenuFrame = f;
+	gAnMenuEater = eat;
+
+	return f;
+end
+
+local function An_MenuRow (f, i)
+
+	if (f.rows[i]) then return f.rows[i]; end
+
+	local r = CreateFrame ("Button", nil, f);
+	r:SetHeight (AN_MENU_ROW_H);
+	r:SetPoint ("TOPLEFT", AN_MENU_PAD, -(AN_MENU_TOP + (i - 1) * AN_MENU_ROW_H));
+	r:SetPoint ("RIGHT", f, "RIGHT", -AN_MENU_PAD, 0);
+
+	r.text = r:CreateFontString (nil, "OVERLAY", "GameFontHighlightSmall");
+	r.text:SetPoint ("LEFT", 2, 0);
+	r.text:SetJustifyH ("LEFT");
+
+	local hl = r:CreateTexture (nil, "HIGHLIGHT");
+	hl:SetAllPoints ();
+	hl:SetTexture ("Interface\\QuestFrame\\UI-QuestTitleHighlight");
+	hl:SetBlendMode ("ADD");
+
+	r:SetScript ("OnClick", function (self)
+		local fn = self.func;
+		Atr_An_HideItemMenu ();
+		if (fn) then fn(); end
+	end);
+
+	f.rows[i] = r;
+	return r;
+end
+
+-- `anchor` is the frame the menu hangs off -- the button or row that was clicked.
 function Atr_An_ShowItemMenu (anchor, itemName, mode)
 
-	if (itemName == nil or itemName == "") then return false; end
-	if (type (UIDropDownMenu_Initialize) ~= "function" or type (ToggleDropDownMenu) ~= "function") then return false; end
-	if (type (CreateFrame) ~= "function") then return false; end
+	local entries = Atr_An_MenuEntries (itemName, mode);
+	if (#entries == 0) then return false; end
 
-	gAnMenu_Item = itemName;
-	gAnMenu_Mode = mode or "both";
+	local f = An_EnsureMenu ();
+	if (f == nil) then return false; end
 
-	if (gAnMenu_Frame == nil) then
-		gAnMenu_Frame = CreateFrame ("Frame", "Atr_An_ItemMenu", UIParent, "UIDropDownMenuTemplate");
-		gAnMenu_Frame:Hide();
-		UIDropDownMenu_Initialize (gAnMenu_Frame, An_Menu_Init, "MENU");
+	f.title:SetText ("|cffffd100"..tostring (itemName).."|r");
+
+	local widest = f.title:GetStringWidth() or 0;
+
+	local i;
+	for i = 1, #entries do
+
+		local e = entries[i];
+		local r = An_MenuRow (f, i);
+
+		if (e.header) then
+			r.text:SetText ("|cff888888"..e.text.."|r");
+			r.func = nil;
+		elseif (e.disabled) then
+			r.text:SetText ("|cff777777"..e.text.."|r");
+			r.func = nil;
+		else
+			r.text:SetText (e.text);
+			r.func = e.func;
+		end
+
+		local w = r.text:GetStringWidth() or 0;
+		if (w > widest) then widest = w; end
+
+		r:Show();
 	end
 
-	-- Toggle means toggle: with a menu already open, clicking the OTHER button
-	-- would close that one and open nothing, which reads as a dead button.
-	if (DropDownList1 and DropDownList1:IsShown() and CloseDropDownMenus) then
-		CloseDropDownMenus();
+	for i = #entries + 1, #f.rows do
+		f.rows[i]:Hide();
 	end
 
-	ToggleDropDownMenu (1, nil, gAnMenu_Frame, anchor, 0, 0);
+	f:SetWidth (math.max (130, widest + AN_MENU_PAD * 2 + 10));
+	f:SetHeight (AN_MENU_TOP + #entries * AN_MENU_ROW_H + 8);
+
+	-- Below the anchor, unless there is no room below -- a Finder row near the
+	-- bottom of the list would otherwise drop the menu off the screen.
+	f:ClearAllPoints ();
+
+	local bottom = anchor and anchor.GetBottom and anchor:GetBottom();
+
+	if (anchor == nil) then
+		f:SetPoint ("CENTER");
+	elseif (bottom and bottom < f:GetHeight() + 20) then
+		f:SetPoint ("BOTTOMLEFT", anchor, "TOPLEFT", 0, 2);
+	else
+		f:SetPoint ("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2);
+	end
+
+	gAnMenuEater:Show();
+	f:Show();
 
 	return true;
 end
@@ -859,6 +916,9 @@ function Atr_An_UpdateBuyButton ()
 
 	if (watch) then if (show) then watch:Show(); else watch:Hide(); end end
 	if (shop)  then if (show) then shop:Show();  else shop:Hide();  end end
+
+	-- a menu hanging off a button that just vanished has nothing to hang from
+	if (not show and Atr_An_HideItemMenu) then Atr_An_HideItemMenu (); end
 end
 
 -- RESCAN ------------------------------------------------------------------
@@ -1006,6 +1066,7 @@ function Atr_An_OnTabClick (index)
 	else
 		-- the pump follows the current pane, so a run cannot survive the tab
 		Atr_An_RefreshStop (true);
+		if (Atr_An_HideItemMenu) then Atr_An_HideItemMenu (); end
 		Atr_An_Panel:Hide();
 	end
 end
@@ -1276,9 +1337,21 @@ if (SlashCmdList) then
 			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
 		elseif (cmd == "group" and rest ~= "") then
 			Atr_An_AddGroup (rest);
+		elseif (cmd == "menu") then
+			-- DIAGNOSTIC, and the reason it exists is worth stating: the Buy tab's
+			-- buttons did nothing through two attempts, and from outside the client
+			-- "the click never fired" and "the menu never showed" look identical.
+			-- This opens the same menu without a button in the way, so the next
+			-- report separates them in one step instead of one round trip.
+			local nm = Atr_An_BuyItemName () or rest;
+			if (nm == nil or nm == "") then
+				if (zc and zc.msg_atr) then zc.msg_atr (AZT("usage: /atranalysis menu <item name>, or open an item on the Buy tab first")); end
+			elseif (not Atr_An_ShowItemMenu (nil, nm, "both")) then
+				if (zc and zc.msg_atr) then zc.msg_atr (AZT("Analysis: the menu could not be built")); end
+			end
 		else
 			if (zc and zc.msg_atr) then
-				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  /atranalysis group <name>"));
+				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  menu [item name]"));
 			end
 		end
 		Atr_An_Redisplay ();

@@ -3660,7 +3660,7 @@ local function Fdr_Row_OnClick (self, button)
 	if (button == "RightButton") then
 		local nm = self.rec.name;
 		if (nm and nm ~= "" and type (Atr_An_ShowItemMenu) == "function") then
-			Atr_An_ShowItemMenu (self, nm, "both");		-- anchored to the row, like the Categories button
+			Atr_An_ShowItemMenu (self, nm, "both");		-- hangs off the row
 		end
 		return;
 	end
