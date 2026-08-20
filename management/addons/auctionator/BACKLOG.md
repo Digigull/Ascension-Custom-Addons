@@ -3775,6 +3775,50 @@ same names. That remains a separate item.
 fold, a folded record covering at most a week, folding being idempotent across repeated trims, and
 the median refusing at one and two days while a single absurd day fails to move it at four.
 
+### Sample hygiene, 2026-08-21 — "what if I list one linen for 1000 gold?"
+
+The owner asked whether any of this survives them listing a cheap item at an absurd price. Tracing
+it found **three holes**, and the owner named the third themselves: *"generally there will be a
+normal, medium and high price in the AH on trade goods, then the dumb mega high price here and
+there. Honestly cutting off some of the high might even have value on high quantity listings."*
+Detail in `HISTORY-STORE.md` §15.
+
+**Already protected, and worth saying first:** the sample was always the quantity-weighted median of
+every listing, weighted by **stack size** — so *a single* piece of linen carries the least possible
+influence — and one bad day cannot move a 30-day median. Stage 2 had already removed the worst
+version, where the cascade fell through to your own **posting** history.
+
+1. **Your own listings were in the sample.** No price feed ever excluded them; the only owner test
+   in the scan is a display marker for the browse list. `Atr_Hist_Sample` drops them now — but keeps
+   listings whose owner came back **nil**, because this API returns those often enough that the
+   Analysis tab counts them and dropping them would quietly thin every book. When *every* listing is
+   yours the sample is **nil**: an auction house holding only your listing has told you nothing, so
+   no observation is recorded rather than a price.
+2. **The mega-high outlier, on a WEIGHTED median.** A median resists a few extreme values; a
+   quantity-weighted one does not resist a single enormous stack at a silly price, because weight is
+   proportional to size. Listings above **4x the unweighted middle** are now rejected first —
+   unweighted for the centre on purpose, one vote per listing, so a giant stack cannot drag the
+   number it is measured against. **Only the high tail**: a cheap listing is a real opportunity and
+   is what the Auction line reports, and trimming both ends would bias the figure downward. And
+   rejection **can never eat the book** — if it would leave fewer than two, the outliers were the
+   market; a book of three or fewer is never trimmed, because you cannot name an outlier in three
+   numbers.
+3. **A thin book is not a price.** The day is still recorded — it happened — but marked with a `/L`
+   suffix carrying the listing count, and the four readers that quote one day's close then decline:
+   the cascade skips back to the newest real book (falling back to a thin one only if that is all
+   there has ever been), the Week column and the Sell sentence drop thin days from both ends, and
+   the median drops them outright. An always-thin item gets no "typical price" at all, which is the
+   honest answer. The suffix costs 2-3 bytes on the minority of days that carry one.
+
+**Deliberately left alone:** the mean database still gets the *uncleaned* sample. Changing it would
+be a behaviour change to a shipped number for the sake of a store that is being superseded anyway —
+and it is one more reason for the deletion `/atrhistory audit` exists to justify.
+
+**Tested:** 114 assertions, running the owner's exact scenarios — a mega-high listing in a healthy
+book, a 400-stack of junk against a weighted median, your own listing failing to move the sample, a
+book that is only yours returning nothing, unknown owners surviving, a uniformly dear book not
+mistaken for outliers, and a thin day recorded, marked, then declined by each reader in turn.
+
 **What it unblocks.** Item 8 group C (the week-over-week `+240%` column — this *is* that item's
 missing input), item 28's weekly demand signal, item 30's "ore is up, go mine" card, an age-aware
 tooltip line, and a Sell tab that can say you are undercutting a rising market. Eventually it makes

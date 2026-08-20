@@ -803,15 +803,19 @@ function AtrSearch:Finish()
 				-- median collapse onto the Auction line; the across-listings
 				-- median lets it reflect the whole book.  Fall back to the lowest
 				-- price only when no listing detail is available.
+				local medsample, listrows = Atr_ScanListingsMedian (scn);
+				medsample = medsample or newprice;
+
 				if (type (gAtr_MeanDB) == "table") then
-					local medsample = Atr_ScanListingsMedian (scn) or newprice;
-
 					Atr_MeanAppend (gAtr_MeanDB, scn.itemName, medsample);		-- item 13: one-sample shape
+				end
 
-					-- the dated series takes the same sample (BACKLOG item 31)
-					if (type (Atr_Hist_Note) == "function") then
-						Atr_Hist_Note (scn.itemName, medsample);
-					end
+				-- The dated series takes its OWN sample off the same listings
+				-- (BACKLOG item 31): it drops your own auctions and rejects the
+				-- junk end of the book, neither of which the mean database does.
+				if (type (Atr_Hist_Note) == "function") then
+					local hs, hn = Atr_Hist_Sample (listrows);
+					if (hs) then Atr_Hist_Note (scn.itemName, hs, nil, hn); end
 				end
 			end
 		end
@@ -1324,16 +1328,17 @@ function Atr_ScanListingsMedian (scn)
 			tinsert (entries, {
 				price  = sd.buyoutPrice / sd.stackSize,
 				weight = sd.stackSize,
+				owner  = sd.owner,			-- for Atr_Hist_Sample; the median ignores it
 			});
 		end
 	end
 
 	local med = Atr_WeightedMedianPrice (entries);
 	if (med > 0) then
-		return med;
+		return med, entries;
 	end
 
-	return nil;
+	return nil, entries;			-- the caller may still want to clean them itself
 end
 
 -----------------------------------------
@@ -1417,7 +1422,10 @@ function Atr_FullScanAnalyze()
 
 		for x = 1, numBatchAuctions do
 
-			local name, texture, count, quality, canUse, level, minBid, minIncrement, buyoutPrice = GetAuctionItemInfo("list", x);
+			-- owner is the 12th return, and it is read for the history's sample
+			-- (BACKLOG item 31) -- your own listings are not the market
+			local name, texture, count, quality, canUse, level, minBid, minIncrement, buyoutPrice,
+				  _bid, _highBidder, owner = GetAuctionItemInfo("list", x);
 			
 			if (name ~= nil and buyoutPrice ~= nil) then
             
@@ -1439,7 +1447,7 @@ function Atr_FullScanAnalyze()
 					Atr_AddToLowPrices (lowprices[name], itemPrice);
 
 					if (not alllistings[name]) then alllistings[name] = {}; end
-					tinsert (alllistings[name], { price = itemPrice, weight = count });
+					tinsert (alllistings[name], { price = itemPrice, weight = count, owner = owner });
 				end
 			end
 
@@ -1492,12 +1500,13 @@ function Atr_FullScanAnalyze()
 
                 Atr_MeanAppend (gAtr_MeanDB, name, medsample)        -- item 13: one-sample shape
 
-				-- the dated series takes the same sample (BACKLOG item 31).  This
-				-- path is upstream's getAll full scan, which Ascension disables --
-				-- wired anyway so the four feeds cannot disagree about what a
-				-- sample is if it ever comes back.
+				-- The dated series takes its own cleaned sample (BACKLOG item 31).
+				-- This path is upstream's getAll full scan, which Ascension
+				-- disables -- wired anyway so the feeds cannot disagree about what
+				-- a sample is if it ever comes back.
 				if (type (Atr_Hist_Note) == "function") then
-					Atr_Hist_Note (name, medsample);
+					local hs, hn = Atr_Hist_Sample (alllistings[name]);
+					if (hs) then Atr_Hist_Note (name, hs, nil, hn); end
 				end
 			end
 		end

@@ -141,8 +141,11 @@ function Fdr_PriceDB_Update (results, partial)
 						end
 						quals[rec.name] = rec.quality or 1;
 
+						-- `owner` rides along for the history's sample only (item 31):
+						-- it is what lets Atr_Hist_Sample drop your own listings, and
+						-- the weighted median ignores the field entirely.
 						if (not listings[rec.name]) then listings[rec.name] = {}; end
-						tinsert (listings[rec.name], { price = unit, weight = cnt });
+						tinsert (listings[rec.name], { price = unit, weight = cnt, owner = rec.owner });
 					end
 				end
 			end
@@ -178,14 +181,21 @@ function Fdr_PriceDB_Update (results, partial)
 				-- one call, so the one-sample shape is handled in one place (item 13)
 				Atr_MeanAppend (gAtr_MeanDB, name, medsample);
 
-				-- ... and the dated series beside it (BACKLOG item 31), taking the
-				-- same sample.  In here rather than anywhere else on purpose: the
-				-- four rules above are what make a PARTIAL scan safe to store, and
-				-- they matter more to a series than to a current price -- a bad
-				-- current price is overwritten by the next scan, a bad sample is
-				-- read back forever.  Off by default, so this is one boolean.
+				-- ... and the dated series beside it (BACKLOG item 31).  In here
+				-- rather than anywhere else on purpose: the four rules above are
+				-- what make a PARTIAL scan safe to store, and they matter more to a
+				-- series than to a current price -- a bad current price is
+				-- overwritten by the next scan, a bad sample is read back forever.
+				-- Off by default, so this is one boolean.
+				--
+				-- It takes its OWN sample rather than reusing medsample: the series
+				-- drops your own listings and rejects the junk end of the book,
+				-- which the mean database deliberately does not (that would be a
+				-- behaviour change to a shipped number, and it is being superseded
+				-- anyway). Falls back to medsample if the cleaning left nothing.
 				if (type (Atr_Hist_Note) == "function") then
-					Atr_Hist_Note (name, medsample);
+					local hs, hn = Atr_Hist_Sample (listings[name]);
+					if (hs) then Atr_Hist_Note (name, hs, nil, hn); end
 				end
 			end
 		end
