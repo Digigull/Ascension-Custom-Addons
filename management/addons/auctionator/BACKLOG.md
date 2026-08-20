@@ -14,7 +14,11 @@ read, and the board turned out to be a real gossip NPC behind a custom frame —
 capture went in dark on the strength of it. Its stages 2–3 are readers waiting on elapsed time.
 **Item 29 shipped in full** on 2026-08-20, all three stages. **Item 30 — the Advisor — shipped in
 full** on 2026-08-21: a main tab, `AuctionatorAdvisor.lua`, six cards over figures four other
-subsystems already returned, and it is the payoff the whole run of work was heading for.
+subsystems already returned, and it is the payoff the whole run of work was heading for. **Its
+stage 2 shipped the same day**, after the owner's first session with it — icon rows with per-item
+controls, an ignore list, slow-mover flags and a farm list — which turned it from a page you read
+into a page you answer. **Item 34** is what stage 2 deliberately left undone: a minimap window over
+the farm list it now fills.
 **Item 31 shipped in full** on 2026-08-21 —
 the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
 and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
@@ -3767,6 +3771,95 @@ stack without overlapping; do `[Plan N]`, `[Watch 3]` and `[Show me]` land on th
 drive the Analysis filter box, which is a substring match). Everything else on the tab is a figure
 the Analysis tab was already showing.
 
+
+---
+
+### Stage 2, 2026-08-21 — you can answer back
+
+**Asked (owner, after the first in-game session):** an area below each of *Worth Farming*, *Make
+this* and *Watch these* holding the recommended **items as icons**, each with controls — add to
+farm list / ignore / skip on Farm, the same plus **slow mover** on Make, and on Watch a button that
+files the item into a **Watch category on the Market view** and then changes to **"Added!"** so you
+do not spam-click it wondering. A farm list window on a minimap button, later.
+
+**The tab stopped being a page you read and became a page you answer.** That is the real change,
+and it is worth naming: every card before this said something true and left you to act on it
+somewhere else. Now the three cards that recommend *items* offer three candidates each and let you
+say what you think of them — which is what makes a wrong recommendation survivable rather than
+annoying. The owner's own case is the argument: **the best gold-per-day on the watchlist can be a
+material you only get by standing in a zone where losing your equipped gear is on the table.** No
+figure the addon holds knows that. Only you do, and before this there was nowhere to say it.
+
+**Ignore and skip, and the difference is the whole design** (owner's correction — the first draft
+proposed "decline for now" and "skip", which were two flavours of the same thing):
+
+| | Means | Lives | Undo |
+|---|---|---|---|
+| **Ignore** | stop suggesting this, on **every** card | saved | the **Ignored (N)** button, top right of the tab |
+| **Skip** | next one, please | **session only** | `/reload`, or logging out |
+
+Skip being session-scoped is deliberate and is the more interesting half: it is a decision about
+*today*, not a verdict on the item, so remembering it past a logout would be the addon
+over-reading you. Ignore is the opposite — it is a verdict, so it is permanent and, precisely
+because it is permanent, it needed an undo that is visible without being sought. Hence the count on
+the button: the list is discoverable even when you have forgotten it exists.
+
+**Ignore is honoured tab-wide, including on the two cards with no controls** (Buy and Careful).
+"Stop suggesting this" has to mean the whole tab or it means nothing — being told about a reagent
+on one card straight after telling the tab to drop it on another is exactly the behaviour the list
+exists to stop.
+
+**Slow mover sinks, it does not hide** (owner's choice of three). A recipe you will be holding for
+a week has not stopped earning its margin, so it keeps its place on the card and its figures are
+untouched; it just sorts below anything not flagged, and the row says *"you flagged this a slow
+mover — expect to hold it a week or more"*. Within each half the order is the ranking's own, which
+keeps the arithmetic honest.
+
+**Two of the four controls are buttons, not checkboxes**, and the request called all of them
+checkboxes — so the reasoning is at the call site. A checkbox shows a **state** you can see and
+reverse in place; a button performs an **action**. Farm list and Slow mover are states, so the row
+stays, ticked. Ignore and Skip both **remove the row**, so there would be no ticked box left to
+look at. Skip's own description settled it: *"just moves past to next recommendation"* is an
+action, and the next candidate slides into the row you clicked.
+
+**The "Added!" bug, caught before it shipped, and it is a good one.** The Watch card's candidates
+are *by definition* the reagents that are not watched — so the instant the button worked, the row
+qualified for removal and the next candidate slid into its place. The label would have flashed out
+of existence rather than ever reading "Added!", and the click would have looked exactly like a
+click that did nothing, which is the confusion the label was asked for in the first place. Fixed
+with a session set (`gAdv_JustWatched`) that holds a name on the card until you **leave** the tab:
+staying on it is when you want to see what you just did, coming back to it is when you want fresh
+suggestions.
+
+**The page scrolls now, and it had to.** Six cards carrying three icon rows and up to twelve
+controls each is roughly twice the height this panel has. A real `ScrollFrame` was the cheap
+answer — the cards anchor into a child frame whose height the redisplay computes, and the template
+brings its own bar and wheel handling.
+
+**What went in**
+
+- `AUCTIONATOR_ADVISOR`, a **new saved variable** — `ignore`, `slow`, `farm`. Its own file rather
+  than a corner of `AUCTIONATOR_ANALYSIS`, because item 34's minimap reader should not have to
+  load the watchlist database to find out what to farm. See `FRAMEWORK.md` §5.
+- Three cards now return an `items` list of up to **three** candidates instead of naming one. Three
+  because the point of offering a choice is that the top one might be a thing you will not do — and
+  a fourth turns the card back into the table on the tab next door.
+- Icons behave like every other item in this addon: **hover** for the real tooltip, **click** to go
+  and look at it. That is one control instead of a "Show me" per row, and it is the convention the
+  Analysis rows already set.
+- `Atr_Advisor_FarmList()` and `Atr_Advisor_IgnoreList()`, global and free of any WoW API, so
+  item 34 can be a **reader over the list** rather than a second copy of it.
+- The Watch button files into a group called **`Advisor`**, created on first use, so you can always
+  tell what the tab suggested from what you put on the list yourself.
+
+**Reasoned and exercised offline, not seen in game.** The rules were driven through hand-made
+returns again — a rich account, then ignoring two items, then flagging a slow mover, then a farm
+list round trip. That run is what proved ignore removes an item from *every* card (ignoring
+`Essence of Fire` dropped the whole Buy card and a Watch row with it), that the next candidate
+slides in behind it, and that a 1%-margin big-ticket recipe still cannot reach the Make card. The
+harness was thrown away rather than committed. **Not seen:** the rows themselves — icon alignment,
+whether the packed controls fit the row width at Ascension's panel size, and the scrollbar.
+
 ---
 
 ## 31. A market price history, in a companion file, off by default — DONE
@@ -4181,10 +4274,53 @@ which covers the feed rather than the cells.
 
 ---
 
+---
+
+## 34. NEW — the farm list, on a minimap button
+
+**Asked (owner, 2026-08-21), and explicitly deferred by them in the same breath:** *"Then we could
+have a farm list later on, attached to a mini map button."*
+
+**The list already exists.** Item 30 stage 2 built the store and the writer — ticking *Farm list*
+on a Worth Farming row puts a name into `AUCTIONATOR_ADVISOR.farm`, and `Atr_Advisor_FarmList()`
+returns it sorted, global and free of any WoW API. What does not exist is anywhere to *read* it
+away from the auction house, which is the entire point: **a farm list is used in the field**, and
+the auction house is the one place you are certainly not standing when you need it.
+
+**Why it is its own item and not item 30 stage 3.** It is the first piece of this addon's UI that
+lives outside the auction house window — no `AuctionFrame` parent, no tab, and a minimap button is
+a different animal from a panel (drag-to-reposition around the minimap, a saved angle, and a
+right-click menu are all conventions it has to meet). `FRAMEWORK.md` §4's "build in World 2" rule
+does not cover it, because it is not in either world.
+
+**What it wants, in the order it wants it:**
+
+1. A minimap button. `LibDBIcon` is the usual answer and this addon ships no Ace libraries, so the
+   choice is vendoring one or hand-rolling the ~60 lines. Hand-rolling is probably right here — the
+   whole addon has stayed library-free.
+2. A window that reads `Atr_Advisor_FarmList()`: icon, name, and what the Advisor thought it was
+   worth per day when you added it. **A reader, not a second store** — the same rule the Advisor
+   itself is built on.
+3. Tick-off, which is the only new writer: `Atr_Advisor_SetFarmed(name, false)`.
+
+**Honest limits, to design around rather than discover:**
+
+- **The rate goes stale the moment you walk away.** What made something worth farming was a
+  gold-per-day figure at the auction house's prices, and you are reading the list somewhere with no
+  auction house. Store the figure *as it was when you added it*, with its date, and show it that
+  way — a live-looking number that is three days old is worse than an obviously old one.
+- **A farm list is not a shopping list**, and the two must not merge. The Reagents view's bill says
+  what to *buy*; this says what to *go and get*. The same item can honestly be on both.
+- **Strata.** A window parked on screen while you play is the `LOW` + frame level 100 case in
+  `management/docs/CLAUDE.md`'s table, not the `MEDIUM` default — this is the meter case, not the
+  dialog case. And nothing here calls `SetToplevel(true)`, ever (`DRAG-FREEZE.md`).
+
+---
+
 ## Suggested order
 
-Items 1–9, 11–27, 29, 30 and 31 are **DONE** or deliberately parked, and item 10 closed without any
-code (2026-08-19). **Item 32 is unstarted** and **item 28 is two stages in, waiting on elapsed
+Items 1–9, 11–27, 29, 30, 31 and 33 are **DONE** or deliberately parked, and item 10 closed without
+any code (2026-08-19). **Items 32 and 34 are unstarted** and **item 28 is two stages in, waiting on elapsed
 time** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day, item 30 built
 the day after that, and item 32 recorded the same day as the follow-on item 31 promised. What is
 otherwise left is follow-on work inside shipped items, two standing deferrals, and two questions
@@ -4223,18 +4359,27 @@ short of a readout. In order:
    separate file was for, and it is the number that settles whether this becomes core. Then
    `/atrhistory audit`, which decides the one follow-on: whether
    `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its 5267 rows.
-4. ~~**Item 30 — the Advisor**~~ — **BUILT 2026-08-21**, in one pass, exactly as scoped: a
-   renderer, no new capture, no new saved variable. Its prediction held in both directions — the
-   §8 main-tab recipe took 15 sites unchanged, and the one figure no function returned went into
-   the *profession file* rather than into the Advisor (`Atr_Craft_TopReagent`), which is the rule
-   the tab is built on. **What is left is one in-game sitting**: does the eleventh tab still fit
-   on the strip, do the cards stack without overlapping, and do the three buttons land on the
-   right row. See item 30's *Built* section for what was and was not verified.
-5. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
+4. ~~**Item 30 — the Advisor, stages 1 and 2**~~ — **BUILT 2026-08-21**, both the same day. Stage
+   1 landed exactly as scoped: a renderer, no new capture, no new saved variable, and the one
+   figure no function returned went into the *profession file* rather than into the Advisor
+   (`Atr_Craft_TopReagent`). Stage 2 answered the owner's first session with it — three candidates
+   per card with icons and per-item controls, ignore (saved, tab-wide, undoable from a button that
+   carries its own count) and skip (session-only), slow-mover flags that sink a recipe without
+   hiding it, a farm list, and a Watch button that files into an `Advisor` group and then reads
+   **Added!**. It also gained a saved variable, which `FRAMEWORK.md` §6 explains is not a hole in
+   the "computes nothing" rule: *your decisions are an input.* **What is left is one in-game
+   sitting** — the tab strip at eleven tabs, and now the icon rows: alignment, whether the packed
+   controls fit the row width, and the scrollbar.
+5. **Item 34 — the farm list on a minimap button.** The one piece stage 2 deliberately left
+   undone, and the owner deferred it themselves. The list and its reader already exist
+   (`Atr_Advisor_FarmList()`), so this is a window and a minimap button and nothing else — but it
+   is the first UI in this addon that lives *outside* the auction house, which is why it is its own
+   item rather than a third stage.
+6. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
    fallback driver (tick boxes on the Crafting view plus a batch size) turned out to be the cheap
    half, and item 30's Make card can hand the same plan in through `Atr_An_PlanMap()` when it
    exists. See item 29's second *Built* section.
-6. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
+7. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
    all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
    inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing
    lifetime, undercut churn), which are arithmetic over data the addon already holds. **C** (price
@@ -4243,23 +4388,23 @@ short of a readout. In order:
    `{ t, low }` on each watched item's existing `obs` record, not a retrofit of the mean database,
    which sorts by price and evicts at random. The item carries the owner's worked example, the
    storage limits of keeping history for everything, and why the obvious shortcut fails.
-7. **Item 32 — retire the mean price database.** Not startable yet, and parked behind two things:
+8. **Item 32 — retire the mean price database.** Not startable yet, and parked behind two things:
    a month of real history on the owner's account, and the decision to make that history **core**
    rather than opt-in. Deleting it while the history is off by default would take a number off the
    tooltip and give nothing back. `/atrhistory audit` is the input.
-8. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+9. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
-9. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+10. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
    all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
    data has never been seen.
-10. **Item 12's sizing question** — how many names on this server carry more than one variant.
+11. **Item 12's sizing question** — how many names on this server carry more than one variant.
    Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
    only whether extending part 3 is worth it, not what shape it would take.
-11. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+12. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
    purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
    comparison against a real mismatched pair, never an imagined one.
-12. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+13. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
    price. The craft cost reproduces exactly from real data, so this is an auction-house question
    rather than an addon one, and there may be no work here at all.
 
