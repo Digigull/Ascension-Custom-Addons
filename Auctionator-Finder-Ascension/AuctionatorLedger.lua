@@ -709,6 +709,81 @@ end
 local LDG_NUM_ROWS = 16;
 local LDG_ROW_H    = 20;
 
+-- THE TABLE IS MEASURED, NOT ASSUMED 768 WIDE (BACKLOG item 2) --------------
+--
+-- This panel was built to Blizzard's 768px auction house minus its insets, and
+-- every width in it was a constant: a 738 panel, a 690 scroll frame, 660 rows and
+-- five columns at hand-counted offsets.  Ascension's window is wider, so the
+-- whole table sat left with a band of dead backdrop beyond its right edge.
+--
+-- The Analysis tab hit this exact bug first and the fix is ported from it rather
+-- than reinvented (AuctionatorAnalysis.lua, An_LayoutCols and Atr_An_Init): read
+-- the real window width, derive everything from it, and hand the slack to the
+-- column that can use it.  Both tabs now compute their panel the same way, which
+-- is the point -- two answers to "how wide is the auction house" is how one of
+-- them ends up wrong again.
+--
+-- THE SCROLL BAR'S LANE COMES OFF THE PANEL, NOT OFF THE ROWS.  A
+-- FauxScrollFrame's bar is anchored to the scroll frame's TOPRIGHT and hangs
+-- OUTSIDE it, so reserving room inside the rows as well spends it twice and
+-- leaves the table short of the right edge by that much again.  That is the
+-- mistake the Analysis comment records; it is not repeated here.
+local LDG_HEAD_X0 = 14;		-- the scroll frame's own inset from the panel's left
+local LDG_LEAD    = 6;		-- gap before the first column, inside a row
+local LDG_COL_GAP = 4;		-- gap between columns
+local LDG_SB_LANE = 26;		-- what the scroll bar needs to the RIGHT of the rows
+
+-- A placeholder: Atr_Ledger_Init recomputes it from the real window.
+local LDG_ROW_W = 660;
+
+-- ITEM IS THE ONLY COLUMN THAT GROWS, and that is a judgement rather than an
+-- accident.  A date is a date, a quantity is two characters and money is money --
+-- widening any of them buys nothing.  An item name is the one cell here that
+-- gets truncated on a narrow window, and on this server it is also the longest
+-- thing in the table, so the slack goes to it whole.
+--
+-- `w` is a minimum, `grow` a share of what is left over, `just` the alignment --
+-- the same three fields the Analysis columns carry, so the two read alike.
+local LDG_COLS = {
+	{ key = "when",  head = "When",  w = 88,  grow = 0 },
+	{ key = "what",  head = "What",  w = 86,  grow = 0 },
+	{ key = "item",  head = "Item",  w = 300, grow = 1 },
+	{ key = "qty",   head = "Qty",   w = 44,  grow = 0 },
+	{ key = "money", head = "Money", w = 120, grow = 0, just = "RIGHT" },
+};
+
+-- Fills in each column's computed x (`cx`) and width (`cw`) for a row of `rowW`.
+-- A stripped-down An_LayoutCols: no delete lane and no leading tick lane, because
+-- this table has neither.
+local function Ldg_LayoutCols (cols, rowW)
+
+	local base, grow, last = 0, 0, nil;
+	local i, c;
+	for i, c in ipairs (cols) do
+		base = base + c.w;
+		if ((c.grow or 0) > 0) then grow = grow + c.grow; last = i; end
+	end
+
+	local slack = rowW - LDG_LEAD - LDG_COL_GAP * (#cols - 1) - base;
+	if (slack < 0 or grow == 0) then slack = 0; end		-- narrow window: minimums win
+
+	local x, handed = LDG_LEAD, 0;
+	for i, c in ipairs (cols) do
+		local add = 0;
+		if (slack > 0 and (c.grow or 0) > 0) then
+			if (i == last) then
+				add = slack - handed;			-- the last grower absorbs the rounding
+			else
+				add = math.floor (slack * c.grow / grow);
+				handed = handed + add;
+			end
+		end
+		c.cw = c.w + add;
+		c.cx = x;
+		x = x + c.cw + LDG_COL_GAP;
+	end
+end
+
 -- What each src reads as, and the colour it carries. Money OUT is what you
 -- spent, money IN is what came back; expiry and cancellation move no money at
 -- all and must not be coloured as though they did.
@@ -819,10 +894,27 @@ function Atr_Ledger_Init ()
 
 	if (Atr_Ledger_Panel or type (CreateFrame) ~= "function") then return; end
 
+	-- Measured, exactly as Atr_An_Init does it: the panel starts 10 in from the
+	-- window's left and ends where the backdrop does, 12 in from its right, so it
+	-- IS the content area and anything anchored right is genuinely right.  The
+	-- height is left alone -- it already matches.  The < 600 guard is the
+	-- not-laid-out-yet case, where GetWidth can come back as something useless.
+	local frameW = 768;
+	if (AuctionFrame and AuctionFrame.GetWidth) then frameW = AuctionFrame:GetWidth() or 768; end
+	if (frameW < 600) then frameW = 768; end
+
+	local panelW = math.floor (frameW) - 22;
+
 	local panel = CreateFrame ("Frame", "Atr_Ledger_Panel", AuctionFrame);
-	panel:SetSize (738, 447);
+	panel:SetSize (panelW, 447);
 	panel:SetPoint ("TOPLEFT", 10, 0);
 	panel:Hide();
+
+	-- Rows are the full scroll width; the bar gets LDG_SB_LANE beyond it, and 4
+	-- more keeps it off the backdrop's edge.
+	local scrollW = panelW - LDG_HEAD_X0 - LDG_SB_LANE - 4;
+	LDG_ROW_W = scrollW;
+	Ldg_LayoutCols (LDG_COLS, LDG_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
 	bg:SetTexture (0, 0, 0, 0.85);
@@ -840,26 +932,23 @@ function Atr_Ledger_Init ()
 	note:SetPoint ("TOP", title, "BOTTOM", 0, -4);
 	note:SetText (LZT("Auction house activity. Vendor sales are not recorded yet."));
 
-	-- column headings, matched to the row layout below
-	local function head (text, x)
+	-- Column headings, from the same table the row cells come from.  They used to
+	-- be five hand-counted numbers that had to be kept in step with five more on
+	-- the rows below -- a heading is just a cell's own x shifted by the scroll
+	-- frame's inset, so it is computed rather than remembered.
+	local i, c;
+	for i, c in ipairs (LDG_COLS) do
 		local fs = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
-		fs:SetPoint ("TOPLEFT", x, -74);
-		fs:SetText (text);
-		return fs;
+		fs:SetPoint ("TOPLEFT", LDG_HEAD_X0 + c.cx, -74);
+		fs:SetText (LZT(c.head));
 	end
-
-	head (LZT("When"),  20);
-	head (LZT("What"),  110);
-	head (LZT("Item"),  200);
-	head (LZT("Qty"),   500);
-	head (LZT("Money"), 590);
 
 	-- Created BEFORE the rows on purpose: sibling frames draw in creation order,
 	-- so building the scroll first leaves the rows on top of it.  The other way
 	-- round the scrollbar covers the money column and the rows stop taking mouse.
 	local scroll = CreateFrame ("ScrollFrame", "Atr_Ledger_ScrollFrame", panel, "FauxScrollFrameTemplate");
-	scroll:SetPoint ("TOPLEFT", 14, -92);
-	scroll:SetSize (690, LDG_NUM_ROWS * LDG_ROW_H);
+	scroll:SetPoint ("TOPLEFT", LDG_HEAD_X0, -92);
+	scroll:SetSize (scrollW, LDG_NUM_ROWS * LDG_ROW_H);
 	scroll:SetScript ("OnVerticalScroll", function (self, offset)
 		if (FauxScrollFrame_OnVerticalScroll) then
 			FauxScrollFrame_OnVerticalScroll (self, offset, LDG_ROW_H, Atr_Ledger_Redisplay);
@@ -867,29 +956,26 @@ function Atr_Ledger_Init ()
 	end);
 
 	local rowsHolder = CreateFrame ("Frame", nil, panel);
-	rowsHolder:SetPoint ("TOPLEFT", 14, -92);
-	rowsHolder:SetSize (700, LDG_NUM_ROWS * LDG_ROW_H);
+	rowsHolder:SetPoint ("TOPLEFT", LDG_HEAD_X0, -92);
+	rowsHolder:SetSize (LDG_ROW_W, LDG_NUM_ROWS * LDG_ROW_H);
 
-	local i;
 	for i = 1, LDG_NUM_ROWS do
 
 		local line = CreateFrame ("Button", "Atr_Ledger_Row"..i, rowsHolder);
-		line:SetSize (660, LDG_ROW_H);
+		line:SetSize (LDG_ROW_W, LDG_ROW_H);
 		line:SetPoint ("TOPLEFT", 0, -(i - 1) * LDG_ROW_H);
 
-		local function col (x, w, justify)
+		-- Keyed off LDG_COLS, so a cell and its heading cannot drift apart: both
+		-- read the same cx/cw.  The field names are unchanged, which is what keeps
+		-- Atr_Ledger_Redisplay's line.when / line.what / ... working untouched.
+		local c;
+		for _, c in ipairs (LDG_COLS) do
 			local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-			fs:SetPoint ("LEFT", x, 0);
-			fs:SetWidth (w);
-			fs:SetJustifyH (justify or "LEFT");
-			return fs;
+			fs:SetPoint ("LEFT", c.cx, 0);
+			fs:SetWidth (c.cw);
+			fs:SetJustifyH (c.just or "LEFT");
+			line[c.key] = fs;
 		end
-
-		line.when	= col (6,   88);
-		line.what	= col (96,  86);
-		line.item	= col (186, 300);
-		line.qty	= col (486, 44);
-		line.money	= col (534, 120, "RIGHT");		-- ends at 654; the bar owns 664+
 
 		-- the row's item tooltip, when the row still carries a link
 		line:SetScript ("OnEnter", function (self)
@@ -908,12 +994,59 @@ function Atr_Ledger_Init ()
 	totals:SetPoint ("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 34);
 	totals:SetText ("");
 
+	-- TOP RIGHT, UNDER THE CLOSE BUTTON (BACKLOG item 3, owner's placement).  It
+	-- sat at the panel's BOTTOMRIGHT, which on the Analysis tab is where the
+	-- tab-level ACTION button lives (Rescan) -- and Clear is not that kind of
+	-- button.  Up here it is out of the way of the table and reads as chrome,
+	-- which is what a destructive control should look like.
+	--
+	-- The y clears Blizzard's close button (32px from the frame's top) and stops
+	-- above the dark backdrop, which starts at -70.
 	local clear = CreateFrame ("Button", "Atr_Ledger_ClearButton", panel, "UIPanelButtonTemplate");
 	clear:SetSize (70, 22);
-	clear:SetPoint ("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -22, 30);
+	clear:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -16, -46);
 	clear:SetText (LZT("Clear"));
+
+	-- ASK FIRST, AND THIS IS THE HALF OF THE ITEM THAT MATTERS.  One click used to
+	-- destroy the ledger outright.  Every other store in this addon regrows by
+	-- scanning -- prices, vendor learning, the recipe book, the market history in
+	-- its own file -- and THIS ONE DOES NOT: it is a record of things that
+	-- happened, and nothing in the client can be asked for them again.
+	--
+	-- The count is in the question on purpose.  "Are you sure?" is a noise a
+	-- player clicks through; "delete 412 rows" is a consequence.
 	clear:SetScript ("OnClick", function ()
-		Atr_Ledger_Clear ();
-		Atr_Ledger_Redisplay ();
+		if (StaticPopup_Show) then
+			StaticPopup_Show ("ATR_LEDGER_CLEAR", #Ldg_Rows ());
+		else
+			Atr_Ledger_Clear ();			-- no popup machinery: behave as before
+			Atr_Ledger_Redisplay ();
+		end
 	end);
+
+	clear:SetScript ("OnEnter", function (self)
+		if (GameTooltip) then
+			GameTooltip:SetOwner (self, "ANCHOR_LEFT");
+			GameTooltip:SetText (LZT("Clear the ledger"), 1, 1, 1);
+			GameTooltip:AddLine (LZT("Deletes every recorded buy, sale and posting. This is the one thing here that scanning cannot grow back -- it is a record of what happened, not a cache. You will be asked to confirm."), 0.8, 0.8, 0.8, true);
+			GameTooltip:Show();
+		end
+	end);
+	clear:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+end
+
+if (StaticPopupDialogs) then
+
+	-- %d is filled by StaticPopup_Show's first argument, above.
+	StaticPopupDialogs["ATR_LEDGER_CLEAR"] = {
+		text		= LZT("Delete all %d ledger rows?\n\nThis is your record of what you actually bought and sold. Scanning cannot bring it back."),
+		button1		= YES,
+		button2		= NO,
+		OnAccept	= function ()
+			Atr_Ledger_Clear ();
+			Atr_Ledger_Redisplay ();
+		end,
+		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1,
+		showAlert = 1,			-- the yellow (!) -- this one deletes something
+	};
 end

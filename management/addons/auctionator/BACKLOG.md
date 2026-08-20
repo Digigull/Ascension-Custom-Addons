@@ -123,7 +123,7 @@ one.
 
 ---
 
-## 2. The Ledger tab does not fill the window
+## 2. The Ledger tab does not fill the window — DONE
 
 **Asked (owner, 2026-08-21):** *"On the Ledger tab, let use the dimensions for spacing like the
 Analysis tab has, it needs to shift to the right and fill out the window correctly."*
@@ -149,9 +149,35 @@ offsets (`:845`, `:882`) are laid out from a table and will need the same treatm
 `An_LayoutCols`. Ascension's window is wider than 768, which is why the tab currently sits left
 with a band of dead backdrop to its right.
 
+### Built 2026-08-21
+
+Ported, not reinvented: `Ldg_LayoutCols` and the measured panel in
+`Atr_Ledger_Init` are `AuctionatorAnalysis.lua`'s `An_LayoutCols` / `Atr_An_Init` with the two lanes
+this table does not have (the delete button, the plan tick) taken out. **Both tabs now answer "how
+wide is the auction house" the same way**, which is the point — two answers is how one of them ends
+up wrong again.
+
+**Five hardcoded widths became one measurement.** `frameW` from `AuctionFrame:GetWidth()`, panel =
+that minus 22, rows = panel minus the heading inset, the scrollbar's lane and 4. The scrollbar lane
+comes off the **panel**, never off the rows — a `FauxScrollFrame`'s bar hangs outside the scroll
+frame, so reserving it in both places spends it twice and leaves the table short of the right edge
+by that much again. That is the mistake the Analysis comment records and it is not repeated here.
+
+**Columns are a table now** (`LDG_COLS`, with the same `w` / `grow` / `just` fields the Analysis
+columns carry), and headings compute their x from the same entry the cells do — they used to be five
+hand-counted numbers kept in step with five more a hundred lines below. **Item is the only column
+that grows**, and deliberately: a date is a date, a quantity is two characters and money is money,
+so widening any of them buys nothing; the item name is the one cell that gets truncated and the one
+this server makes long.
+
+**Verified** by running the real `Ldg_LayoutCols` over four window widths offline: at 768, 1024 and
+1200 the last column ends exactly on the row's right edge with nothing left over, and a
+not-laid-out-yet `GetWidth` falls back to 768. Row field names are unchanged, so
+`Atr_Ledger_Redisplay` needed no edit at all. **Not verified in game.**
+
 ---
 
-## 3. The Ledger's Clear button: confirm it, and move it under the X
+## 3. The Ledger's Clear button: confirm it, and move it under the X — DONE
 
 **Asked (owner, 2026-08-21):** *"I also want the Clear button to have a confirmation and be placed
 on the upper section (right side corner) under the X button."*
@@ -168,6 +194,30 @@ consequence concrete in a way "Are you sure?" does not.
 
 **Placement:** top-right, under `AuctionFrameCloseButton`. Worth checking against the money frame
 (`AuctionFrameMoneyFrame`, shown on Buy) and the tab's title, which is centred at `:833`.
+
+### Built 2026-08-21
+
+**The confirmation was the half that mattered, and the reason is worth keeping.** Every other store
+in this addon regrows: prices and the mean set come back by scanning, vendor learning by visiting,
+the recipe book by opening a profession window, the market history by scanning again in its own
+file. **The ledger does not.** It is a record of things that happened, and nothing in the client can
+be asked for them a second time — so it was the one destructive button in the addon with no question
+attached.
+
+`StaticPopupDialogs["ATR_LEDGER_CLEAR"]`, with `showAlert` for the yellow (!), and **the row count is
+in the question**: "Are you sure?" is a noise people click through, "Delete all 412 ledger rows?" is
+a consequence. The second line says scanning cannot bring it back, which is the fact that makes this
+button different from every other one here. If the popup machinery is somehow absent the click falls
+through to the old immediate behaviour rather than doing nothing.
+
+**Moved to the panel's TOPRIGHT, under the close button**, at (-16, -46) — clear of Blizzard's 32px
+close button above it and stopping short of the dark backdrop, which starts at -70. It came off the
+BOTTOMRIGHT, which on the Analysis tab is where a tab-level *action* button lives (Rescan); Clear is
+not that kind of button, and up in the chrome is where a destructive control belongs. It also gained
+a tooltip saying what it deletes and that it will ask first.
+
+**Verified:** `luac5.1 -p` clean, the four Auctionator suites still pass. **Not verified in game** —
+the popup's wording at width, and whether (-16, -46) sits where the owner means by "under the X".
 
 ---
 
