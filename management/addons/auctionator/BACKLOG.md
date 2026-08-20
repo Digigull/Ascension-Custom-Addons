@@ -5,14 +5,14 @@ the record of what each item actually means against the code as it stands; it is
 doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
-A heading marked **DONE** has shipped in full. Four items do not carry that label and are the
-ones to know about: **item 8** shipped a v1 with features still unbuilt, **item 12** is in fact
-done in all three parts (3b was measured and deliberately declined), **item 9** is parked with
-nothing built, and **item 10** closed without any code. **"Suggested order" at the foot of the
-file is the live view of what is left**; the per-item sections are the record of how each got
-there. Most "current behaviour" notes here are read from source, not observed — a shipped item's
-own section says what was and was not verified, and which of them have since been confirmed in
-game (items 2, 3, 11, 14, and 15 + 16 together).
+A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
+and deliberately declined. Three items do not carry that label and are the ones to know about:
+**item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built, and
+**item 10** closed without any code. **"Suggested order" at the foot of the file is the live view
+of what is left**; the per-item sections are the record of how each got there. Most "current
+behaviour" notes here are read from source, not observed — a shipped item's own section says what
+was and was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14,
+and 15 + 16 together).
 
 Anchors are `file:line` at the time of writing and will drift; the symbol names next to them
 are the durable part.
@@ -1124,7 +1124,7 @@ new `made link:` line in `/atrprofsort transmute` answers it in one command.
 
 ---
 
-## 12. NEW — same-name item variants share one price, and the Sell tab picks the wrong one
+## 12. NEW — same-name item variants share one price, and the Sell tab picks the wrong one — DONE
 
 **Seen, 2026-08-19.** The owner holds the **epic** `Bloodforged Imperial Jewel` (ilvl 61,
 requires 60, +9 Stamina). Ascension also has a **rare** one of the same name (ilvl 57, requires
