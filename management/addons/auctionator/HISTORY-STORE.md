@@ -335,7 +335,7 @@ so, and now has a number telling them what it costs.
 addon's own load cost in ms and KB. Every later argument about whether the feature is affordable is
 guesswork without it, and it costs one command.
 
-**Stage 1 — the store, the toggle, and the writer. No readers.**
+**Stage 1 — the store, the toggle, and the writer. No readers. — BUILT 2026-08-21, see §11.**
 The companion folder and its `.toc`; the lazy accessor that tolerates the companion being absent;
 shape C encode/decode with the cap and the age prune modelled on `Atr_AHVariant_Prune`; the writer
 beside `Atr_MeanAppend` at all four sites, inside the existing guards; the setting in
@@ -358,6 +358,75 @@ the Sell tab's "you are undercutting a rising market", the age-aware tooltip lin
 
 **Stage 5 — retention polish.** The condenser, and only then the question of whether the mean
 database still earns its 5267 rows.
+
+---
+
+## 11. Stage 1 as built, 2026-08-21
+
+Reasoned and unit-tested offline; **not yet seen in game**. Files:
+
+- **`Auctionator-Finder-Ascension-History/`** — the companion. A `.toc` declaring
+  `AUCTIONATOR_MARKET_HISTORY` and one line of Lua setting
+  `AUCTIONATOR_MARKET_HISTORY_LOADED = true`. The Lua line is there for two reasons: a `.toc` with
+  no files at all would *probably* load, and "probably" is not worth betting the feature on; and the
+  marker is how the parent tells *"companion installed"* from *"installed, nothing recorded yet"*.
+  **SavedVariables load before an addon's own files run**, so if the marker is set the saved table
+  is already in place — which is what lets the parent resolve everything lazily and ignore load
+  order. `## OptionalDeps` asks for it first as well; nothing depends on that being honoured.
+- **`Auctionator-Finder-Ascension/AuctionatorHistory.lua`** — everything that reads or writes it.
+  The companion holds no logic at all.
+
+**The shape, as shipped.** `realms[realm_Faction].p[name] = "day:price[:scans];…"` — one packed
+string per item name, keyed per realm and faction exactly like the price database, because a series
+that mixed realms would be noise. `day` is days since 2008-08-01 (four digits; `ToTightTime` packs
+*minutes* since the same epoch, and a daily series has no use for the other three). `price` is the
+**quantity-weighted median** of the scan — the same sample the mean database takes, not the lowest
+listing. `scans` is omitted at 1 and present above it, so a reader can tell one observation from
+ten; without it "daily close" quietly means "whenever they happened to look".
+
+**Appending is O(1) per name per scan**, which is the constraint that shaped the code: the writer
+runs inside a loop over every row of a scan. Today's record is either the last one in the string or
+absent, so the common path is one `match` on the tail and one concatenation. A full decode happens
+only when a string outgrows `ATR_HIST_TRIM_AT`, which is **at most once per name per month** — and
+that is why retention is a window rather than an exact edge: a name carries between 30 days and
+roughly 55 before being cut back. The overshoot is a few hundred bytes and it buys a decode per
+month instead of a decode per scan.
+
+**Nothing walks the table at login**, which matters because a login-time sweep is exactly the cost
+this feature is trying not to add. Trimming on write bounds a name that is still being scanned; a
+name that stops being scanned freezes under the per-name cap. Total is bounded by names × cap
+without ever traversing it.
+
+**The four writers are the four `Atr_MeanAppend` sites** — `Fdr_PriceDB_Update`, `AtrSearch:Finish`,
+the (dead on this server) getAll full scan, and the Bazaar bridge — each *inside* the existing
+guards, so the history inherits the four rules that make a partial scan safe to store. The Bazaar
+one is arguable and the comment at the site says so: a token price is administered rather than a
+market, but the series has to be the history *of the price this addon reports*, and stage 5 cannot
+compare the series against the mean database if the two are fed from different populations.
+
+**Off by default**, `AUCTIONATOR_FINDER_SETTINGS.marketHistory == true` — note the idiom is the
+**opposite** of `feedPriceDB`'s `~= false` two lines away, and copying that one here would turn the
+feature on for everybody. The setting lives in the main file, per the owner's requirement: being
+able to turn this off must never depend on the thing being turned off. A row sits on the Scanning
+options panel under the other three; **when the companion is missing the row disables itself and
+says `(history addon not installed)`** rather than offering a checkbox that does nothing — the third
+state from §3, which is the one that will actually happen.
+
+**`/atrhistory`** — `on` / `off` / `clear`, a bare call for the status line, and `show <item>`,
+which prints the decoded series into the **copy box**, not chat. That diagnostic is the exception
+CLAUDE.md's rule allows for, and the justification is specific: stage 1 ships with no reader, so
+without it there is no way to know the store is recording until stage 2 is built on top of it.
+
+**Tested:** `management/addons/auctionator/tools/history-store-smoke.lua`, 50 assertions, all
+passing. It exists against the house rule for two stated reasons — the append path is string surgery
+with index arithmetic, and a bad append is *silent and permanent* where a bad current price is
+overwritten by the next scan. It pins the off-by-default path, the missing-companion path, the
+same-day close, the next-day append, the refusal of a backwards clock, retention, the per-realm
+split, and that an unreadable record is dropped rather than guessed at.
+
+**What is deliberately not here:** no reader. `Atr_Hist_Series` exists and nothing in the addon
+calls it. That is stage 2's seam, and leaving it dark is what lets a week of ordinary play produce
+real data for the readers to be built against.
 
 ---
 

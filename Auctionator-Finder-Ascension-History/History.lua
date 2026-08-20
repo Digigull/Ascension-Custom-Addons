@@ -1,0 +1,30 @@
+-- Auctionator-Finder-Ascension-History
+--
+-- This addon is a FILE, not a feature.  Everything that reads or writes
+-- AUCTIONATOR_MARKET_HISTORY lives next door in Auctionator-Finder-Ascension's
+-- AuctionatorHistory.lua; all this folder does is own the saved variable, so the
+-- market price series lands in a SavedVariables file of its own.
+--
+-- WHY THAT IS WORTH A FOLDER.  A SavedVariables file truncated by a client crash
+-- fails to parse and the client discards the WHOLE file.  With one file, a fat
+-- price history puts the trade ledger, the learned vendor prices and the
+-- harvested recipe book at risk -- none of which can be re-derived.  Alone in
+-- here it risks only itself, and a price history regrows the next time you scan.
+--
+-- A second reason, which is why "turn it off if it costs too much" is a real
+-- offer: this loads as its own addon, so !ClientPerfProbe's `/cpp load` reports
+-- what it costs to parse as a line of its own, in milliseconds and kilobytes.
+--
+-- ONE LINE OF LUA, deliberately.  A .toc with no files at all would probably
+-- work; "probably" is not worth betting the feature on, and the marker below is
+-- also how the main addon tells "the companion is installed" from "installed but
+-- nothing recorded yet".  SavedVariables are loaded BEFORE an addon's own files
+-- run, so by the time this line executes the saved table is already in place --
+-- which is what lets the main addon resolve everything lazily and not care about
+-- load order.
+--
+-- SAFE TO DELETE.  Remove the folder and Auctionator carries on exactly as it
+-- did before the feature existed; the only thing lost is the recorded series,
+-- and scanning grows it back.
+
+AUCTIONATOR_MARKET_HISTORY_LOADED = true;

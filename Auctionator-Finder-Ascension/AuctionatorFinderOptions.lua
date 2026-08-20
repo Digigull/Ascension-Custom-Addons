@@ -110,6 +110,15 @@ function Fdr_Options_Ensure ()
 		{ FT("Removes recipe listings this character has already learned from Finder results. Decided from the recipe's own tooltip, the same 'Already known' line the client shows you, so it costs nothing until a search actually returns recipes."),
 		  FT("Knowing is per character; the preference is shared. When a recipe's item data has not been cached yet the row is kept rather than hidden, so nothing you might want disappears.") });
 
+	-- BACKLOG item 31. Off by default and last in the list, because it is the one
+	-- row here that adds a file rather than changing what an existing one holds.
+	gFdr_OptRows.history = row ("Atr_Finder_Opt_History_CB", -212,
+		FT("Remember what prices used to be"),
+		FT("Market price history"),
+		{ FT("Records one price a day per item, from the same scans that already feed the price database, so the addon can tell you what something was worth last week and not just today. Nothing reads it yet -- this fills the record first."),
+		  FT("It is kept in a SavedVariables file of its own, so a client crash can never take your trade ledger or your learned vendor prices down with a big history. Deleting that file loses only the history, and scanning grows it back."),
+		  FT("Needs the Auctionator-Finder-Ascension-History folder installed beside this addon. In game use /atrhistory.") });
+
 	return gFdr_OptRows;
 end
 
@@ -125,6 +134,34 @@ function Fdr_Options_Sync ()
 	r.gearjump:SetChecked (Fdr_BuyRedirect_Enabled () and true or nil);
 	r.knownrecipes:SetChecked ((type (Fdr_HideKnownRecipes_Enabled) == "function")
 							   and Fdr_HideKnownRecipes_Enabled () and true or nil);
+
+	-- Ticked only when it is actually recording.  Without the companion addon it
+	-- cannot be, so the row is disabled and says why rather than offering a
+	-- checkbox that does nothing -- which is the state someone lands in by
+	-- updating one folder and not the other.
+	if (r.history) then
+
+		local have = (type (Atr_Hist_Available) == "function") and Atr_Hist_Available ();
+
+		r.history:SetChecked (have and (type (Atr_Hist_Enabled) == "function")
+									and Atr_Hist_Enabled () and true or nil);
+
+		if (have) then
+			r.history:Enable ();
+		else
+			r.history:Disable ();
+		end
+
+		local t = _G["Atr_Finder_Opt_History_CBText"];
+		if (t) then
+			if (have) then
+				t:SetText (" "..FT("Remember what prices used to be"));
+			else
+				t:SetText (" "..FT("Remember what prices used to be")
+							 .."  |cff808080"..FT("(history addon not installed)").."|r");
+			end
+		end
+	end
 end
 
 
@@ -137,6 +174,12 @@ function Fdr_Options_Apply ()
 	AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
 	AUCTIONATOR_FINDER_SETTINGS.feedPriceDB   = gFdr_OptRows.prices:GetChecked() and true or false;
 	AUCTIONATOR_FINDER_SETTINGS.gearToFinder  = gFdr_OptRows.gearjump:GetChecked() and true or false;
+	-- through the setter, so the one place that knows the default is OFF stays
+	-- the one place that knows it (BACKLOG item 31)
+	if (gFdr_OptRows.history and type (Atr_Hist_SetEnabled) == "function") then
+		Atr_Hist_SetEnabled (gFdr_OptRows.history:GetChecked());
+	end
+
 	-- through the setter, so the Finder's own toolbar checkbox moves with it
 	if (type (Atr_Finder_SetHideKnownRecipes) == "function") then
 		Atr_Finder_SetHideKnownRecipes (gFdr_OptRows.knownrecipes:GetChecked());

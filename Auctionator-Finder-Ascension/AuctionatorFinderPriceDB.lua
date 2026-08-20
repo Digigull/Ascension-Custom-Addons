@@ -177,6 +177,16 @@ function Fdr_PriceDB_Update (results, partial)
 
 				-- one call, so the one-sample shape is handled in one place (item 13)
 				Atr_MeanAppend (gAtr_MeanDB, name, medsample);
+
+				-- ... and the dated series beside it (BACKLOG item 31), taking the
+				-- same sample.  In here rather than anywhere else on purpose: the
+				-- four rules above are what make a PARTIAL scan safe to store, and
+				-- they matter more to a series than to a current price -- a bad
+				-- current price is overwritten by the next scan, a bad sample is
+				-- read back forever.  Off by default, so this is one boolean.
+				if (type (Atr_Hist_Note) == "function") then
+					Atr_Hist_Note (name, medsample);
+				end
 			end
 		end
 	end

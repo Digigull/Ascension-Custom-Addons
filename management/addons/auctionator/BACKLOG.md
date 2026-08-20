@@ -8,9 +8,10 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 28, 30 and 31** are new, with nothing built yet.
-**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 is researched and not built**
-— its write-up is `HISTORY-STORE.md`, and it carries four questions only the owner can answer.
+**item 10** closed without any code, and **items 28 and 30** are new, with nothing built yet.
+**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 shipped its stage 1** on
+2026-08-21 — the store, the toggle and the writer, with no readers on purpose; its write-up is
+`HISTORY-STORE.md`.
 Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
@@ -3487,7 +3488,7 @@ Supply counts units. Build those first and the cards are accurate on the day the
 
 ---
 
-## 31. NEW — a market price history, in a companion file, off by default
+## 31. A market price history, in a companion file, off by default — STAGE 1 BUILT
 
 **Asked (owner, 2026-08-21):** bring back the original addon's history SavedVariables *companion
 file*, make it a toggleable feature that populates from scan history, let the rest of the addon use
@@ -3585,6 +3586,38 @@ is deleting a branch; adding one later is shipping a fix under pressure.** The c
 migration, a deletion and a default flip, taken against a month of real data — the same
 measure-then-decide shape as items 12 part 3b and 13.
 
+### Stage 1 built, 2026-08-21 — the store, the toggle and the writer. No readers.
+
+Reasoned and unit-tested offline, **not yet seen in game**. Detail in `HISTORY-STORE.md` §11; the
+short of it:
+
+- **`Auctionator-Finder-Ascension-History/`** is the companion — a `.toc` owning
+  `AUCTIONATOR_MARKET_HISTORY` and one line of Lua setting a marker global. Everything that reads or
+  writes it is in the parent's new `AuctionatorHistory.lua`; the companion holds no logic. Saved
+  variables load *before* an addon's files run, so the marker also means "the saved table is already
+  in place", which is what lets the parent resolve lazily and ignore load order.
+- **One packed string per item name** — `realms[realm_Faction].p[name] = "day:price[:scans];…"`,
+  the day being days since 2008-08-01 and the price the quantity-weighted median the mean database
+  already takes. `scans` is omitted at 1, so the common record is nine characters.
+- **Appending is O(1) per name per scan** (the writer runs inside a loop over every scan row): the
+  common path is one match on the tail and one concatenation, and a full decode happens only when a
+  string outgrows the trim threshold — at most once per name per month. **Nothing walks the table at
+  login**, which is the cost this whole feature is trying not to add.
+- **The four writers are the four `Atr_MeanAppend` sites**, each inside the existing guards, so the
+  series inherits the rules that make a partial scan safe to store. The Bazaar one is arguable and
+  the comment says so.
+- **Off by default** (`marketHistory == true` — the opposite idiom to `feedPriceDB`'s `~= false`
+  beside it, and copying that one would turn this on for everybody), setting in the main file, row
+  on the Scanning options panel. **With the companion missing the row disables itself and says so**
+  rather than offering a checkbox that does nothing.
+- **`/atrhistory`** on / off / clear / status, and `show <item>` into the copy box — the one
+  diagnostic, justified because a stage that ships dark has no other way to be checked.
+- **50 assertions** in `tools/history-store-smoke.lua`, all passing. Written against the house rule
+  on purpose: the append path is string surgery, and a bad append is silent and permanent.
+- **The dump instructions were rewritten in this same commit**, which was the stated condition for
+  creating the folder at all — `BACKLOG.md` and `tools/README.md` now name both files and both stock
+  files, with the hyphen tell for `Auctionator_Pricing_History.lua`, the one that cost item 10.
+
 **What it unblocks.** Item 8 group C (the week-over-week `+240%` column — this *is* that item's
 missing input), item 28's weekly demand signal, item 30's "ore is up, go mine" card, an age-aware
 tooltip line, and a Sell tab that can say you are undercutting a rising market. Eventually it makes
@@ -3596,8 +3629,8 @@ the history has proven itself on a real account, and not part of this one.**
 ## Suggested order
 
 Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28, 30 and 31 are unstarted** and **item 29 is done in full** — items 28-30 added
-2026-08-20, item 31 on 2026-08-21 and researched the same day. What is otherwise left is
+(2026-08-19). **Items 28 and 30 are unstarted**, **item 29 is done in full** and **item 31 has shipped stage 1 of
+five** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
@@ -3617,13 +3650,14 @@ short of a readout. In order:
    else on this list measures effects; this is the only candidate cause, so it is worth knowing
    before more effort goes into inferring what it would simply state. If it reads, it outranks C
    outright — a leading indicator beats a lagging one built from a series that does not exist yet.
-3. **Item 31's stages 0 and 1** — one `/cpp load` for the before-figure, then the history store
-   itself: the companion folder, the toggle (off by default), and the writer beside the four
-   existing `Atr_MeanAppend` sites. It ships **dark** on purpose — nothing reads it yet — because a
-   week of ordinary play then leaves real data for the readers below to be built against instead of
-   an empty table. It ranks here rather than lower because **everything under it wants the same
-   input**: item 30's ore card, item 28's demand signal and item 8's group C are all one query into
-   a series that does not exist. Blocked on four owner decisions first (`HISTORY-STORE.md` §9).
+3. ~~**Item 31's stage 1**~~ — **BUILT 2026-08-21**: the companion folder, the toggle (off by
+   default) and the writer beside the four existing `Atr_MeanAppend` sites, shipping **dark** so a
+   week of ordinary play leaves real data for the readers below. **What is left is to switch it on
+   and play** — and, if it has not been done, one `/cpp load` first, since that reading can only be
+   taken before the folder exists. Then **item 31's stage 2**: `Atr_GetAuctionPrice` gains a history
+   rung above `Atr_GetMostRecentSale`, which is one branch and improves every price in the addon at
+   once. Everything below wants the same input — item 30's ore card, item 28's demand signal and
+   item 8's group C are all one query into that series.
 4. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
    five or six cards in plain sentences over figures four existing functions already return. No
    new capture and no new saved variable — it is a renderer, and its whole discipline is that it
@@ -3665,14 +3699,25 @@ most open questions and needs no code. The file is the **account-level** one —
 copy; `tools/README.md` explains why and how to take one cleanly (fully exit the client first,
 or the last session's learning is missing).
 
-> **Take the file named after the addon folder, and no other.** This fork declares all 38 of its
-> saved variables in one `.toc`, so **everything it owns is in `Auctionator-Finder-Ascension.lua`**
-> — there is no companion file. A `SavedVariables` folder that has been through a few installs
-> can also hold `Auctionator.lua`, `Auctionator_Price_Database.lua` and
-> `Auctionator_Pricing_History.lua`; those are **stock Auctionator's**, which splits its big
-> tables into companion addon folders. The 2026-08-19 dump was one of those by mistake, which is
-> the whole of item 10 above. Size is the quick tell — this addon's file was 1.14 MB against
-> stock's stale 82 KB.
+> **Take these two files, and no others.** Rewritten 2026-08-21, when item 31 stage 1 gave this
+> fork a companion file of its own and made the old one-file rule wrong:
+>
+> | Take | Holds |
+> |---|---|
+> | `Auctionator-Finder-Ascension.lua` | **everything**, except the one below — all 38 saved variables bar one |
+> | `Auctionator-Finder-Ascension-History.lua` | `AUCTIONATOR_MARKET_HISTORY` only, and only if the feature was switched on |
+>
+> **Never take these.** A `SavedVariables` folder that has been through a few installs can also
+> hold `Auctionator.lua`, `Auctionator_Price_Database.lua` and `Auctionator_Pricing_History.lua`.
+> Those are **stock Auctionator's**, which splits its big tables into companion addon folders the
+> same way this fork now splits one — and the 2026-08-19 dump was one of them by mistake, which is
+> the whole of item 10 above.
+>
+> **`Auctionator_Pricing_History.lua` is the dangerous one**, because it is stock's *posting*
+> history and its name is one word away from ours. The tell is the hyphens: this fork's files are
+> hyphenated and start `Auctionator-Finder-Ascension`; every stock file starts `Auctionator_` or is
+> `Auctionator.lua`. Size is the second tell — this addon's main file was 1.14 MB against stock's
+> stale 82 KB.
 
 What each open question gets out of it:
 

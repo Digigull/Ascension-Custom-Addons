@@ -807,6 +807,11 @@ function AtrSearch:Finish()
 					local medsample = Atr_ScanListingsMedian (scn) or newprice;
 
 					Atr_MeanAppend (gAtr_MeanDB, scn.itemName, medsample);		-- item 13: one-sample shape
+
+					-- the dated series takes the same sample (BACKLOG item 31)
+					if (type (Atr_Hist_Note) == "function") then
+						Atr_Hist_Note (scn.itemName, medsample);
+					end
 				end
 			end
 		end
@@ -1486,6 +1491,14 @@ function Atr_FullScanAnalyze()
                 if (medsample <= 0) then medsample = newprice; end
 
                 Atr_MeanAppend (gAtr_MeanDB, name, medsample)        -- item 13: one-sample shape
+
+				-- the dated series takes the same sample (BACKLOG item 31).  This
+				-- path is upstream's getAll full scan, which Ascension disables --
+				-- wired anyway so the four feeds cannot disagree about what a
+				-- sample is if it ever comes back.
+				if (type (Atr_Hist_Note) == "function") then
+					Atr_Hist_Note (name, medsample);
+				end
 			end
 		end
 	end
