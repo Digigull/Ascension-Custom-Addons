@@ -1733,6 +1733,75 @@ The 95 new rows are the window harvest working for the first time: ten `made = 3
 
 ---
 
+## 15. SELL tab — clicking an item from the inventory browser picks the wrong variant
+
+**Reported 2026-08-19, and it is a clean differential:** dragging a Bloodforged item into the
+sell box gets the **epic** correctly; clicking the *same item* in the SELL tab's inventory
+browser, with the box empty, loads the **blue** one instead.
+
+Same item, same destination, two entry points, different answer — which means the item is not
+the problem and neither is the price database. One of the two paths is doing something the other
+is not.
+
+**Item 12 part 2 is apparently working**, incidentally: the drag path is the one that fix was
+written against, and it now gets the epic. This is the entry point that fix does not reach.
+
+### The two paths, side by side
+
+Drag — `Atr_OnDropItem` (`Auctionator.lua:1578`):
+
+```lua
+Atr_ClickAuctionSellItemButton (self, button);
+ClearCursor();
+```
+
+Click — `Atr_LoadBagSlotToSellPane` (`:1824`), reached from `Atr_SB_Item_OnClick`:
+
+```lua
+PickupContainerItem (bagID, slotID);
+if (GetCursorInfo() == "item") then
+    Atr_ClearAll();                   -- only this path
+    Atr_ClickAuctionSellItemButton ();
+    ClearCursor();
+end
+...
+Atr_UpdateUI();                       -- and only this path
+```
+
+**The click path picks the exact bag slot**, so the item genuinely in the sell slot is the epic —
+this is not a case of grabbing the wrong stack. What differs is `Atr_ClearAll()` before the click
+and **`Atr_UpdateUI()` after it**.
+
+### Most likely mechanism, to check first
+
+`Atr_UpdateUI()` runs **synchronously**, while `NEW_AUCTION_UPDATE` — which is what
+`Atr_OnNewAuctionUpdate` and therefore the whole item-identity path hangs off — arrives a frame
+later. So the click path paints the pane once from whatever scan is already current (the rare's,
+cached under that name from an earlier search) before the event that would correct it has fired.
+
+The suspicion is that this early repaint also latches `gPrevSellItemLink`, because
+`Atr_OnNewAuctionUpdate` guards its entire body with:
+
+```lua
+if (gPrevSellItemLink ~= auctionLink) then
+```
+
+If that is already equal by the time the event lands, the search, the
+`AtrScan:UpdateItemLink` correction from part 2 and the rest are all skipped, and the stale paint
+is what stays on screen. That would explain why the symptom is stable rather than a flicker.
+
+**Cheap confirmation before writing anything:** print `gPrevSellItemLink` and
+`gSellPane.activeScan.itemLink` at the top of `Atr_OnNewAuctionUpdate` and take both paths. If
+the click path arrives with them already equal, the mechanism is confirmed and the fix is small —
+either clear `gPrevSellItemLink` in `Atr_LoadBagSlotToSellPane`, or drop the premature
+`Atr_UpdateUI()` and let the event do the work, which is what the drag path already relies on.
+
+**Do not fix it by guessing.** Two of this item's neighbours (10 and 12 part 2) turned out to have
+the wrong mechanism written down, and both were settled in minutes by looking at real data
+instead.
+
+---
+
 ## Suggested order
 
 Items 1–6, 11 and 14 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
