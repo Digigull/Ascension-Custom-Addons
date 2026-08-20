@@ -9,8 +9,9 @@ A heading marked **DONE** has shipped in full — item 12's three parts included
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
 **item 10** closed without any code, and **items 30 and 32** are new, with nothing built yet.
-**Item 28's stage 0 shipped** on 2026-08-21 — the reconnaissance command, waiting on one paste from
-a Call Board; its stages 1–3 exist or not depending on what comes back.
+**Item 28's stages 0 and 1 shipped** on 2026-08-20: the reconnaissance answered — all four routes
+read, and the board turned out to be a real gossip NPC behind a custom frame — and the weekly
+capture went in dark on the strength of it. Its stages 2–3 are readers waiting on elapsed time.
 **Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 shipped in full** on 2026-08-21 —
 the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
 and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
@@ -3241,6 +3242,100 @@ Three decisions inside it are worth keeping if this grows:
 accepted the log section answers on its own; accepting all first is the owner's shortcut and makes
 section 1 conclusive.
 
+### Stage 0 came back the same day — **all four routes read**
+
+One paste, taken at a board with three quests accepted and one still offered. The unknown this item
+called "the whole of the risk" is closed, and two of the four routes returned more than was asked:
+
+**1. Gossip works — which nothing predicted.** The board is a *real gossip NPC wearing a custom
+UI*. `GetNumGossipAvailableQuests` → 1 and `GetGossipAvailableQuests` → `"A True Artisan: Titanic
+Leggings", 70, nil, nil, nil`; `GetNumGossipActiveQuests` → 3 with the three accepted quests. That
+is the whole board readable **without accepting anything**, passively, on an event — the fourth
+passive-harvester shape this item wanted and did not expect to get. Titles and levels only, no
+counts. Stride is 5 per available quest and 4 per active one, so the capture derives it rather than
+writing it down.
+
+**2. The quest log carries a questID.** `GetQuestLogTitle` returns **nine** values here, not the
+stock eight, and the ninth is the questID — `1005094` for *A Delicate Situation: Dense Stone*,
+`80840` for *Arms Dealer: Enchant Weapon - Unstoppable Assault*. A key that survives a locale change
+and a title rewording, which a title string does not. Slot 8 (`isDaily`) is set on exactly the
+board's dailies and nil on ordinary quests. Objectives read `"Dense Stone: 3/40"`, type `"item"` —
+name, held **and needed**, which is precisely the count gossip lacks. The log also groups them under
+a header the client supplies: **`Ascension (Profession)`**, a free category.
+
+**3. The board is a plain Lua table.** `CallBoardUI`, a 1024×702 `DIALOG` frame, and its whole tree
+is reachable — **6313 globals matched**, named with dotted paths as literal global names, e.g.
+`CallBoardUI.content.statisticsContent.Profession.VanillaGatheringADelicateSituation.rewards.reward12`.
+Readable text included the cache bar (`Cache Progress 60/75 (80%)`), both reset countdowns, every
+category name, and `Total Rewards Available this Week:`. The template names are visible in the
+paths — `VanillaGatheringADelicateSituation`, `VanillaATrueArtisan`, `VanillaHighriskArmsDealer`,
+`TBCGatheringProfessions` — which is the rotation's own vocabulary.
+
+**4. The tooltip states the requirement.** `Requirements: / - Dense Stone x 40`, owner
+`CallBoardUI.content.ExtraSlotsContent.categoryDetailsFrameQuest3`. The only route to a count for a
+quest that has *not* been accepted.
+
+**The event tape settles the trigger**: `GOSSIP_SHOW` ×4 when the board opened. So there is an event
+to hang capture on, and it is a stock one.
+
+**Two findings worth keeping separately from the routes.** *Counts vary far more than the demand
+model assumed* — 40 Dense Stone against **1** Dark Iron Bar and 1 enchant scroll on the same board.
+A quest naming a material says almost nothing about quantity until you read its count, so a
+titles-only capture would have been actively misleading. And *the title suffix is usually but not
+always the item*: "A Delicate Situation: **Dense Stone**" matches its objective exactly, but "Arms
+Dealer: Enchant Weapon - Unstoppable Assault" wants a **Scroll of** that enchant. The objective
+string is authoritative; the title is a fallback, not a shortcut.
+
+### Built: stage 1, the capture — 2026-08-20
+
+Shipped in the same file, and it **stores without reading**. The reason is the one-way door that
+put item 31's history in early: a reader can be written next month, but **a week that was not
+captured is gone** — the board rotates weekly, so every week played without this is rotation data
+no later work can recover. That asymmetry is the whole argument for building it now rather than
+after item 30.
+
+It is a **join across three feeds**, each covering the others' blind spot:
+
+| Feed | Fires on | Gives | Blind to |
+|---|---|---|---|
+| gossip | `GOSSIP_SHOW`, one frame late | every quest on the board, taken or not | counts |
+| quest log | the same pass | item, count, questID, category | quests not accepted |
+| tooltip | hovering a card | item and count | quests never hovered |
+
+Stored in `AUCTIONATOR_CALLBOARD` (main file, **not** the companion): `HISTORY-STORE.md`'s bargain
+is that everything in the companion is re-derivable by scanning, and last week's board is not
+re-derivable by anything. It is `weeks[n].q[title] = { id, cat, kind, it = { [item] = count } }`,
+26 weeks kept, trimmed on write — roughly a kilobyte a week.
+
+Four decisions inside it:
+
+- **The gate is `CallBoardUI:IsVisible()`.** Without it every ordinary NPC's gossip would be filed
+  as board demand, and since nothing reads the store yet, that poisoning would be silent — the worst
+  failure available here.
+- **It harvests a frame late.** `GOSSIP_SHOW` beats the board's own frame to the screen, so a
+  harvest on the event itself would find the board invisible and file nothing, which from outside
+  looks identical to "the gossip route does not work".
+- **A later smaller count never overwrites a larger one.** The log reports what is *still* needed as
+  you make progress; the demand this item measures is what the quest asked for.
+- **The bucket is a fixed seven days, not the server's week.** The board states its reset, but only
+  as text in a frame, and a capture keyed off a countdown string breaks the day Ascension rewords
+  it. Adjacent buckets are still "then" and "now", which is all recurrence needs. Naming a reset
+  day still requires a setting, exactly as this item's honest limits said.
+
+Verified offline against the owner's real strings —
+`management/addons/auctionator/tools/callboard-smoke.lua`, 25 assertions, including that ordinary
+quests and bag tooltips are not filed and that the Rewards block is never read as demand. **The
+one-way door is why that test exists** at all, against the house preference: the parsers get one
+chance at each week.
+
+`/atrcallboard weeks` reads back what has been captured. `/atrcallboard tree` surveys `CallBoardUI`
+if a later stage needs something the two APIs do not carry — the group's remaining-completion
+budget, the exact reset time, or the categories the player has not opened.
+
+**Left for stage 2 and 3:** the "wanted this week" mark on Market and Reagents rows, the prompt to
+watch named materials, and the recurrence figure across weeks. All three are readers over a store
+that will have real weeks in it by the time they are written.
+
 ---
 
 ## 29. The Reagents view ranked dependence; you decide with money — DONE
@@ -4017,14 +4112,15 @@ short of a readout. In order:
 1. ~~**Item 29, stages 1 and 2**~~ — **BUILT 2026-08-20**: the Outlay column and its default sort,
    the ~2% fold, and units counted in the scan. See item 29's *Built* section. Reasoned, not yet
    seen in game.
-2. ~~**Item 28's stage 0**~~ — **BUILT 2026-08-21** as `AuctionatorCallBoard.lua` / `/atrcallboard`,
-   and the owner's screenshots settled half of it before the code ran: the board is a custom frame,
-   but its quests are **real quest log entries**, so reading the log after *Accept All* is the
-   strong route and frame scraping is the fallback. **What is left is one paste** at a board. It
-   still decides whether the addon can see the server's *published* weekly demand at all —
-   everything else on this list measures effects; this is the only candidate cause. If it reads, it
-   outranks C outright, and item 28 now also has a route to a demand *quantity* (the group's
-   remaining-completion budget), which is more than it was scoped for.
+2. ~~**Item 28's stages 0 and 1**~~ — **BUILT 2026-08-20, and stage 0 came back the same day: all
+   four routes read.** The board is a real gossip NPC wearing a custom UI, so
+   `GetGossipAvailableQuests` names every quest on it *without accepting anything*; the quest log
+   adds the item, the count and an Ascension **questID**; the tooltip covers the rest. Stage 1's
+   capture shipped on the strength of that and now stores weekly, dark. **What is left is elapsed
+   time** — the same ingredient item 31 is waiting on, and for the same reason: a week not captured
+   is gone. Stages 2 and 3 (the "wanted this week" mark, then recurrence) are readers, and they get
+   written once real weeks exist. This item has also turned out to have a route to a demand
+   *quantity* — the group's remaining-completion budget — which is more than it was scoped for.
 3. ~~**Item 31, all five stages**~~ — **BUILT 2026-08-21**. **What is left is elapsed time**: every
    reading it added is blank until a few days of history exist, which is the one ingredient nobody
    can write. Play with it on, then take a second `/cpp load` against the 96.2 ms / 1052 KB baseline
