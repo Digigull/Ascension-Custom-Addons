@@ -556,6 +556,12 @@ local AN_MENU_TOP	= 20;		-- room for the title line
 
 local gAnMenuFrame	= nil;
 local gAnMenuEater	= nil;
+
+-- What the Buy tab's buttons have actually experienced.  Three rounds went by
+-- with "nothing happens" as the only evidence, and from outside the client a
+-- click that never fired and a menu that never drew are the same report.  These
+-- three counters separate them, and /atranalysis diag reads them out.
+gAn_Diag = { hovered = 0, clicked = 0, shown = nil, clickName = nil };
 local gAn_PendingItem = nil;	-- survives the menu closing, for a popup
 
 -- Watch an item, optionally filing it in a group.  Choosing a group for an item
@@ -1292,12 +1298,26 @@ function Atr_An_Init ()
 			b:SetHighlightFontObject ("GameFontHighlightSmall");
 			b:Hide();
 
+			-- Well clear of its siblings in this panel.  A frame LEVEL, not a
+			-- Raise and never toplevel (DRAG-FREEZE.md); 100 is the house number
+			-- for "in front of the furniture" and costs nothing if it was never
+			-- the problem.  It is a candidate cause of the dead click: anything
+			-- sharing this strata at a higher level takes the mouse first.
+			if (b.SetFrameLevel and b.GetFrameLevel) then
+				b:SetFrameLevel ((b:GetFrameLevel() or 1) + 20);
+			end
+
 			b:SetScript ("OnClick", function (self)
+				gAn_Diag.clicked = (gAn_Diag.clicked or 0) + 1;
 				local nm = Atr_An_BuyItemName ();
-				if (nm) then Atr_An_ShowItemMenu (self, nm, mode); end
+				gAn_Diag.clickName = nm or "(none)";
+				if (nm) then
+					gAn_Diag.shown = Atr_An_ShowItemMenu (self, nm, mode);
+				end
 			end);
 
 			b:SetScript ("OnEnter", function (self)
+				gAn_Diag.hovered = (gAn_Diag.hovered or 0) + 1;
 				if (GameTooltip) then
 					GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
 					GameTooltip:SetText (AZT (tipTitle), 1, 1, 1);
@@ -1337,6 +1357,45 @@ if (SlashCmdList) then
 			if (zc and zc.msg_atr) then zc.msg_atr (string.format (AZT("Analysis: watching %s"), name)); end
 		elseif (cmd == "group" and rest ~= "") then
 			Atr_An_AddGroup (rest);
+		elseif (cmd == "diag") then
+
+			-- THE LAST RESORT, and the reason is on the record: the Buy tab's
+			-- buttons have now been reported dead three times, and every remaining
+			-- explanation -- the click never arriving, the menu never drawing, the
+			-- menu drawing somewhere invisible -- produces exactly the same report
+			-- from outside the client.  This prints the three facts that separate
+			-- them, in one command, instead of another round trip per guess.
+			local function say (t) if (zc and zc.msg_atr) then zc.msg_atr (t); end end
+
+			local function frameLine (label, f)
+				if (f == nil) then say (label..": MISSING"); return; end
+				say (string.format ("%s: shown=%s visible=%s strata=%s level=%s mouse=%s pos=%s,%s size=%sx%s",
+					label,
+					tostring (f:IsShown()), tostring (f:IsVisible()),
+					tostring (f.GetFrameStrata and f:GetFrameStrata()),
+					tostring (f.GetFrameLevel and f:GetFrameLevel()),
+					tostring (f.IsMouseEnabled and f:IsMouseEnabled()),
+					tostring (f.GetLeft and f:GetLeft()), tostring (f.GetTop and f:GetTop()),
+					tostring (f.GetWidth and f:GetWidth()), tostring (f.GetHeight and f:GetHeight())));
+			end
+
+			say (string.format ("hovered=%d clicked=%d menuShown=%s clickedItem=%s",
+				gAn_Diag.hovered or 0, gAn_Diag.clicked or 0,
+				tostring (gAn_Diag.shown), tostring (gAn_Diag.clickName)));
+			say (string.format ("buy item now = %s", tostring (Atr_An_BuyItemName ())));
+
+			frameLine ("+Analysis btn", Atr_An_BuyWatchButton);
+			frameLine ("+Shopping btn", Atr_An_BuyListButton);
+			frameLine ("menu", _G["Atr_An_ItemMenu"]);
+			frameLine ("eater", _G["Atr_An_ItemMenuEater"]);
+			frameLine ("AuctionFrame", _G["AuctionFrame"]);
+			frameLine ("Atr_Main_Panel", _G["Atr_Main_Panel"]);
+
+			if (GetMouseFocus) then
+				local mf = GetMouseFocus();
+				say ("mouse is over: "..tostring (mf and mf.GetName and mf:GetName() or mf));
+			end
+
 		elseif (cmd == "menu") then
 			-- DIAGNOSTIC, and the reason it exists is worth stating: the Buy tab's
 			-- buttons did nothing through two attempts, and from outside the client
@@ -1351,7 +1410,7 @@ if (SlashCmdList) then
 			end
 		else
 			if (zc and zc.msg_atr) then
-				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  menu [item name]"));
+				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  menu [item name]  |  diag"));
 			end
 		end
 		Atr_An_Redisplay ();

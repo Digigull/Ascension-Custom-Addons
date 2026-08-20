@@ -2271,6 +2271,59 @@ this repo cannot see.
 
 ---
 
+## 22. The dead Buy-tab buttons — stop guessing, measure — IN PROGRESS
+
+**Reported 2026-08-20, third time.** Item 21 replaced the Blizzard dropdown with our own frame and
+the buttons still do nothing. The owner's question — *could they be drawing behind the AH UI?* — is
+a good one, and it is checkable: this addon's own dialogs (`Atr_Error_Frame`, `Atr_Confirm_Frame`,
+`Atr_Buy_Confirm_Frame` and five more) are all `FULLSCREEN_DIALOG` parented to `UIParent`, exactly
+what the menu now is, and those have always been visible over the auction house. So strata alone
+does not explain it.
+
+### Why this item is instrumentation and not a fourth fix
+
+Every remaining explanation produces the **identical** report from outside the client:
+
+| What is really happening | What the owner sees |
+|---|---|
+| the click never reaches the button | nothing happens |
+| the click fires, the menu is never built | nothing happens |
+| the menu is built and shown somewhere invisible | nothing happens |
+
+Three rounds have now been spent picking one of those by reasoning and shipping a fix for it. The
+cost of a wrong guess is a full round trip through a client this repo cannot run; the cost of
+measuring is one command.
+
+### What it adds
+
+- **Three counters on the buttons** — `hovered`, `clicked`, and whether `Atr_An_ShowItemMenu`
+  returned true. `hovered` is the important one: it is set by the tooltip's `OnEnter`, so it
+  answers *does mouse input reach this button at all* without the owner having to describe what
+  they saw.
+- **`/atranalysis diag`** — prints those counters, then `shown / visible / strata / level /
+  mouse-enabled / position / size` for both buttons, the menu, the click-eater, `AuctionFrame` and
+  `Atr_Main_Panel`, plus what `GetMouseFocus` currently reports.
+
+One run of that command decides between all three rows of the table above, and the position and
+size lines settle the behind-the-UI question outright.
+
+The house rule puts an in-game debug command last. This is last: it is the fourth report of the
+same symptom, and the third mechanism tried.
+
+### The one candidate fix shipped alongside
+
+The buttons now sit at **frame level + 20** within their panel. If something in that panel shares
+their strata at a higher level, it takes the mouse first and the click never arrives — the top row
+of the table. It is a frame *level*, not a `Raise()` and never toplevel (`DRAG-FREEZE.md`), it is
+what the strata table in `management/docs/CLAUDE.md` prescribes for exactly this, and it costs
+nothing if it was never the problem.
+
+**If the buttons work after this**, that was the cause and this item closes as a fix. If they do
+not, the diag output says which of the three rows it is, and the next change is aimed rather than
+guessed.
+
+---
+
 ## Suggested order
 
 Items 1–6, 11, 14, 15, 16, 17, 18, 19, 20 and 21 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
