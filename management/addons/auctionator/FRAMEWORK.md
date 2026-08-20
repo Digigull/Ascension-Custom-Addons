@@ -1,7 +1,7 @@
 # Auctionator — how the addon is put together
 
 A map of `Auctionator-Finder-Ascension/`, written 2026-08-19 from a structural read of all
-29,000 lines, before starting the request backlog (`BACKLOG.md`). Its job is to make the next
+29,000 lines, before starting the request backlog. Its job is to make the next
 change land in the right file without re-deriving the layout each time.
 
 Read `README.md` in the addon folder first — it says what the fork *does*. This says how it is
@@ -181,7 +181,7 @@ reagent demand), swapped by Show/Hide rather than rebuilt. §8 has the recipe.
 the companion addon `Auctionator-Finder-Ascension-History` so that it lands in a SavedVariables file
 of its own — a truncated file is discarded whole, and the price history is the one store here that
 regrows by scanning, so it is the one that can afford to be lost. **A dump is therefore two files
-now**; `BACKLOG.md` names them and names the stock files they must not be confused with. The ones
+now**; `tools/README.md` names them and names the stock files they must not be confused with. The ones
 that matter:
 
 | Variable | Shape | Written by |
@@ -246,7 +246,7 @@ dated series exists and is reusable (`ToTightTime`/`FromTightTime` at `:6221`/`:
 condenser); the *market* series does not. That makes item 8 a data-plumbing project first, and
 it is the reason the backlog orders the Ledger ahead of it.
 
-**What the series should be, decided 2026-08-20** (`BACKLOG.md` item 8, group C): a **week-over-week
+**What the series should be, decided 2026-08-20**: a **week-over-week
 delta on watched items only**, stored as a capped daily `{ t, low }` on each item's existing
 `AUCTIONATOR_ANALYSIS.obs` record — not a general history, and explicitly **not** a retrofit of the
 mean database, whose random eviction and price sort are re-confirmed above. The backlog carries the
@@ -255,7 +255,7 @@ corruption limits that rule out storing history for all 5267 names.
 
 **Reopened 2026-08-21 — read `HISTORY-STORE.md` before citing the paragraph above.** The owner asked
 for a general history in a **companion SavedVariables file**, toggleable and off by default
-(`BACKLOG.md` item 31). That changes one of the four premises the ruling rested on: all-or-nothing
+(owner, 2026-08-21). That changes one of the four premises the ruling rested on: all-or-nothing
 corruption, which group C called "the real reason to scope", stops applying once the history is the
 only thing in the file — and the history is the one store here that regrows by scanning again. The
 other three limits stand. Nothing is built; the doc holds the storage arithmetic that makes the
@@ -569,8 +569,8 @@ a namespace, or touching upstream files that no backlog item needs.
 
 **Snapshot, 2026-08-19, kept as the structural map rather than the status board.** Items 7 and 8
 have both shipped since — the Ledger and then the Analysis tab, the latter growing a crafting view
-(item 8's B2), a reagent view (B3) and everything in items 24–27 on top. `BACKLOG.md`'s "Suggested order" is the live
-view of what is left; what this table is still good for is the *world* column and the file map.
+(item 8's B2), a reagent view (B3) and everything in items 24–27 on top. What this table is still
+good for is the *world* column and the file map; `BACKLOG.md` is the live queue.
 
 | # | Item | Files | World | Notes |
 |---|---|---|---|---|

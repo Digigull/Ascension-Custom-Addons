@@ -65,7 +65,7 @@
 -------------------------------------------------------------------------------
 -- STAGE 0 CAME BACK, 2026-08-20.  ALL FOUR ROUTES READ.  The recon above stands
 -- as written; what follows is the capture it authorised, and the readings that
--- decided its shape.  Full dump and reasoning: BACKLOG.md item 28.
+-- decided its shape.
 --
 --   * GOSSIP WORKS, which nobody expected of a bespoke frame.  The board is a
 --     real gossip NPC wearing a custom UI: GetGossipAvailableQuests names the

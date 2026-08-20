@@ -6,7 +6,7 @@ use the longer history where it helps, keep it **off by default**, and keep **th
 the main saved-variables file** so turning it off never depends on the thing being turned off.
 
 This is the research pass. It is not a build. It exists because the ask reopens a decision already
-on the record — `BACKLOG.md` item 8 group C ruled out keeping history for everything, and
+on the record — an earlier ruling kept history out of the main store for everything, and
 `FRAMEWORK.md` §5 repeats that conclusion — and the ask **changes one of the four premises that
 decision rested on**. That deserves to be re-scored honestly rather than either waved through or
 refused by citing the old note.
@@ -227,7 +227,7 @@ item, after the history has proven itself on a real account.
   the memory figure it prints around the clear is `0 KB` on this server (§2.2) and should be
   dropped or replaced with the entry count.
 - **The dump tooling.** This is the documentation hazard with teeth. `management/addons/auctionator/tools/`
-  and `BACKLOG.md` currently instruct, in bold: *"Take the file named after the addon folder, and no
+  then instructed, in bold: *"Take the file named after the addon folder, and no
   other"* — a rule written because **backlog item 10 was an entire item lost to dumping stock
   Auctionator's companion files by mistake.** Shipping a companion makes that rule wrong: there
   would then be two legitimate files, one of which has almost the same name as the stock file that
