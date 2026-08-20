@@ -110,10 +110,34 @@ local ATR_HIST_DAY0 = 1217548800;
 -- roughly (ATR_HIST_TRIM_AT / record length) days before being cut back to the
 -- window.  The overshoot is bounded, costs a few hundred bytes per name, and
 -- buys one decode per name per MONTH instead of one per scan.
-local ATR_HIST_DAYS     = 30;		-- days of daily samples kept per name
-local ATR_HIST_MAX      = 40;		-- ... and a hard sample cap behind it
+--
+-- BEYOND THE DAILY WINDOW THE SERIES IS CONDENSED, NOT DROPPED (item 31, stage
+-- 5).  A week that has passed entirely out of the daily window folds into one
+-- record holding that week's MEDIAN close, and those keep for ATR_HIST_WEEKS.
+--
+-- Why keep anything at all when no reader asks for it yet: **retention is the
+-- one decision that cannot be deferred.** A reader can be added next month; a
+-- month that was dropped is gone. The asymmetry is entirely one-sided, and it is
+-- the same argument that put the store in its own file.
+--
+-- Why a WEEK is the fold unit rather than a month: the market mechanism this was
+-- built for rotates weekly (Call Board quests), so "this is the week copper
+-- spikes" is a real question and a monthly average would erase exactly the
+-- signal. A quarter of weekly shape answers it; more is speculation.
+--
+-- THE COST, from the measured 9.8 bytes a sample: 30 dailies is ~324 bytes and
+-- 12 folded weeks adds ~170, so a full name goes from ~360 to ~530. Across the
+-- whole 5267-name database that is roughly 1.8 MB -> 2.5 MB. If that is ever too
+-- much, ATR_HIST_WEEKS is the dial and setting it to 0 restores the old
+-- drop-everything behaviour exactly.
+local ATR_HIST_DAYS     = 30;		-- days of DAILY samples kept per name
+local ATR_HIST_WEEKS    = 12;		-- ... then this many folded weeks behind them
+local ATR_HIST_MAX      = 64;		-- a hard record cap behind both
 local ATR_HIST_TRIM_AT  = 620;		-- decode+trim only once a string passes this
 local ATR_HIST_NAMECAP  = 8000;		-- backstop: the feed itself is bounded by the AH
+
+-- How far back anything is kept at all.
+local ATR_HIST_KEEP = ATR_HIST_DAYS + (ATR_HIST_WEEKS * 7);
 
 -- Memoised per name per DAY.  Two of the callers make this a hot path and
 -- neither is obviously one: the Analysis view asks for every row on every
@@ -213,8 +237,17 @@ local function Hist_Day (now)
 	return math.floor ((now - ATR_HIST_DAY0) / 86400);
 end
 
-local function Hist_Rec (d, p, n)
-	if (n and n > 1) then return d..":"..p..":"..n; end
+-- day:price          one scan, one day
+-- day:price:n         n scans closed that day
+-- day:price:n:span    a FOLDED week -- span is the days it stands for
+--
+-- Each field is omitted when it carries no information, which is what keeps the
+-- common record at nine characters.
+local function Hist_Rec (d, p, n, span)
+
+	if (span and span > 1) then return d..":"..p..":"..(n or 1)..":"..span; end
+	if (n and n > 1)      then return d..":"..p..":"..n; end
+
 	return d..":"..p;
 end
 
@@ -228,11 +261,11 @@ function Atr_Hist_Decode (packed)
 
 	local rec;
 	for rec in string.gmatch (packed, "[^;]+") do
-		local d, p, n = string.match (rec, "^(%d+):(%d+):?(%d*)$");
+		local d, p, n, span = string.match (rec, "^(%d+):(%d+):?(%d*):?(%d*)$");
 		d = tonumber (d);
 		p = tonumber (p);
 		if (d and p and p > 0) then
-			tinsert (out, { d = d, p = p, n = tonumber (n) or 1 });
+			tinsert (out, { d = d, p = p, n = tonumber (n) or 1, span = tonumber (span) or 1 });
 		end
 	end
 
@@ -244,30 +277,82 @@ local function Hist_Encode (series)
 	local parts = {};
 	local i;
 	for i = 1, #series do
-		parts[i] = Hist_Rec (series[i].d, series[i].p, series[i].n);
+		parts[i] = Hist_Rec (series[i].d, series[i].p, series[i].n, series[i].span);
 	end
 
 	return table.concat (parts, ";");
 end
 
--- Drop what is past the age limit, then what is past the sample cap, oldest
--- first.  Only ever called just after today's record was written, so the newest
--- entry always survives and the result is never empty.
+-- Condense, then cap.  Only ever called just after today's record was written,
+-- so the newest entry always survives and the result is never empty.
+--
+-- A WEEK IS FOLDED EXACTLY ONCE, and that is what makes this safe to re-run: a
+-- week is only folded when ALL SEVEN of its days have left the daily window, so
+-- the fold always happens from whole days and never from a previous fold's
+-- output. An already-folded record (span > 1) is carried through untouched --
+-- re-medianing a median would drift the number a little further every trim.
+--
+-- The folded price is the week's MEDIAN close, not its last or its mean: one bad
+-- day inside a week is exactly what a week-long summary should absorb.
 local function Hist_Trim (packed, today)
 
-	local s    = Atr_Hist_Decode (packed);
-	local keep = {};
+	local s = Atr_Hist_Decode (packed);
+
+	local out, order, bucket = {}, {}, {};
 
 	local i;
 	for i = 1, #s do
-		if (today - s[i].d <= ATR_HIST_DAYS) then tinsert (keep, s[i]); end
+
+		local e = s[i];
+		local age = today - e.d;
+
+		if (age > ATR_HIST_KEEP) then
+			-- past everything: gone, and that is the only place data is destroyed
+
+		elseif (age <= ATR_HIST_DAYS) then
+			tinsert (out, e);					-- still daily
+
+		elseif ((e.span or 1) > 1) then
+			tinsert (out, e);					-- already a folded week
+
+		elseif (today - ((math.floor (e.d / 7) * 7) + 6) > ATR_HIST_DAYS) then
+
+			-- its whole week is out of the daily window: fold it
+			local k = math.floor (e.d / 7);
+			local b = bucket[k];
+
+			if (b == nil) then
+				b = { d = e.d, hi = e.d, n = 0, p = {} };
+				bucket[k] = b;
+				tinsert (order, k);
+			end
+
+			if (e.d < b.d)  then b.d  = e.d; end
+			if (e.d > b.hi) then b.hi = e.d; end
+
+			b.n = b.n + (e.n or 1);
+			tinsert (b.p, e.p);
+
+		else
+			tinsert (out, e);					-- old, but its week is not complete yet
+		end
 	end
 
-	while (#keep > ATR_HIST_MAX) do tremove (keep, 1); end
+	local k;
+	for _, k in ipairs (order) do
+		local b = bucket[k];
+		table.sort (b.p);
+		tinsert (out, { d = b.d, p = b.p[math.ceil (#b.p / 2)], n = b.n, span = (b.hi - b.d) + 1 });
+	end
 
-	if (#keep == 0) then return packed; end
+	-- folded weeks were appended after the dailies they came from
+	table.sort (out, function (a, b) return a.d < b.d; end);
 
-	return Hist_Encode (keep);
+	while (#out > ATR_HIST_MAX) do tremove (out, 1); end
+
+	if (#out == 0) then return packed; end
+
+	return Hist_Encode (out);
 end
 
 -- The newest day in a packed string, without decoding the rest of it.
@@ -500,6 +585,44 @@ function Atr_Hist_Delta (name, days, now)
 	};
 end
 
+-- WHAT THIS IS NORMALLY WORTH (item 31, stage 5) -----------------------------
+--
+-- The median of every close on file.  This is the figure
+-- AUCTIONATOR_MEAN_PRICE_DATABASE has been trying to give since long before this
+-- fork, and could not, for three reasons the write path makes unavoidable:
+-- `Atr_MeanAppend` sorts its array BY PRICE and evicts at `math.random`, so
+-- temporal order was never written and an unlucky thin can drop every sample
+-- from the week you are asking about; and nothing carries a date, so a sample
+-- from three months ago counts exactly as much as this morning's.
+--
+-- But the reason the owner actually sees a bad number on a tooltip is simpler
+-- and is already measured in this repo: **that database averages 1.97 samples
+-- per name and 64% of names have exactly ONE** (`AuctionatorHints.lua`, item 12
+-- part 3b). Two thirds of the time "Auction median" is one scan's number wearing
+-- the word median. One odd listing on the day somebody happened to scan is then
+-- the item's "typical" price for good.
+--
+-- Here every sample is a day, days are bounded by retention, and there is a
+-- minimum below which nothing is called a median at all.
+local ATR_HIST_MEDIAN_MIN = 3;
+
+function Atr_Hist_Median (name, now)
+
+	local s = Atr_Hist_Series (name, now);
+	if (#s < ATR_HIST_MEDIAN_MIN) then return nil, #s; end
+
+	local p = {};
+	local i;
+	for i = 1, #s do p[i] = s[i].p; end
+
+	table.sort (p);
+
+	local n = #p;
+	if (n % 2 == 0) then return math.floor ((p[n/2] + p[n/2 + 1]) / 2), n; end
+
+	return math.floor (p[math.ceil (n/2)]), n;
+end
+
 -- ONE PHRASING OF A MOVE, SHARED BY EVERY READER (item 31, stage 4).
 --
 -- The same figure now appears on the Analysis tab's Week column, on item
@@ -677,6 +800,92 @@ function Atr_Hist_Show (name)
 	return false;
 end
 
+-- THE EVIDENCE FOR DELETING THE MEAN DATABASE (item 31, stage 5).
+--
+-- `HISTORY-STORE.md` §4.2 promised this decision would be taken on data rather
+-- than on a feeling, after the history had proven itself on a real account. This
+-- is the data: how many of the mean database's rows could ever have been a
+-- median, how many the new floor now suppresses, how much of it the history
+-- already covers, and -- for the names where both can answer -- how far apart
+-- the two figures are.
+--
+-- It is a report, not an action. Nothing here deletes anything.
+function Atr_Hist_Audit ()
+
+	local out = {};
+	local function say (t) tinsert (out, tostring (t)); end
+
+	local db = Atr_Hist_DB ();
+
+	local hist, histUsable = 0, 0;
+	if (db) then
+		local nm, packed;
+		for nm, packed in pairs (db.p) do
+			hist = hist + 1;
+			local n = 1;
+			local c;
+			for c in string.gmatch (packed, ";") do n = n + 1; end
+			if (n >= 3) then histUsable = histUsable + 1; end
+		end
+	end
+
+	local one, two, many, rows = 0, 0, 0, 0;
+	local both, agree, off10, off50 = 0, 0, 0, 0;
+
+	if (type (gAtr_MeanDB) == "table" and type (Atr_MeanCount) == "function") then
+
+		local nm, v;
+		for nm, v in pairs (gAtr_MeanDB) do
+
+			rows = rows + 1;
+			local n = Atr_MeanCount (v);
+
+			if     (n <= 1) then one  = one + 1;
+			elseif (n == 2) then two  = two + 1;
+			else                 many = many + 1; end
+
+			-- where BOTH can answer, how far apart are they
+			local hm = Atr_Hist_Median (nm);
+			local mm = (n >= 3) and Atr_MeanMedian (v) or nil;
+
+			if (hm and mm and mm > 0) then
+				both = both + 1;
+				local diff = math.abs (hm - mm) / mm;
+				if     (diff <= 0.10) then agree = agree + 1;
+				elseif (diff <= 0.50) then off10 = off10 + 1;
+				else                       off50 = off50 + 1; end
+			end
+		end
+	end
+
+	say ("MEAN PRICE DATABASE -- does it still earn its rows?");
+	say ("");
+	say (string.format ("rows                     %d", rows));
+	say (string.format ("  one sample only        %d   (never was a median; now suppressed)", one));
+	say (string.format ("  two samples            %d   (also suppressed)", two));
+	say (string.format ("  three or more          %d   (still shown)", many));
+	say ("");
+	say (string.format ("MARKET HISTORY items      %d", hist));
+	say (string.format ("  with 3+ days           %d   (can answer instead)", histUsable));
+	say ("");
+	say ("WHERE BOTH CAN ANSWER");
+	say (string.format ("  compared               %d", both));
+	say (string.format ("  within 10%%             %d", agree));
+	say (string.format ("  10-50%% apart           %d", off10));
+	say (string.format ("  more than 50%% apart    %d", off50));
+	say ("");
+	say ("Read it as: the first block is how much of that database could ever have");
+	say ("been a median at all. The last block is whether the two disagree enough to");
+	say ("matter -- if they mostly agree, the old one is redundant rather than wrong,");
+	say ("and it can go once the history covers the same names.");
+
+	if (type (Atr_An_ShowDebugBox) == "function") then
+		return Atr_An_ShowDebugBox (HT("Market history audit -- Ctrl+C to copy"), table.concat (out, "\n"));
+	end
+
+	return false;
+end
+
 function Atr_Hist_Clear ()
 
 	local db = Atr_Hist_DB ();
@@ -699,6 +908,11 @@ if (SlashCmdList) then
 			Atr_Hist_SetEnabled (first == "on");
 			if (Fdr_Options_Sync) then Fdr_Options_Sync (); end
 			Atr_Hist_Report ();
+			return;
+		end
+
+		if (first == "audit") then
+			Atr_Hist_Audit ();
 			return;
 		end
 

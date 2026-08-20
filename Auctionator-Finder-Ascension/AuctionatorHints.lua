@@ -549,6 +549,30 @@ function Atr_MeanAppend (db, name, sample)
 	table.sort (cur);
 end
 
+-- How many samples a stored value actually holds, whatever shape it is in.
+function Atr_MeanCount (v)
+
+	if (type (v) == "number") then return 1; end				-- the one-sample shape
+	if (type (v) ~= "table") then return 0; end
+
+	return #v;
+end
+
+-- BELOW THIS, IT IS NOT A MEDIAN AND MUST NOT BE CALLED ONE (BACKLOG item 31,
+-- stage 5, from the owner's report: "most of the time mean price is just showing
+-- something skewed because of a poisoned price").
+--
+-- The cause is measured and is in this file already: **this database averages
+-- 1.97 samples per name and 64% of names have exactly ONE** (see ATR_MEAN_CAP's
+-- note). At one sample the "median" IS that sample -- so one odd listing, on the
+-- one day somebody happened to scan, becomes the item's typical price and stays
+-- there, because eviction is random and nothing ages out.
+--
+-- Three is the smallest number for which a median means anything at all: it can
+-- outvote one bad sample, which is the entire job.
+local ATR_MEAN_MIN = 3;
+
+-- Returns  price, samples, source  -- source is "history" or "samples".
 function Atr_GetMeanPrice (item)  -- itemName or itemID
 
 	local itemName;
@@ -563,8 +587,28 @@ function Atr_GetMeanPrice (item)  -- itemName or itemID
 		return nil;
 	end
 
+	-- THE DATED SERIES FIRST (BACKLOG item 31, stage 5).  One sample a day,
+	-- bounded by retention, ordered, and thinned by age rather than at random --
+	-- which is every one of the things wrong with the array below.  It answers
+	-- only when the history feature is on and has enough days in it, so on a
+	-- default install nothing here changes.
+	if (type (Atr_Hist_Median) == "function") then
+		local m, n = Atr_Hist_Median (itemName);
+		if (m and m > 0) then return m, n, "history"; end
+	end
+
 	if (gAtr_MeanDB) then
-		return Atr_MeanMedian (gAtr_MeanDB[itemName]);
+
+		local v = gAtr_MeanDB[itemName];
+		local n = Atr_MeanCount (v);
+
+		-- Fewer than ATR_MEAN_MIN and we say NOTHING rather than print one scan's
+		-- number as an average.  The row stays in the database untouched: it is
+		-- still a real observation and the Auction line is still built from the
+		-- same feed -- it just stops being dressed up as a statistic.
+		if (n >= ATR_MEAN_MIN) then
+			return Atr_MeanMedian (v), n, "samples";
+		end
 	end
 	
 	return nil;
@@ -2422,7 +2466,10 @@ local function ShowTipWithPricing (tip, link, num, skillIndex)
 
 	if (AUCTIONATOR_V_TIPS == 1) then vendorPrice	= itemVendorPrice; end;
 	if (AUCTIONATOR_A_TIPS == 1) then auctionPrice	= Atr_GetAuctionPrice (itemName); end;
-    if (AUCTIONATOR_A_TIPS == 1) then auctionMedianPrice = Atr_GetMeanPrice (itemName); end;
+    local auctionMedianDays, auctionMedianSrc;
+    if (AUCTIONATOR_A_TIPS == 1) then
+        auctionMedianPrice, auctionMedianDays, auctionMedianSrc = Atr_GetMeanPrice (itemName);
+    end;
 
 	-- FINDER_TAB: NPC-sold trade good?  If we've learned this item from a vendor
 	-- (Atr_GetNPCPrice), its going cost is the fixed NPC price, so we show that
@@ -2607,7 +2654,16 @@ local function ShowTipWithPricing (tip, link, num, skillIndex)
 			tip:AddDoubleLine (ZT("Auction")..xstring, "|cFFFFFFFF"..ZT("unknown").."  ");
 		end
         if (auctionMedianPrice ~= nil) then
-            tip:AddDoubleLine (Atr_TipLabel (ZT("Auction median"), medianShown, medianBest)..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (auctionMedianPrice));
+            -- How much is behind it, which is the thing this line never used to
+            -- say (item 31, stage 5).  A median over dated daily closes carries
+            -- its day count; the old sample array carries nothing, because it has
+            -- no dates -- and it now only reaches this line at all once it holds
+            -- enough samples to be a median rather than one scan.
+            local mcount = "";
+            if (auctionMedianSrc == "history" and auctionMedianDays) then
+                mcount = "|cFF888888 ("..auctionMedianDays.."d)|r";
+            end
+            tip:AddDoubleLine (Atr_TipLabel (ZT("Auction median"), medianShown, medianBest)..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (auctionMedianPrice)..mcount);
         end
 
 		-- WHAT IT USED TO COST (BACKLOG item 31, stage 4).  Every other money

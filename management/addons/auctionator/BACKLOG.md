@@ -9,10 +9,11 @@ A heading marked **DONE** has shipped in full — item 12's three parts included
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
 **item 10** closed without any code, and **items 28 and 30** are new, with nothing built yet.
-**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 has shipped stages 1-4** on
-2026-08-21 — the store, the price-cascade rung, the Week column (which closes **item 8's group C**)
-and the readers; its write-up is `HISTORY-STORE.md`. Only stage 5, the retention condenser, is
-left, and it wants a month of real data first.
+**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 shipped in full** on 2026-08-21 —
+the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
+and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
+follow-on: whether `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its rows, which `/atrhistory audit`
+now measures.
 Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
@@ -3501,7 +3502,7 @@ Supply counts units. Build those first and the cards are accurate on the day the
 
 ---
 
-## 31. A market price history, in a companion file, off by default — STAGES 1-4 BUILT
+## 31. A market price history, in a companion file, off by default — DONE
 
 **Asked (owner, 2026-08-21):** bring back the original addon's history SavedVariables *companion
 file*, make it a toggleable feature that populates from scan history, let the rest of the addon use
@@ -3730,6 +3731,50 @@ that checks the span survives.
 the shared formatter in both directions and at both clamps, the span surviving into the sentence,
 and each of the sell note's four gates.
 
+### Stage 5 built, 2026-08-21 — the condenser, and an honest median
+
+**The second half was answered by the owner from use before any data could be:** *"most of the time
+mean price is just showing something skewed because of a 'poisoned' price, I don't really find it
+useful when I see it on the tooltip honestly."* Detail in `HISTORY-STORE.md` §14.
+
+**The condenser.** Beyond the 30-day daily window a week folds into **one record holding that week's
+median close**, kept for twelve weeks; only past that is anything destroyed. Built even though no
+reader asks for it yet, because **retention is the one decision that cannot be deferred** — a reader
+can be added next month, a dropped month cannot be recovered. A week is the unit because the market
+mechanism this was built for rotates weekly, and a monthly average would erase exactly that signal.
+A week folds **exactly once, from whole days** (it folds only when all seven have left the daily
+window, and an already-folded record passes through untouched) — re-medianing a median drifts the
+number a little further on every trim, invisibly. The record gained a fourth field,
+`day:price:n:span`, omitted when span is 1, so a daily close is still nine characters. Cost: a full
+name goes ~360 → ~530 bytes, so the whole-database projection moves **1.81 MB → ~2.5 MB**;
+`ATR_HIST_WEEKS` is the dial and 0 restores the old behaviour exactly.
+
+**The median, and the cause of the poisoning — which is already measured in this repo.** It is not a
+skew. It is a **sample size of one**: `AuctionatorHints.lua` records that the mean database
+*"averages 1.97 samples per name, 64% have one and only 8.7% have five or more"* (item 12 part 3b).
+At one sample the median IS that sample, so two thirds of the time "Auction median" was one scan's
+number wearing the word median — and since `Atr_MeanAppend` evicts at `math.random` with no dates,
+one odd listing on the one day somebody scanned became the item's typical price for good.
+
+`Atr_GetMeanPrice` now answers in two tiers: **the dated series** where the history is on and holds
+three or more days, otherwise **the old array only once it holds three or more samples**. Three is
+the smallest number at which a median can outvote one bad sample. Below that it returns nothing and
+the tooltip line does not appear. **No rows are deleted** — a one-sample row is still a real
+observation and still feeds the Auction line; it has stopped being dressed up as a statistic. On a
+default install the visible change is that roughly two thirds of the median lines, the ones that
+were never medians, go away. A history-derived median now also prints its day count, `(12d)`; the
+old array prints nothing, having no dates to count.
+
+**`/atrhistory audit`** is the evidence for eventually deleting the mean database: rows split by
+sample count, how many names the history already covers, and — where both can answer — how far apart
+the two are, bucketed at 10% and 50%. It is a report; **nothing in it deletes anything.** If they
+mostly agree, the old database is redundant rather than wrong and can go once the history covers the
+same names. That remains a separate item.
+
+**Tested:** 94 assertions. New ones pin retention reaching back past 30 days, day order surviving a
+fold, a folded record covering at most a week, folding being idempotent across repeated trims, and
+the median refusing at one and two days while a single absurd day fails to move it at four.
+
 **What it unblocks.** Item 8 group C (the week-over-week `+240%` column — this *is* that item's
 missing input), item 28's weekly demand signal, item 30's "ore is up, go mine" card, an age-aware
 tooltip line, and a Sell tab that can say you are undercutting a rising market. Eventually it makes
@@ -3741,8 +3786,8 @@ the history has proven itself on a real account, and not part of this one.**
 ## Suggested order
 
 Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28 and 30 are unstarted**, **item 29 is done in full** and **item 31 has shipped stages 1-4
-of five** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day. What is otherwise left is
+(2026-08-19). **Items 28 and 30 are unstarted** and **items 29 and 31 are done in full** — items 28-30 added
+2026-08-20, item 31 on 2026-08-21 and built the same day. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
@@ -3762,14 +3807,13 @@ short of a readout. In order:
    else on this list measures effects; this is the only candidate cause, so it is worth knowing
    before more effort goes into inferring what it would simply state. If it reads, it outranks C
    outright — a leading indicator beats a lagging one built from a series that does not exist yet.
-3. ~~**Item 31's stages 1-4**~~ — **BUILT 2026-08-21**: the store and its toggle, the price-cascade
-   rung, the Week column that closes item 8's group C, and the four readers that could be built
-   (two of them wait on items 28 and 30 existing). **What is left is elapsed time** — every one of
-   those readings is blank until a few days of history exist, which is the one ingredient nobody can
-   write. Play with it on, then take a second `/cpp load` and compare against the 96.2 ms / 1052 KB
-   baseline; the companion should appear as a line of its own, which is the per-addon attribution
-   the separate file was for. **Stage 5** (the condenser, and then whether
-   `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its 5267 rows) wants a month of data behind it.
+3. ~~**Item 31, all five stages**~~ — **BUILT 2026-08-21**. **What is left is elapsed time**: every
+   reading it added is blank until a few days of history exist, which is the one ingredient nobody
+   can write. Play with it on, then take a second `/cpp load` against the 96.2 ms / 1052 KB baseline
+   — the companion should appear as a line of its own, which is the per-addon attribution the
+   separate file was for, and it is the number that settles whether this becomes core. Then
+   `/atrhistory audit`, which decides the one follow-on: whether
+   `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its 5267 rows.
 4. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
    five or six cards in plain sentences over figures four existing functions already return. No
    new capture and no new saved variable — it is a renderer, and its whole discipline is that it

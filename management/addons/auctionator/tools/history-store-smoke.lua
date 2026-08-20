@@ -155,7 +155,11 @@ eq (Atr_Hist_Note (nil, 100), false,           "nor is no name at all")
 eq (packed ("Copper Ore"), before,             "... and none of them touched the series")
 
 --------------------------------------------------------------------
--- 8.  Retention: 30 days of dailies, oldest dropped, newest always kept.
+-- 8.  Retention (item 31, stage 5): 30 days of DAILIES, then folded weeks
+--     behind them, and only past all of that is anything actually destroyed.
+--     Retention is the one decision that cannot be deferred -- a reader can be
+--     added next month, a dropped month cannot be recovered -- so what this
+--     pins is that old data is CONDENSED rather than thrown away.
 --------------------------------------------------------------------
 
 local i
@@ -165,16 +169,51 @@ for i = 6604, 6700 do
 end
 
 s = Atr_Hist_Series ("Thorium Ore")
-check (#s <= 40,  "the series is capped -- got " .. #s)
-check (#s >= 30,  "... and keeps the retention window -- got " .. #s)
+
+check (#s <= 64, "the series is capped -- got " .. #s)
 eq (s[#s].d, 6700,       "the newest day survives trimming")
 eq (s[#s].p, 100 + 6700, "... with its price")
-check (s[1].d > 6604,    "the oldest days were dropped")
-check (s[1].d >= 6700 - 40, "... and nothing older than the cap survived")
+
+check (s[1].d >= 6700 - 114, "nothing past the whole retention window survives -- got age "
+	.. (6700 - s[1].d))
+check (6700 - s[1].d > 30,   "... but the series reaches back FURTHER than the daily window: "
+	.. "old data is condensed, not dropped -- got " .. (6700 - s[1].d) .. " days")
+
+-- days stay strictly in order, folded or not, because every read depends on it
+local ordered, folded, dailies = true, 0, 0
+for i = 1, #s do
+	if (i > 1 and s[i].d <= s[i-1].d) then ordered = false end
+	if ((s[i].span or 1) > 1) then folded = folded + 1 else dailies = dailies + 1 end
+end
+check (ordered, "the series stays in day order after folding")
+check (folded > 0,  "whole weeks past the daily window are folded -- got " .. folded)
+check (dailies >= 30, "... and the daily window is still daily -- got " .. dailies)
+
+-- a folded record must say how many days it stands for, or a reader cannot tell
+-- one week's median from one day's close
+for i = 1, #s do
+	if ((s[i].span or 1) > 1) then
+		check (s[i].span <= 7, "a folded record covers at most a week -- got " .. s[i].span)
+		break
+	end
+end
 
 -- the invariant that makes trimming affordable: it must not run on every write
-check (#packed ("Thorium Ore") <= 620 + 20,
+check (#packed ("Thorium Ore") <= 620 + 40,
 	"a trimmed string stays near the trim threshold -- got " .. #packed ("Thorium Ore"))
+
+-- FOLDING IS IDEMPOTENT. A week is folded once, from whole days, and never from
+-- a previous fold's output -- otherwise the number drifts a little every trim.
+local before8 = packed ("Thorium Ore")
+gNow = day (6700)
+Atr_Hist_Note ("Thorium Ore", 100 + 6700)		-- same day, same price: a re-close
+local after8 = Atr_Hist_Series ("Thorium Ore")
+local same = true
+local b8 = Atr_Hist_Decode (before8)
+for i = 1, math.min (#b8, #after8) do
+	if (b8[i].d ~= after8[i].d or b8[i].p ~= after8[i].p) then same = false end
+end
+check (same, "re-running the trim does not move any already-folded price")
 
 --------------------------------------------------------------------
 -- 9.  A record we cannot read is dropped, never guessed at.
@@ -361,6 +400,33 @@ eq (Atr_Hist_SellNote ("Crashing Ore"), nil,
 	"a reading nobody has refreshed in days is not advice about today")
 
 eq (Atr_Hist_SellNote ("Never Heard Of It"), nil, "and an unrecorded item says nothing")
+
+--------------------------------------------------------------------
+-- 18. THE MEDIAN (stage 5). The owner's report was that the tooltip's "Auction
+--     median" is usually a poisoned number. The measured cause is in the addon
+--     already: that database averages 1.97 samples per name and 64% hold ONE,
+--     so two thirds of the time the word "median" is over a single scan. This
+--     one is over dated daily closes and refuses to answer below three of them.
+--------------------------------------------------------------------
+
+gNow = day (7000); Atr_Hist_Note ("Median Ore", 1000)
+eq (Atr_Hist_Median ("Median Ore"), nil, "one day is not a median")
+
+gNow = day (7001); Atr_Hist_Note ("Median Ore", 1200)
+eq (Atr_Hist_Median ("Median Ore"), nil, "two days is not a median either")
+
+gNow = day (7002); Atr_Hist_Note ("Median Ore", 1100)
+local med, mn = Atr_Hist_Median ("Median Ore")
+eq (med, 1100, "three days is, and it is the middle one")
+eq (mn, 3,     "... reporting how many days it stands on")
+
+-- the whole point: one absurd day must not become the item's typical price
+gNow = day (7003); Atr_Hist_Note ("Median Ore", 900000)
+med = Atr_Hist_Median ("Median Ore")
+check (med ~= nil and med < 2000,
+	"a single poisoned day does not move the median -- got " .. tostring (med))
+
+eq (Atr_Hist_Median ("Never Heard Of It"), nil, "an unrecorded item has no typical price")
 
 --------------------------------------------------------------------
 

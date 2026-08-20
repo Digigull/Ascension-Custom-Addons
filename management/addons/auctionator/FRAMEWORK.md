@@ -168,7 +168,7 @@ that matter:
 | Variable | Shape | Written by |
 |---|---|---|
 | `AUCTIONATOR_PRICE_DATABASE` | `[realm_Faction][name] = lowest per-unit buyout` | Finder scans (`FinderPriceDB`) |
-| `AUCTIONATOR_MEAN_PRICE_DATABASE` | `[realm_Faction][name] = { up to 15 sorted samples }` | same |
+| `AUCTIONATOR_MEAN_PRICE_DATABASE` | `[realm_Faction][name] = { up to 15 sorted samples }` — **superseded** where the history has three days (item 31 stage 5), and no longer reported at all below three samples | same |
 | `AUCTIONATOR_PRICING_HISTORY` | `[name][timetag] = "price:stacksize"` | **your own postings only** |
 | `AUCTIONATOR_CRAFT_RECIPES` | `[itemID or name] = { made, reagents }` | profession windows + recipe tooltips |
 | `AUCTIONATOR_NPC_PRICES` | vendor prices | merchant scan |
@@ -246,7 +246,7 @@ Four global functions answer "what is this worth":
 | Function | Answers | Defined in |
 |---|---|---|
 | `Atr_GetAuctionPrice(nameOrID)` | lowest scanned AH price, then the recorded market series, then your own last posting | `AuctionatorHints.lua:273` |
-| `Atr_GetMeanPrice(nameOrID)` | median of the sample array | `AuctionatorHints.lua:318` |
+| `Atr_GetMeanPrice(nameOrID)` | median of the dated series, else of the sample array once it holds 3+ | `AuctionatorHints.lua:318` |
 | `Atr_GetNPCPrice(itemID)` | fixed vendor *buy* price | `AuctionatorFinderMerchant.lua:58` |
 | `Atr_GetSellValue(item)` | vendor *sell* value floor | `AuctionatorAPI.lua:24` |
 

@@ -55,7 +55,7 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/passlootbis/tools/report-smoke.lua      # 3 passes, non-zero on a crash
   lua5.1 management/addons/auctionator/tools/sell-variant-smoke.lua # 27 assertions
   lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua # 31 assertions
-  lua5.1 management/addons/auctionator/tools/history-store-smoke.lua # 84 assertions
+  lua5.1 management/addons/auctionator/tools/history-store-smoke.lua # 94 assertions
   ```
 
   All six pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;

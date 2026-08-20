@@ -261,6 +261,10 @@ shape was chosen for. Projected from the measured figures:
 | 647 items (one session's scanning) | 71 KB | 228 KB | 636 KB |
 | 5267 items (the whole price database) | 578 KB | **1.81 MB** | 5.06 MB |
 
+Stage 5's condenser changes the 30-day column: 30 dailies plus twelve folded weeks is ~530 bytes a
+name rather than ~360, so the whole-database figure becomes **~2.5 MB** — for a quarter of shape
+instead of a month. `ATR_HIST_WEEKS` is the dial.
+
 So the estimate held, and the 30-day whole-market case is confirmed affordable: **1.81 MB in a file
 that regrows by scanning**, against a main file of 1.14 MB that cannot. 90 days is the one that is
 not, which is what the condenser (stage 5) is for.
@@ -372,8 +376,8 @@ too old to be honest.
 §13.** Item 30's ore card and item 28's demand signal want items that do not exist yet; the Sell
 tab's warning and the age-aware tooltip line did not, and shipped.
 
-**Stage 5 — retention polish.** The condenser, and only then the question of whether the mean
-database still earns its 5267 rows.
+**Stage 5 — retention polish. — BUILT 2026-08-21, see §14.** The condenser, and the mean database
+question — which the owner answered from use before the data could.
 
 ---
 
@@ -599,6 +603,85 @@ without it.
 same-day re-close and on a new day's write, the shared formatter's rounding and clamping in both
 directions, that the move text always carries the real span, and each gate on the sell sentence —
 the fall, the rise, the noise floor and the staleness floor.
+
+---
+
+## 14. Stage 5 as built, 2026-08-21 — the condenser, and an honest median
+
+Two halves. The first is the named content; the second is the question stage 5 was supposed to
+*ask*, which the owner answered from use before any data could:
+
+> "Most of the time mean price is just showing something skewed because of a 'poisoned' price, I
+> don't really find it useful when I see it on the tooltip honestly."
+
+### The condenser
+
+Beyond the 30-day daily window a week now folds into **one record holding that week's median
+close**, and those keep for twelve weeks. Past that — and only past that — data is destroyed.
+
+**Why keep anything when no reader asks for it yet.** Retention is the one decision that cannot be
+deferred: a reader can be added next month, a dropped month cannot be recovered. The asymmetry is
+entirely one-sided, and it is the same argument that put the store in its own file.
+
+**Why a week is the fold unit.** The market mechanism this was built for rotates weekly, so "this is
+the week copper spikes" is a real question and a monthly average would erase exactly that signal. A
+quarter of weekly shape answers it; more is speculation.
+
+**A week is folded exactly once, from whole days**, which is what makes the trim safe to re-run: a
+week folds only when all seven of its days have left the daily window, and an already-folded record
+is carried through untouched. Re-medianing a median would drift the number a little further on every
+trim, and that drift is invisible. The record grew a fourth field — `day:price:n:span` — with `span`
+omitted when it is 1, so a daily close is still nine characters.
+
+**The cost, from the measured 9.8 bytes a sample:** a full name goes from ~360 bytes to ~530, so the
+whole-database projection moves from **1.81 MB to about 2.5 MB**. `ATR_HIST_WEEKS` is the dial and
+setting it to 0 restores the old drop-everything behaviour exactly.
+
+### The median, and why the old one was poisoned
+
+The owner's report has a cause already measured *in this repo*, and it is not the one the word
+"poisoned" suggests. It is not a skew — it is a **sample size of one**:
+
+> `AuctionatorHints.lua`, item 12 part 3b: "this database averages **1.97 samples per name**, 64%
+> have one and only 8.7% have five or more."
+
+At one sample the median **is** that sample. So two thirds of the time, "Auction median" was one
+scan's number wearing the word median — and because `Atr_MeanAppend` evicts at `math.random` and
+carries no dates, one odd listing on the one day somebody happened to scan became the item's typical
+price and stayed there. Nothing ages out; an unlucky thin can drop every sample from the week you
+are asking about.
+
+`Atr_GetMeanPrice` now answers in two tiers:
+
+1. **The dated series**, when the history is on and holds at least three days. One sample a day,
+   ordered, bounded by retention, thinned by age rather than at random — every one of the things
+   wrong with the array below.
+2. **The old sample array**, but only once it holds **three or more samples**. Three is the smallest
+   number for which a median can outvote one bad sample, which is the whole job. Below that the
+   function returns nothing and the tooltip line simply does not appear.
+
+**No rows are deleted.** A one-sample row is still a real observation and still feeds the Auction
+line; it has only stopped being dressed up as a statistic. On a default install — history off — the
+visible change is that the roughly two thirds of median lines that were never medians go away.
+
+The tooltip line now also says how much is behind it: a history-derived median carries `(12d)`.
+The old array carries nothing, because it has no dates to count.
+
+### The evidence for eventually deleting the mean database
+
+`/atrhistory audit` prints, into the copy box: how many rows the mean database holds and how they
+split by sample count, how many names the history already covers with three or more days, and — for
+the names where both can answer — how far apart the two figures are, bucketed at 10% and 50%.
+
+§4.2 promised that decision would be taken on data rather than a feeling, after the history had
+proven itself on a real account. This is that data, and it is a report: **nothing here deletes
+anything.** If the two mostly agree, the old database is redundant rather than wrong, and it can go
+once the history covers the same names.
+
+**Tested:** 94 assertions. The new ones pin the retention window reaching back past 30 days (data
+condensed, not dropped), day order surviving a fold, a folded record covering at most a week, the
+fold being idempotent across repeated trims, and the median refusing to answer at one and two days
+while a single absurd day fails to move it at four.
 
 ---
 
