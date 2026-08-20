@@ -157,7 +157,7 @@ reagent demand), swapped by Show/Hide rather than rebuilt. §8 has the recipe.
 
 ## 5. Where the data lives
 
-19 account-wide saved variables and 19 per-character, all but one declared in this fork's own
+20 account-wide saved variables and 19 per-character, all but one declared in this fork's own
 `.toc`. **The exception is `AUCTIONATOR_MARKET_HISTORY`** (BACKLOG item 31, 2026-08-21), declared by
 the companion addon `Auctionator-Finder-Ascension-History` so that it lands in a SavedVariables file
 of its own — a truncated file is discarded whole, and the price history is the one store here that
@@ -178,11 +178,20 @@ that matter:
 | `AUCTIONATOR_LEDGER` | `{ ver, rows = { {t, src, who, name, link, id, qty, unit, …} } }` — what you bought and listed | `AuctionatorLedger` (BACKLOG item 7) |
 | `AUCTIONATOR_MARKET_HISTORY` | `{ ver, realms = { [realm_Faction] = { p = {[name] = "day:price[:scans];…"}, n } } }` — one packed string per item, the whole series in it | the four price feeds, via `Atr_Hist_Note` (off by default) — **companion file** |
 | `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, listings, units, low, id, …}}, ids = {[name]=itemID}, plan = { batch, recipes = {[recipe name]=true} } }` — the watchlist, what scanning has learned about it, and the recipes you have ticked to make (BACKLOG item 29 stage 3) | `AuctionatorAnalysis` (BACKLOG item 8) |
+| `AUCTIONATOR_ADVISOR` | `{ ver, ignore = {[name]=when}, slow = {[name]=when}, farm = {[name]={id, t}} }` — **what you told the Advisor**, not what it worked out: stop suggesting this, this one sells slowly, put this on the farm list | `AuctionatorAdvisor` (BACKLOG item 30 stage 2) |
 
 `ids` is the odd one and worth knowing about: a **name → item ID** map, because a tooltip needs an
 ID and this tab is full of rows that only have a name (a watch entry, and every enchant recipe,
 which is filed under the scroll it sells as). It is *gated* to names the tab can draw, and most
 answers never reach it at all — see §6.
+
+**`AUCTIONATOR_ADVISOR` is a file of its own on purpose, and the reason is a dependency and not
+tidiness.** The farm list is going to be opened from a **minimap button** (BACKLOG item 34), away
+from the auction house and away from the Analysis tab entirely — making that reader load the
+watchlist database to find out what to farm would be the wrong way round, and it is cheaper to
+separate them now than to unpick it later. Note also what is *not* in it: **skip** state, which is
+session-only by design. "Move past this one" is a decision about today, and a `/reload` bringing it
+back is the correct amount of memory.
 
 ### The finding that matters most: there is no market price series
 
@@ -329,7 +338,7 @@ crafting view and the trade skill window's own profit sort from disagreeing: bot
 `Atr_Craft_GetCraftCost` and the one reagent cascade above. A view that computed its own figures
 would be a second opinion nobody asked for.
 
-**The Advisor tab (item 30) is that rule applied to a whole tab, and it owns no data at all.**
+**The Advisor tab (item 30) is that rule applied to a whole tab, and it derives nothing at all.**
 `AuctionatorAdvisor.lua` reads `Atr_Craft_ProfitRanking`, `Atr_Craft_TopReagent`,
 `Atr_Craft_ReagentPressure`, `Atr_An_Stats`, `Atr_An_PlanMap`/`Atr_An_PlanBatch` and
 `Atr_Ledger_ItemTotals`, and computes nothing of its own — its cards are readings of those
@@ -340,9 +349,16 @@ moment the Advisor does its own sums it becomes a second opinion, and the first 
 with the table on the tab next door the addon stops being trustworthy.
 
 It writes through other people's surfaces too, rather than into their saved variables:
-`Atr_An_PlanTick` (published for it, and the same writer the Crafting view's tick box uses) and
-`Atr_An_Watch`. A second writer to `AUCTIONATOR_ANALYSIS.plan` that skipped `An_PlanChanged` would
-leave the Reagents view drawing a bill for a basket nobody has.
+`Atr_An_PlanTick` (published for it, and the same writer the Crafting view's tick box uses),
+`Atr_An_Watch` and `Atr_An_AddGroup`. A second writer to `AUCTIONATOR_ANALYSIS.plan` that skipped
+`An_PlanChanged` would leave the Reagents view drawing a bill for a basket nobody has.
+
+**Stage 2 (2026-08-21) gave it a saved variable, and that is not a hole in the rule — read the rule
+precisely.** `AUCTIONATOR_ADVISOR` holds *ignore*, *slow mover* and the *farm list*: three things
+**you told it**, not three things it worked out. Your own decisions are an INPUT, so there is
+nothing in that file for a table on the next tab to disagree with, which is the failure the rule
+exists to prevent. The test to apply to anything new here is that one: **would a table somewhere
+else be able to contradict it?** A figure would. A preference cannot.
 
 Two more globals belong to that tab and are worth knowing before adding anything that needs an
 item ID from a name: `Atr_An_IdForName(name)` and `Atr_An_LearnId(name, id)`

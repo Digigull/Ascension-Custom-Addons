@@ -107,6 +107,27 @@ Analysis tab, so the two can never disagree. When nothing clears the bar it
 says so and lists what would give it something, which on a fresh install is the
 most useful thing it can tell you.
 
+**You can answer back.** Make this, Worth farming and Watch these each offer
+three candidates as item rows — hover one for its tooltip, click it to go and
+look at it, and use the controls under it:
+
+- **Farm list** puts it on a saved list of things to go and get.
+- **Plan N** ticks the recipe into the crafting plan at your current batch size.
+  It is the same tick as the one on the Crafting view, because it is the same plan.
+- **Slow mover** flags a craft that sells slowly. It keeps its place on profit
+  but sinks below anything not flagged, and the row says so.
+- **Watch** puts a reagent on the watchlist in a group called `Advisor`, then
+  reads **Added!** so you know it worked.
+- **Ignore** stops it being suggested on any card, for good. The `Ignored (N)`
+  button at the top of the tab is the undo.
+- **Skip** moves past this one and shows the next recommendation instead. It is
+  forgotten at logout — a decision about today, not about the item.
+
+The point of the choice is that the best recommendation on paper can be one you
+will not act on: the highest gold-per-day on your watchlist might be a material
+you only get somewhere you would rather not go. Nothing the addon knows can tell
+it that, so it asks.
+
 ### Profession scanning
 
 The 3.3.5 client can't be asked "what reagents craft item X" — that data is only
