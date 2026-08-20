@@ -56,6 +56,13 @@
 --              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
 --              arithmetic over today's prices, exact if the prices are current.
 --
+-- EVERY ROW BEHAVES THE SAME WAY in all three views, because they are all the
+-- same kind of thing -- an item you are deciding about.  Hover shows the item's
+-- own tooltip (and, on the crafting view, a second tooltip beside it with the
+-- reagents and the figures); left click looks the item up, gear on the Finder
+-- tab and everything else on Buy; right click opens the list menu.  See
+-- An_RowLink / An_OpenItem below for why those two tabs and not one.
+--
 -- Every column in all three sorts: click a header, click it again to reverse,
 -- the way the Finder tab's headers have always worked.  Each view keeps its own
 -- key, and a cell with nothing in it sorts last in both directions rather than
@@ -722,6 +729,107 @@ local function An_Money (c)
 	return string.format ("%d%s", cp, AN_COPPER);
 end
 
+-- WHAT A ROW DOES (owner's request, 2026-08-20) -----------------------------
+--
+-- Every row of every view behaves the same way, because they are all the same
+-- kind of thing -- an item you are deciding about:
+--
+--   hover        the item's own tooltip, exactly as the auction house draws it
+--   left click   look it up: gear on the FINDER tab, everything else on BUY
+--   right click  the list menu (shopping list / analysis group)
+--
+-- The item link is the hard part, and each view knows the item differently: a
+-- ledger row carries the real link (which on a same-name variant is the exact
+-- item), a craft row has the produced item's ID, and a watch entry has only a
+-- name.  Resolved once per row and remembered on the record -- GetItemInfo is a
+-- cache lookup, but a mouse-over hot path is no place to find that out.
+local function An_RowLink (rec)
+
+	if (rec == nil) then return nil; end
+	if (rec.link) then return rec.link; end
+
+	if (rec.id and type (GetItemInfo) == "function") then
+		local _, link = GetItemInfo (rec.id);
+		if (link) then rec.link = link; return link; end
+	end
+
+	if (rec.name and Atr_GetItemLink) then
+		local link = Atr_GetItemLink (rec.name);
+		if (link) then rec.link = link; return link; end
+	end
+
+	return nil;
+end
+
+-- GEAR GOES TO THE FINDER, EVERYTHING ELSE TO BUY.  That split is not a
+-- preference, it is the reason the Finder tab exists: the Buy tab condenses a
+-- scan by item NAME and keeps essentially one link per name, and on this server
+-- two auctions of the "same" piece of gear are different items
+-- (AuctionatorFinderBuyRedirect.lua).  So this asks the same question that file
+-- asks (Fdr_BuyRedirect_ClassOf + Fdr_IsGearClassName) and takes the same jump
+-- it takes (Atr_Finder_JumpFromBuy), rather than deciding it a second way.
+--
+-- An item the client has never cached answers "no class", which lands on the
+-- Buy tab -- and the redirect's own second entry point picks it up from there
+-- once the auction rows arrive and the class is finally knowable.  Guessing is
+-- what that file's fourth rule forbids, and this is the same nil case.
+-- A 1x1 frame parked where the cursor is, for the right-click menu to hang off.
+-- The menu anchors to a FRAME (it is placed under one, or above it near the
+-- bottom of the screen), and the only frame a row click has to offer is the row
+-- -- which is as wide as the table, so a menu opened from the Profit column
+-- would appear back at the Item column, 600px away from the click.
+local gAn_CursorAnchor = nil;
+
+local function An_CursorAnchor (fallback)
+
+	if (type (CreateFrame) ~= "function" or type (GetCursorPosition) ~= "function") then
+		return fallback;
+	end
+
+	if (gAn_CursorAnchor == nil) then
+		gAn_CursorAnchor = CreateFrame ("Frame", nil, UIParent);
+		gAn_CursorAnchor:SetSize (1, 1);
+	end
+
+	local x, y = GetCursorPosition ();
+	local sc   = (UIParent and UIParent.GetEffectiveScale) and UIParent:GetEffectiveScale () or 1;
+
+	if (x == nil or y == nil or sc == nil or sc == 0) then return fallback; end
+
+	gAn_CursorAnchor:ClearAllPoints ();
+	gAn_CursorAnchor:SetPoint ("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / sc, y / sc);
+
+	return gAn_CursorAnchor;
+end
+
+local function An_OpenItem (rec)
+
+	local name = rec and rec.name;
+	if (name == nil or name == "") then return false; end
+
+	local link = An_RowLink (rec);
+	local cls  = (Fdr_BuyRedirect_ClassOf) and Fdr_BuyRedirect_ClassOf (name, link) or nil;
+
+	if (Fdr_IsGearClassName and Fdr_IsGearClassName (cls) == true
+		and Atr_Finder_JumpFromBuy and Atr_Finder_JumpFromBuy (name)) then
+		return true;
+	end
+
+	if (Atr_SelectPane == nil or Atr_Search_Box == nil or Atr_Search_Onclick == nil) then
+		return false;
+	end
+
+	-- select first: the search box belongs to the shared main panel and is
+	-- hidden until the Buy tab is up (the Bazaar's jump learned this)
+	Atr_SelectPane (ATR_BUY_TAB or 3);
+
+	-- quoted, so Auctionator treats it as an exact name rather than a substring
+	Atr_Search_Box:SetText ('"'..name..'"');
+	Atr_Search_Onclick ();
+
+	return true;
+end
+
 -- Watched items in the current group, in the market view's current sort order
 -- (best farm score first until a header is clicked).  The ordering itself lives
 -- in An_SortRows and the columns' `val` functions -- including the rule this
@@ -911,16 +1019,56 @@ local function An_Margin (r)
 	return string.format ("|cffff6060%d%%|r", pct);
 end
 
--- What the Cost column is made of, on the item's own tooltip.  A bare cost is a
--- number you cannot check; the reagent it is waiting on is the thing you would
--- go and scan, so the row says which one that is rather than leaving the cell
--- blank and silent.
-local function An_CraftTip (r)
+-- THE CRAFTING TOOLTIP, BESIDE THE ITEM'S OWN (owner's request, 2026-08-20)
+--
+-- What the Cost column is made of: a bare number is one you cannot check, and
+-- the reagent it is waiting on is the thing you would go and scan.
+--
+-- It used to be extra lines appended UNDER the item's real tooltip. It is a
+-- tooltip of its own now, drawn beside that one, because the two are different
+-- kinds of thing -- one is the item as the client knows it, the other is what
+-- it costs you to make and what that is worth -- and stacked they made a
+-- column tall enough to put the interesting half off the bottom of the screen
+-- on any piece of gear.
+--
+-- Its own GameTooltipTemplate frame, not a second SetOwner on the shared one:
+-- GameTooltip can show one thing at a time and every other addon expects to be
+-- able to take it. The template parks it on the TOOLTIP strata, which is the
+-- one placement management/docs/CLAUDE.md leaves alone -- a tooltip that draws
+-- under what it describes is not a tooltip.
+local gAn_CraftTip = nil;
 
-	if (GameTooltip == nil or r.reagents == nil) then return; end
+local function An_CraftTipFrame ()
 
-	GameTooltip:AddLine (" ");
-	GameTooltip:AddDoubleLine (AZT("Reagents"), AZT("for one craft"), 1, 1, 1, 0.6, 0.6, 0.6);
+	if (gAn_CraftTip) then return gAn_CraftTip; end
+	if (type (CreateFrame) ~= "function") then return nil; end
+
+	gAn_CraftTip = CreateFrame ("GameTooltip", "Atr_An_CraftTooltip", UIParent, "GameTooltipTemplate");
+
+	return gAn_CraftTip;
+end
+
+local function An_HideCraftTip ()
+	if (gAn_CraftTip) then gAn_CraftTip:Hide(); end
+end
+
+local function An_ShowCraftTip (owner, r)
+
+	if (r == nil or r.reagents == nil or GameTooltip == nil) then return; end
+
+	local tip = An_CraftTipFrame ();
+	if (tip == nil) then return; end
+
+	-- ANCHOR_NONE and then our own point: what this hangs off is the ITEM's
+	-- tooltip, so the pair moves as one and neither lands on the row being read.
+	tip:SetOwner (owner, "ANCHOR_NONE");
+	tip:ClearLines ();
+
+	tip:AddDoubleLine (r.name or "", (r.made > 1) and string.format (AZT("makes %d"), r.made) or "",
+		1, 0.82, 0, 0.8, 0.8, 0.8);
+
+	tip:AddLine (" ");
+	tip:AddDoubleLine (AZT("Reagents"), AZT("for one craft"), 1, 1, 1, 0.6, 0.6, 0.6);
 
 	local _, rg;
 	for _, rg in ipairs (r.reagents) do
@@ -933,10 +1081,10 @@ local function An_CraftTip (r)
 		local unit  = (Atr_Craft_ReagentPrice) and Atr_Craft_ReagentPrice (rg.id, rg.name) or nil;
 
 		if (unit) then
-			GameTooltip:AddDoubleLine (string.format ("%s x%d", nm, count), An_Money (unit * count),
+			tip:AddDoubleLine (string.format ("%s x%d", nm, count), An_Money (unit * count),
 				0.9, 0.9, 0.9, 1, 1, 1);
 		else
-			GameTooltip:AddDoubleLine (string.format ("%s x%d", nm, count), AZT("not priced"),
+			tip:AddDoubleLine (string.format ("%s x%d", nm, count), AZT("not priced"),
 				0.9, 0.9, 0.9, 1, 0.4, 0.4);
 		end
 	end
@@ -944,24 +1092,45 @@ local function An_CraftTip (r)
 	-- An enchant is not sellable until it is on a vellum, so the vellum is as
 	-- much a reagent as the dust is -- and it is the one the recipe never lists.
 	if (r.vellum and Atr_Craft_VellumCost) then
-		GameTooltip:AddDoubleLine (AZT("Vellum").." ("..tostring (r.vellum)..")",
+		tip:AddDoubleLine (AZT("Vellum").." ("..tostring (r.vellum)..")",
 			An_Money (Atr_Craft_VellumCost (r.vellum)), 0.9, 0.9, 0.9, 1, 1, 1);
 	end
 
+	-- The row's own numbers, repeated here on purpose: this box is read while
+	-- the cursor is over a row whose columns are behind the item's tooltip.
+	tip:AddLine (" ");
+
 	if (r.cost) then
-		GameTooltip:AddDoubleLine (AZT("Craft cost"), An_Money (r.cost * r.made), 1, 1, 1, 1, 1, 1);
+		tip:AddDoubleLine (AZT("Craft cost"), An_Money (r.cost * r.made), 1, 1, 1, 1, 1, 1);
+	end
+	if (r.sell) then
+		tip:AddDoubleLine (AZT("Sells for, each"), An_Money (r.sell), 1, 1, 1, 1, 1, 1);
+	end
+	if (r.perCraft) then
+		tip:AddDoubleLine (AZT("Profit per craft"), An_Signed (r.perCraft), 1, 1, 1, 1, 1, 1);
 	end
 
 	if (r.assumed) then
-		GameTooltip:AddLine (AZT("Read from a recipe's tooltip: the yield is assumed to be 1, and you may not have learned it."),
+		tip:AddLine (" ");
+		tip:AddLine (AZT("Read from a recipe's tooltip: the yield is assumed to be 1, and you may not have learned it."),
 			0.8, 0.8, 0.8, true);
 	end
 
-	-- The pairing this view needs and cannot answer on its own: a fat margin on
-	-- something nobody buys is a trap, and the Market view is what says whether
-	-- anybody buys it.  One click files the item there.
-	GameTooltip:AddLine (" ");
-	GameTooltip:AddLine (AZT("Click: shopping list, or watch it on the Market view."), 0.5, 0.5, 0.5);
+	-- Right of the item's tooltip if it fits, left of it if it does not. A row
+	-- is as wide as the table, so GameTooltip is already out at the auction
+	-- house's right edge and there is not always a second tooltip's worth of
+	-- screen past it. Measured after Show, which is what gives it a width.
+	tip:ClearAllPoints ();
+	tip:SetPoint ("TOPLEFT", GameTooltip, "TOPRIGHT", 4, 0);
+	tip:Show ();
+
+	local right  = tip.GetRight and tip:GetRight ();
+	local screen = (UIParent and UIParent.GetRight) and UIParent:GetRight () or nil;
+
+	if (right and screen and right > screen) then
+		tip:ClearAllPoints ();
+		tip:SetPoint ("TOPRIGHT", GameTooltip, "TOPLEFT", -4, 0);
+	end
 end
 
 local function An_CraftSummary (stats)
@@ -1088,6 +1257,9 @@ function Atr_An_SetView (view)
 	-- Re-price on the way in, rather than showing whatever the prices were the
 	-- last time this view was open (see An_CraftInvalidate).
 	if (view == "craft") then An_CraftInvalidate (); end
+
+	-- the crafting tooltip belongs to a view that may just have gone
+	An_HideCraftTip ();
 
 	-- Each view keeps its own sort, so the arrow has to be redrawn for the one
 	-- coming up rather than left on whatever the last view was sorted by.
@@ -1532,7 +1704,10 @@ function Atr_An_ShowItemMenu (anchor, itemName, mode)
 		local r = An_MenuRow (f, i);
 
 		if (e.header) then
-			r.text:SetText ("|cff888888"..e.text.."|r");
+			-- green, and the owner asked for it: the two headers are the only
+			-- lines in this menu that are not a thing you can click, and grey
+			-- read as "disabled row" rather than as "heading"
+			r.text:SetText ("|cff40ff40"..e.text.."|r");
 			r.func = nil;
 		elseif (e.disabled) then
 			r.text:SetText ("|cff777777"..e.text.."|r");
@@ -1829,6 +2004,7 @@ function Atr_An_OnTabClick (index)
 		-- the pump follows the current pane, so a run cannot survive the tab
 		Atr_An_RefreshStop (true);
 		if (Atr_An_HideItemMenu) then Atr_An_HideItemMenu (); end
+		An_HideCraftTip ();		-- the panel can go while the cursor is still on a row
 		Atr_An_Panel:Hide();
 	end
 end
@@ -2062,43 +2238,65 @@ function Atr_An_Init ()
 		-- stores only a name, so the link comes from the shared cache -- which
 		-- means no tooltip until something has seen the item, and that is better
 		-- than inventing a link from a name.
+		-- The item's own tooltip, on every row of every view.  Which link that is
+		-- differs per view and An_RowLink knows all three.
 		line:SetScript ("OnEnter", function (self)
-			-- a ledger row carries the real link, which on a same-name variant is
-			-- the exact item; a watch entry stores only a name, so that one still
-			-- goes through the shared cache
+
 			local rec = self.rec;
 			if (rec == nil or GameTooltip == nil) then return; end
 
-			local link = rec.link or (Atr_GetItemLink and Atr_GetItemLink (rec.name));
+			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+
+			local link = An_RowLink (rec);
 
 			if (link) then
-				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
 				GameTooltip:SetHyperlink (link);
-			elseif (gAn_View == "craft") then
-				-- an enchant sells as a scroll and a scroll may never have been
-				-- seen, so the craft view still has something to say without one
-				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
-				GameTooltip:SetText (rec.name, 1, 1, 1);
 			else
+				-- nothing has ever seen this item: an enchant sells as a scroll
+				-- that may never have been scanned, and a watch entry is a name
+				-- someone typed.  The name is what there is, and it beats nothing.
+				GameTooltip:SetText (rec.name or "", 1, 1, 1);
+			end
+
+			GameTooltip:AddLine (" ");
+			GameTooltip:AddLine (AZT("Left click to look it up.  Right click for lists."), 0.5, 0.5, 0.5);
+			GameTooltip:Show();
+
+			-- the crafting figures go BESIDE it, not under it
+			if (gAn_View == "craft") then An_ShowCraftTip (self, rec); end
+		end);
+
+		line:SetScript ("OnLeave", function ()
+			if (GameTooltip) then GameTooltip:Hide(); end
+			An_HideCraftTip ();
+		end);
+
+		-- A plain Button hears the left click only, and the right one is now half
+		-- of what a row does.
+		line:RegisterForClicks ("LeftButtonUp", "RightButtonUp");
+
+		-- Left: look the item up on the tab that handles it properly.  Right: the
+		-- same list menu the Buy tab's two buttons open (item 18), so an item
+		-- worth watching or buying can be filed without retyping its name.
+		line:SetScript ("OnClick", function (self, button)
+
+			local rec = self.rec;
+			if (rec == nil) then return; end
+
+			-- a jump hides this panel without the cursor ever leaving the row, so
+			-- OnLeave never fires and the tooltips would sit there over the tab we
+			-- just switched to
+			if (GameTooltip) then GameTooltip:Hide(); end
+			An_HideCraftTip ();
+
+			if (button == "RightButton") then
+				if (type (Atr_An_ShowItemMenu) == "function") then
+					Atr_An_ShowItemMenu (An_CursorAnchor (self), rec.name, "both");
+				end
 				return;
 			end
 
-			-- where the Cost column came from, reagent by reagent
-			if (gAn_View == "craft") then An_CraftTip (rec); end
-
-			GameTooltip:Show();
-		end);
-		line:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
-
-		-- Craft view only: the same menu the Buy tab's two buttons open (item 18),
-		-- so a recipe worth making can be watched or shopped for without retyping
-		-- its name.  The other two views leave the click alone -- the watchlist has
-		-- its own delete button on the row and the Ledger has nothing to file.
-		line:SetScript ("OnClick", function (self)
-			if (gAn_View ~= "craft" or self.rec == nil) then return; end
-			if (type (Atr_An_ShowItemMenu) == "function") then
-				Atr_An_ShowItemMenu (self, self.rec.name, "both");
-			end
+			An_OpenItem (rec);
 		end);
 
 		line:Hide();

@@ -2630,9 +2630,86 @@ at the bottom either way, and each view remembers its own column when you switch
 
 ---
 
+## 25. Analysis tab — a row you can hover, click and right-click — DONE
+
+**Asked 2026-08-20**, with the sortable columns running in game, as one request about the tab as a
+whole: regular item tooltips on hover; **left click** opens the item on the Finder tab if it is
+armour or a weapon and on the Buy tab otherwise; **right click** opens the add-to-list menu; on the
+Crafting view the crafting tooltip goes **beside** the item's own rather than under it; and the
+menu's two headings are green.
+
+**A row is the same kind of thing in all three views** — an item you are deciding about — so it
+behaves the same way in all three, rather than the craft view having a click the others do not.
+
+### The hover
+
+Rows already showed the item's tooltip when a link was to hand; what differed was whether one was.
+Each view knows its item differently: a ledger row carries the real link (which on a same-name
+variant is the exact item), a craft row has the produced item's **ID**, and a watch entry has only
+a **name** somebody typed. `An_RowLink` tries link → ID → the shared name cache and remembers the
+answer on the record, since a mouse-over is no place to discover that `GetItemInfo` was a cache
+miss. When there is genuinely nothing — an enchant sells as a scroll that may never have been
+scanned — the tooltip shows the name rather than not appearing at all.
+
+### The left click: gear to the Finder, everything else to Buy
+
+**That split is not a preference, it is the reason the Finder tab exists.** The Buy tab condenses a
+scan by item NAME and keeps essentially one link per name, and on this server two auctions of the
+"same" piece of gear are different items — the whole argument in
+`AuctionatorFinderBuyRedirect.lua`. So the row asks that file's own question
+(`Fdr_BuyRedirect_ClassOf` + `Fdr_IsGearClassName`) and takes its own jump (`Atr_Finder_JumpFromBuy`)
+rather than deciding it a second way and drifting.
+
+An item the client has never cached has **no class**, which lands on the Buy tab — and the
+redirect's second entry point picks it up from there once the auction rows arrive and the class is
+finally knowable. That is the same nil case that file's fourth rule is about: *guess and you send
+someone somewhere they did not ask to go*.
+
+### The right click, and where the menu appears
+
+The menu is the one item 18 built for the Buy tab's two buttons, in `both` mode. It hangs off a
+**1x1 frame parked at the cursor**, not off the row: the menu is placed under the frame it is given,
+and a row is as wide as the table, so a menu opened from the Profit column would have appeared back
+at the Item column, 600px from the click.
+
+The craft view's left-click-for-menu is gone — it is the right click now, in every view.
+
+### The crafting tooltip is a second tooltip, not more lines
+
+It was `GameTooltip:AddLine` under the item's real tooltip. Stacked, the pair made a column tall
+enough to push the interesting half off the bottom of the screen on any piece of gear, and the two
+are different kinds of thing: one is the item as the client knows it, the other is what it costs
+**you** to make and what that is worth.
+
+It is now its own `GameTooltipTemplate` frame — **not** a second `SetOwner` on the shared one, which
+can show one thing at a time and which every other addon expects to be able to take. It anchors to
+the item tooltip's TOPRIGHT so the pair moves as one, and **flips to its TOPLEFT when it would run
+off the screen**: a row is as wide as the table, so `GameTooltip` is already out at the auction
+house's right edge and there is not always a second tooltip's worth of screen past it. The flip is
+measured after `Show`, which is what gives the frame a width.
+
+It carries the reagents and their prices, as before, and now the row's own figures too — craft cost,
+what one sells for, profit per craft — because the columns those came from are behind the item's
+tooltip while you are reading it.
+
+### The green headings
+
+`Shopping list` and `Analysis group` were grey (`|cff888888`), the same treatment as a disabled row,
+which is what they read as. They are `|cff40ff40` now — the green this addon already uses for a
+positive number.
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each), and by re-running the item 24 sorter
+check against the changed file (18/18). **Not verified in game**, and this item is mostly frames and
+clicks, so that is where it will be settled. The checks are: a tooltip on every row of every view;
+left click on a weapon landing on the Finder and on a herb landing on Buy; right click opening the
+menu at the cursor with two green headings; and on the Crafting view the second tooltip appearing
+beside the first, on whichever side has room.
+
+---
+
 ## Suggested order
 
-Every numbered item has now shipped or closed: 1–9 and 11–24 are **DONE** or deliberately parked,
+Every numbered item has now shipped or closed: 1–9 and 11–25 are **DONE** or deliberately parked,
 and item 10 closed without any code (2026-08-19). Rewritten twice that day — once after the first
 real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is unstarted.** What
 is left is follow-on work inside shipped items, two standing deferrals, and two questions that
