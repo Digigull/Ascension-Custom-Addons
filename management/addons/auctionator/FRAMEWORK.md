@@ -172,7 +172,7 @@ matter:
 | `AUCTIONATOR_FINDER_SETTINGS` | Finder options, plus `statKeys` = set of every stat key ever seen on gear | Finder + options panel |
 | `AUCTIONATOR_ITEM_LOCATIONS` | who owns what, where | `FinderItemCount` |
 | `AUCTIONATOR_LEDGER` | `{ ver, rows = { {t, src, who, name, link, id, qty, unit, …} } }` — what you bought and listed | `AuctionatorLedger` (BACKLOG item 7) |
-| `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, low, id, …}}, ids = {[name]=itemID} }` — the watchlist and what scanning has learned about it | `AuctionatorAnalysis` (BACKLOG item 8) |
+| `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, listings, units, low, id, …}}, ids = {[name]=itemID} }` — the watchlist and what scanning has learned about it | `AuctionatorAnalysis` (BACKLOG item 8) |
 
 `ids` is the odd one and worth knowing about: a **name → item ID** map, because a tooltip needs an
 ID and this tab is full of rows that only have a name (a watch entry, and every enchant recipe,

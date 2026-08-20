@@ -56,10 +56,13 @@
 --              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
 --              arithmetic over today's prices, exact if the prices are current.
 --   Reagents   (B3, 2026-08-20) that same table inverted -- what the profitable
---              half of it makes you BUY, ranked by how much of your own craft
---              profit is waiting on each reagent.  Atr_Craft_ReagentPressure,
---              in the same file; the supply half of each row is this tab's own
---              watchlist data, attached here (see An_ReagentRows).
+--              half of it makes you BUY, ranked by what the shopping COSTS.
+--              Atr_Craft_ReagentPressure, in the same file; the supply half of
+--              each row is this tab's own watchlist data, attached here (see
+--              An_ReagentRows).  It opened ranked on how much craft profit was
+--              waiting on each reagent, which measures DEPENDENCE and hands the
+--              top of the page to the cheapest filler in the recipe book (item
+--              29); that column is still there, it is just no longer first.
 --
 -- ONE FILTER BOX serves all four: it narrows whichever table is up, live, as
 -- you type, and it deliberately survives a view switch -- "show me the linen" is
@@ -307,8 +310,16 @@ function Atr_An_Observe (itemName, listings, now)
 		db.obs[itemName] = o;
 	end
 
-	-- this scan's multiset of listing fingerprints, and the snapshot numbers
-	local cur, sellers, low, n = {}, {}, nil, 0;
+	-- this scan's multiset of listing fingerprints, and the snapshot numbers.
+	--
+	-- `units` is the one that is not a count of listings (item 29, rule 3 of the
+	-- reagent view): the stack size was already being read here to work out the
+	-- unit price and then thrown away, and it is the difference between "66
+	-- listings" and "you need 25 and there are 330" -- which is the only thing
+	-- that can stop a craft you can otherwise afford.  Old records have no
+	-- `units` at all and must not report zero for it; everything reading it
+	-- treats nil as "not counted yet" and the next scan of that item fills it in.
+	local cur, sellers, low, n, units = {}, {}, nil, 0, 0;
 
 	local i;
 	for i = 1, #listings do
@@ -345,7 +356,8 @@ function Atr_An_Observe (itemName, listings, now)
 			if (unit > 0 and (low == nil or unit < low)) then low = unit; end
 		end
 
-		n = n + 1;
+		n     = n + 1;
+		units = units + qty;
 	end
 
 	-- Diff against the previous scan.  Only a gap we can reason about counts:
@@ -379,6 +391,7 @@ function Atr_An_Observe (itemName, listings, now)
 	o.last		= now;
 	o.scans		= (o.scans or 0) + 1;
 	o.listings	= n;
+	o.units		= units;
 	o.low		= low;
 
 	local ns = 0;
@@ -440,6 +453,7 @@ function Atr_An_Stats (itemName)
 		id			= o.id,
 		sellers		= o.sellers or 0,
 		listings	= o.listings or 0,
+		units		= o.units,			-- nil on a record written before units were counted
 		low			= o.low,
 		sold		= o.sold or 0,
 		amb			= o.amb or 0,
@@ -728,32 +742,71 @@ local AN_CCOLS = {
 -- recipes, but whether you can BUY the stuff is market data, and market data
 -- here means the watchlist.  So most rows say "not watched" until you add them,
 -- and the view hands you the candidates in the order worth adding.
+--
+-- OUTLAY IS THE COLUMN THIS VIEW IS SORTED BY (item 29, stage 1), and Profit --
+-- which used to be -- is not.  The report that changed it: "cured feralhide is
+-- the biggest profit number on the reagents page but the Essence of Fire and
+-- Cleansed Plague Leather are the real value".  Both halves of that are true at
+-- once.  Profit is a DEPENDENCE measure -- how much of your own craft profit
+-- stops being available if this reagent vanishes -- and dependence is trivially
+-- satisfied by a 29s item that appears in everything BECAUSE it is cheap filler.
+-- So the winner of a Profit sort is structurally rigged toward the cheapest
+-- thing on the page, which is not the question anyone has while holding gold.
+-- Outlay -- Need x Each, the money that actually leaves you -- is, and it was
+-- already computed for the row's own tooltip and shown nowhere else.  Profit
+-- stays, because "if this vanished I lose 843g of options" is a real question;
+-- it is just not the first one.
+--
+-- WIDTHS ARE HAND-BALANCED AGAINST THE NARROWEST WINDOW and a column added here
+-- has to be paid for from the others.  Blizzard's 768px auction house gives a
+-- 746 panel, so AN_ROW_W is 702 (Atr_An_Init does that arithmetic) and
+-- An_LayoutCols spends AN_LEAD 6 + AN_DEL_LANE 26 + 4 per gap before a single
+-- minimum is met.  Eight columns is 636 of minimum plus 28 of gap plus 32 =
+-- 696, which clears 702 by 6 -- and everything above the minimum on Ascension's
+-- wider window is handed out by `grow`, where the Reagent column is now the
+-- greediest: a money cell is right-justified and a wide one is mostly gap, while
+-- "Sulfur-Tanned Stegodon Hide" is a name that wraps onto a second line the
+-- moment its cell is too narrow for it.  The 88 that Outlay needed came out of
+-- every other column (Reagent 184 -> 180, Recipes 56 -> 46, Need and Have 48 ->
+-- 42, Each 84 -> 76, Profit 92 -> 84, Supply 80 -> 78); if a ninth is ever
+-- wanted here, something has to go rather than everything shrinking again.
+--
+-- Each was "Cost", and is renamed because with Outlay beside it a bare "Cost"
+-- is ambiguous in exactly the way the two numbers are not: one is the price tag,
+-- the other is the bill.
 local AN_RCOLS = {
-	{ key = "ritem",	head = "Reagent",	w = 184, grow = 3,					text = true,
+	{ key = "ritem",	head = "Reagent",	w = 180, grow = 4,					text = true,
 	  val = function (r) return string.lower (r.name or ""); end },
-	{ key = "rrecipes",	head = "Recipes",	w = 56,  grow = 0, just = "CENTER",
+	{ key = "rrecipes",	head = "Recipes",	w = 46,  grow = 0, just = "CENTER",
 	  tip = "How many of the recipes needing this reagent pay at today's prices, out of how many you have harvested. Everything else on the row is counted over the paying ones only.",
 	  val = function (r) return r.pays; end },
-	{ key = "rneed",	head = "Need",		w = 48,  grow = 0, just = "CENTER",
+	{ key = "rneed",	head = "Need",		w = 42,  grow = 0, just = "CENTER",
 	  tip = "Units to run ONE craft of each recipe that pays. Not a shopping list for tonight -- a measure of how much of your crafting leans on this one reagent.",
 	  val = function (r) return r.need; end },
-	{ key = "rhave",	head = "Have",		w = 48,  grow = 0, just = "CENTER",
+	{ key = "rhave",	head = "Have",		w = 42,  grow = 0, just = "CENTER",
 	  tip = "How many you already hold, across every character, bank and realm bank this account has opened a window on. You do not have to buy what is already in the bank.",
 	  val = function (r) return (r.have and r.have > 0) and r.have or nil; end },
-	{ key = "rcost",	head = "Cost",		w = 84,  grow = 1, just = "RIGHT",
+	{ key = "rcost",	head = "Each",		w = 76,  grow = 1, just = "RIGHT",
 	  tip = "What ONE costs: the vendor price where a vendor sells it, otherwise the auction price you last scanned, otherwise its vendor value as a floor. The same cascade the craft costs use, so the two can never disagree about a reagent.",
 	  val = function (r) return r.unit; end },
-	{ key = "rprofit",	head = "Profit",	w = 92,  grow = 4, just = "RIGHT",
-	  tip = "How much of your own craft profit is waiting on this reagent: the per-craft profit of every paying recipe that needs it, added up. The one to go and get is the one at the top.",
+	{ key = "routlay",	head = "Outlay",	w = 88,  grow = 3, just = "RIGHT",
+	  tip = "Need x Each -- what this reagent actually costs you over the whole basket, and the money you decide with. A 29s reagent wanted six times is 1g 74s and ignorable; a 56s one wanted 147 times is 82g 32s and is not. Blank means it has never been priced.",
+	  val = function (r) return r.outlay; end },
+	{ key = "rprofit",	head = "Profit",	w = 84,  grow = 2, just = "RIGHT",
+	  tip = "How much of your own craft profit is waiting on this reagent: the per-craft profit of every paying recipe that needs it, added up. It measures DEPENDENCE, not value -- the cheapest filler in your recipe book wins it -- which is why the page no longer sorts by it.",
 	  val = function (r) return r.profit; end },
-	{ key = "rsupply",	head = "Supply",	w = 80,  grow = 2, just = "CENTER",
-	  tip = "Whether you can actually buy it. Vendor means a vendor sells it -- unlimited supply at a price that never moves. Otherwise it is what your last scan saw: how many listings, from how many sellers. Needs the reagent on your watchlist; right-click a row to put it there.",
+	{ key = "rsupply",	head = "Supply",	w = 78,  grow = 2, just = "CENTER",
+	  tip = "Whether you can actually buy it. Vendor means a vendor sells it -- unlimited supply at a price that never moves. Otherwise it is UNITS on the auction house at your last scan, from how many sellers -- units, because 66 listings could be 66 of them or 1,300 and you need a number you can compare with Need. It turns red when the market holds fewer than the basket wants. A * marks a scan taken before units were counted; rescan and it fills in. Needs the reagent on your watchlist; right-click a row to put it there.",
 	  -- Vendor sorts above every scanned depth on purpose: a vendor cannot run
 	  -- out, which is a bigger number than any listing count could be.  A reagent
-	  -- nobody has scanned sorts last rather than as an empty auction house.
+	  -- nobody has scanned sorts last rather than as an empty auction house.  The
+	  -- units-or-listings fallback is the pre-item-29 record: the two are not the
+	  -- same measure, but both are depth, and sorting one of them as nothing
+	  -- would say "nobody sells this" about an item somebody does.
 	  val = function (r)
 		if (r.vendor) then return math.huge; end
-		return (r.st and r.st.scans > 0) and r.st.listings or nil;
+		if (r.st == nil or r.st.scans == 0) then return nil; end
+		return r.st.units or r.st.listings;
 	  end },
 };
 
@@ -809,11 +862,14 @@ end
 -- click-again-to-reverse (Fdr_MakeHeader / Fdr_HeaderClick in
 -- AuctionatorFinder.lua).
 --
--- THREE STATES, ONE PER VIEW.  The views share a table and nothing else, and
--- each one's default sort IS its point: the market view ranks on gold per day,
--- the ledger on what you actually made, the crafting view on what one craft is
--- worth.  Carrying one key across a view switch would land on a column the next
--- view does not have; each view keeps its own and returns to it.
+-- ONE STATE PER VIEW.  The views share a table and nothing else, and each one's
+-- default sort IS its point: the market view ranks on gold per day, the ledger
+-- on what you actually made, the crafting view on what one craft is worth, and
+-- the reagent view on what the shopping COSTS (item 29, stage 1 -- it opened on
+-- Profit, which ranks dependence and hands the top of the page to the cheapest
+-- filler in the book; AN_RCOLS carries that reasoning).  Carrying one key across
+-- a view switch would land on a column the next view does not have; each view
+-- keeps its own and returns to it.
 --
 -- A CELL WITH NOTHING IN IT SORTS LAST IN BOTH DIRECTIONS.  "not scanned", a
 -- blank group, a "--" -- none of them are zeros.  Ascending by Sold/day would
@@ -825,7 +881,7 @@ local gAn_Sort = {
 	market		= { key = "farm",    asc = false },
 	trades		= { key = "tmargin", asc = false },
 	craft		= { key = "cprofit", asc = false },
-	reagents	= { key = "rprofit", asc = false },
+	reagents	= { key = "routlay", asc = false },
 };
 
 local gAn_ColsFor = { market = AN_COLS, trades = AN_TCOLS, craft = AN_CCOLS, reagents = AN_RCOLS };
@@ -1647,6 +1703,130 @@ end
 -- Atr_Craft_ReagentPressure puts them in.
 local AN_TIP_USES = 8;
 
+-- SHARE OF THE BILL, AND THE ROWS THAT DO NOT EARN A LINE (item 29, rule 2) --
+--
+-- The owner's first instinct was "cheap reagents never matter" and they
+-- corrected it themselves: Illusion Dust at 56s is 82g 32s of the bill, because
+-- the basket wants 147 of them.  What survives the correction is SHARE, not unit
+-- price.  Two rows off one screen -- Cured Feralhide at 29s x6 is 1g 74s and
+-- 0.2% of a Gambeson; Illusion Dust is 82g 32s and is not ignorable.  Same
+-- "cheap", forty-seven times the money.
+--
+-- A proportional rule is also self-correcting under a price shock: quadruple a
+-- reagent's price and its share quadruples with it, so the row unfolds itself.
+-- An absolute "under X copper, hide it" would have hidden it exactly when it
+-- started to matter, which is why this is not a copper threshold.
+--
+-- The owner is already applying this rule BY EYE -- reading past the filler to
+-- the two reagents that own the cost -- which is the tell that the addon should
+-- be applying it.  And the fix for a page that reads as noise is fewer rows, not
+-- more columns.
+local AN_REAG_FOLD  = 0.02;		-- under 2% of the bill is trivia
+local AN_REAG_MIN   = 6;		-- ... but never fold the page down to fewer than this
+local AN_FOLD_NAMED = 10;		-- how many of them the fold line's tooltip names
+
+local gAn_ReagFolded = true;	-- folded on open; one click on the line unfolds it
+
+local function An_ReagShare (r)
+
+	local total = gAn_ReagStats and gAn_ReagStats.outlay or 0;
+	if (r == nil or r.outlay == nil or total <= 0) then return nil; end
+
+	return r.outlay / total;
+end
+
+-- A share as a percent.  Anything that would round to 0% prints "<1%" instead:
+-- a row IS on the bill and printing 0% against a real number says it is not.
+local function An_Pct (f)
+
+	if (f == nil) then return "|cff666666--|r"; end
+	if (f > 0 and f < 0.005) then return "<1%"; end
+
+	return string.format ("%d%%", math.floor (f * 100 + 0.5));
+end
+
+-- WHY A ROW FOLDS, and the four reasons are not one reason:
+--
+--   vendor    a vendor sells it: unlimited, at a price that never moves, so
+--             there is no supply decision and no shopping trip on the row
+--   small     under AN_REAG_FOLD of the bill, by the rule above
+--   idle      nothing that pays today wants it, so it is not on this bill at all
+--   unpriced  wanted, and never priced.  NOT trivia -- it is an unknown, and it
+--             could be the biggest line here once somebody scans it
+--
+-- They are counted apart because the fold line has to be honest about the last
+-- one.  Folding an unknown away as "small" would be the addon making a claim its
+-- own data does not support, which is the rule the whole tab is built on.
+--
+-- Marked ONTO the records, once, where the ranking is built -- not worked out
+-- per redraw and not per sort.  The share is a property of the bill, so a row is
+-- trivia whichever column you have clicked; recomputing it inside the sort would
+-- make the fold move when the order does, which is not what it means.
+local function An_ReagFoldMark (rows, stats)
+
+	local total = (stats and stats.outlay) or 0;
+	local i, r;
+
+	if (type (rows) ~= "table") then return; end
+
+	-- Nothing priced at all: there is no bill for a row to be a share of, so
+	-- there is nothing the addon can call trivia and the whole list stands.
+	if (total <= 0) then
+		for i = 1, #rows do rows[i].foldKind = nil; end
+		return;
+	end
+
+	local small, kept = {}, 0;
+
+	for i = 1, #rows do
+
+		r = rows[i];
+
+		if (r.vendor) then
+			r.foldKind = "vendor";
+		elseif (r.need == nil or r.need == 0) then
+			r.foldKind = "idle";
+		elseif (r.outlay == nil) then
+			r.foldKind = "unpriced";
+		elseif ((r.outlay / total) < AN_REAG_FOLD) then
+			r.foldKind = "small";
+			tinsert (small, r);
+		else
+			r.foldKind = nil;			-- on the bill, and not small
+			kept = kept + 1;
+		end
+	end
+
+	if (kept >= AN_REAG_MIN or #small == 0) then return; end
+
+	-- A FLAT BILL IS STILL A BILL.  Spread the money evenly over eighty reagents
+	-- and every one of them is under 2% -- at which point the rule would fold the
+	-- whole page into the line that summarises it, and answer nothing.  So the
+	-- biggest of the small ones are handed their rows back until there is a table
+	-- to read.  Only the small ones: vendor-sold and unwanted rows fold because
+	-- of what they ARE, and a page of them would be a true answer.
+	table.sort (small, function (a, b) return (a.outlay or 0) > (b.outlay or 0); end);
+
+	for i = 1, #small do
+		if (kept >= AN_REAG_MIN) then break; end
+		small[i].foldKind = nil;
+		kept = kept + 1;
+	end
+end
+
+local function An_ToggleReagFold ()
+
+	gAn_ReagFolded = not gAn_ReagFolded;
+
+	-- Unfolding adds rows BELOW the line you clicked, so the offset still points
+	-- at what you were looking at.  Folding shrinks the list under it, and an
+	-- offset past the end of a shorter list draws a page of nothing -- which
+	-- reads as "there is nothing here" rather than as a scroll position.
+	if (gAn_ReagFolded) then An_ScrollTop (); end
+
+	Atr_An_Redisplay ();
+end
+
 local function An_ReagentRows ()
 
 	if (gAn_ReagRows == nil) then
@@ -1665,28 +1845,81 @@ local function An_ReagentRows ()
 			local e = gAn_ReagRows[i];
 			e.st = e.name and Atr_An_Stats (e.name) or nil;
 		end
+
+		An_ReagFoldMark (gAn_ReagRows, gAn_ReagStats);
 	end
 
 	An_SortRows ("reagents", gAn_ReagRows);
 
+	local src = gAn_ReagRows;
+
 	-- A copy, for the reason the crafting view makes one: the cache is every
 	-- reagent, and filtering it in place would throw the rest away on the first
 	-- keystroke.
+	--
+	-- A FILTER ALSO OVERRIDES THE FOLD.  You typed a name in order to see that
+	-- row, and an answer of "it is somewhere in the folded pile" is not an
+	-- answer -- so while the box has anything in it, every matching row stands.
 	if (gAn_Filter ~= "") then
 		local keep, i = {}, nil;
-		for i = 1, #gAn_ReagRows do
-			if (An_PassesFilter (gAn_ReagRows[i].name)) then tinsert (keep, gAn_ReagRows[i]); end
+		for i = 1, #src do
+			if (An_PassesFilter (src[i].name)) then tinsert (keep, src[i]); end
 		end
-		return keep, gAn_ReagStats;
+		return keep, gAn_ReagStats, #keep;
 	end
 
-	return gAn_ReagRows, gAn_ReagStats;
+	local shown, hidden = {}, {};
+	local fold = { fold = true, kinds = {}, outlay = 0 };
+
+	local i;
+	for i = 1, #src do
+
+		local r    = src[i];
+		local kind = r.foldKind;
+
+		if (kind == nil) then
+			tinsert (shown, r);
+		else
+			tinsert (hidden, r);
+			fold.kinds[kind] = (fold.kinds[kind] or 0) + 1;
+			fold.outlay = fold.outlay + (r.outlay or 0);
+		end
+	end
+
+	-- One row folded away saves a line and spends one saying so.
+	if (#hidden < 2) then return src, gAn_ReagStats, #src; end
+
+	fold.n    = #hidden;
+	fold.rows = hidden;			-- the same records, for the line's own tooltip
+
+	-- The line sits where the rows it swallowed begin, not at the foot of the
+	-- table: under the default sort that is the point the money stops mattering,
+	-- and unfolding then puts them back exactly where they would have been.
+	tinsert (shown, fold);
+
+	if (not gAn_ReagFolded) then
+		for i = 1, #hidden do tinsert (shown, hidden[i]); end
+	end
+
+	return shown, gAn_ReagStats, #src;
 end
 
 -- Can you buy it, in one cell.  Three answers and they are not the same kind of
 -- thing, which is why none of them is a bare number: a vendor cannot run out, a
 -- scan is a snapshot of one moment, and an unwatched reagent has told you
 -- nothing at all.
+--
+-- THE FIRST NUMBER IS UNITS, NOT LISTINGS (item 29, rule 3).  "66 listings"
+-- could be 66 Essences of Fire or 1,300, and the column sits two cells from a
+-- Need that is counted in units -- so the pair could not be compared, which is
+-- the one question that decides whether a craft you can afford is actually on.
+-- Atr_An_Observe now sums the stack sizes it was already reading; a record
+-- written before it did has no `units` and prints its listing count with a dim
+-- star instead of quietly passing one measure off as the other.
+--
+-- Short of the basket turns the cell red for the same reason a concentrated
+-- market does: both are "you cannot just buy this", and that is what the colour
+-- has always meant here.
 local function An_Supply (r)
 
 	if (r.vendor) then return "|cff40ff40"..AZT("Vendor").."|r"; end
@@ -1698,7 +1931,13 @@ local function An_Supply (r)
 	-- sharing it -- the same rule, and the same colour, as the market view
 	local col = (st.topShare >= 0.8) and "|cffff8080" or "|cffffffff";
 
-	return col..string.format (AZT("%d from %d"), st.listings, st.sellers).."|r";
+	if (st.units == nil) then
+		return col..string.format (AZT("%d from %d"), st.listings, st.sellers).."|r|cff888888*|r";
+	end
+
+	if (r.need and st.units < r.need) then col = "|cffff8080"; end
+
+	return col..string.format (AZT("%d from %d"), st.units, st.sellers).."|r";
 end
 
 local function An_ShowReagentTip (owner, r)
@@ -1751,6 +1990,14 @@ local function An_ShowReagentTip (owner, r)
 	end
 	if (r.outlay) then
 		tip:AddDoubleLine (AZT("That costs"), An_Money (r.outlay), 1, 1, 1, 1, 1, 1);
+
+		-- The share is what the fold is decided on and what item 30's sentences
+		-- are built from, so it is said in the same words here rather than left
+		-- as arithmetic the reader has to do against the summary line.
+		local share = An_ReagShare (r);
+		if (share) then
+			tip:AddDoubleLine (AZT("Share of the whole bill"), An_Pct (share), 1, 1, 1, 1, 1, 1);
+		end
 	end
 	if (r.toBuy and r.short and (r.have or 0) > 0) then
 		tip:AddDoubleLine (string.format (AZT("Still to buy (%d)"), r.short), An_Money (r.toBuy), 1, 1, 1, 1, 1, 1);
@@ -1767,7 +2014,19 @@ local function An_ShowReagentTip (owner, r)
 	if (r.vendor) then
 		tip:AddLine (AZT("A vendor sells this, so there is no supply question: it is there whenever you are, at that price."), 0.5, 0.9, 0.5, true);
 	elseif (r.st and r.st.scans > 0) then
-		tip:AddLine (string.format (AZT("Your last scan saw %d listings from %d sellers."), r.st.listings, r.st.sellers), 0.8, 0.8, 0.8, true);
+
+		if (r.st.units) then
+			tip:AddLine (string.format (AZT("Your last scan saw %d units, over %d listings from %d sellers."),
+				r.st.units, r.st.listings, r.st.sellers), 0.8, 0.8, 0.8, true);
+			if (r.need and r.st.units < r.need) then
+				tip:AddLine (string.format (AZT("That is fewer than the %d this basket wants: the auction house cannot fill it today, whatever you are willing to spend."), r.need), 1, 0.5, 0.5, true);
+			end
+		else
+			-- an old record: it knows how many listings, not how many items in
+			-- them, and saying so beats printing one as the other
+			tip:AddLine (string.format (AZT("Your last scan saw %d listings from %d sellers -- taken before units were counted, so how many items that is is unknown. Rescan it and this fills in."), r.st.listings, r.st.sellers), 0.8, 0.8, 0.8, true);
+		end
+
 		if (r.st.topShare >= 0.8) then
 			tip:AddLine (AZT("One of them holds most of the supply, and can move the price at will."), 1, 0.5, 0.5, true);
 		end
@@ -1776,6 +2035,104 @@ local function An_ShowReagentTip (owner, r)
 	end
 
 	An_SideTipPlace (tip);
+end
+
+-- The folded line's own tooltip.  A row that stands for other rows has to be
+-- able to say which ones, or the fold is the addon hiding data from you.
+--
+-- On GAMETOOLTIP, not the side tooltip the other reagent rows use.  The side one
+-- anchors itself off GameTooltip -- it is the second of a pair, and the first
+-- holds the ITEM, which a fold line does not have.  With nothing shown to hang
+-- off it would land wherever the last hover left it.
+local function An_ShowFoldTip (owner, f)
+
+	if (f == nil or GameTooltip == nil) then return; end
+
+	GameTooltip:SetOwner (owner, "ANCHOR_RIGHT");
+	GameTooltip:SetText (string.format (AZT("%d rows folded"), f.n or 0), 1, 0.82, 0);
+
+	local total = (gAn_ReagStats and gAn_ReagStats.outlay) or 0;
+
+	if ((f.outlay or 0) > 0) then
+		GameTooltip:AddDoubleLine (AZT("Together they cost"), An_Money (f.outlay), 1, 1, 1, 1, 1, 1);
+		if (total > 0) then
+			GameTooltip:AddDoubleLine (AZT("Share of the whole bill"), An_Pct (f.outlay / total), 1, 1, 1, 1, 1, 1);
+		end
+	end
+
+	GameTooltip:AddLine (" ");
+	GameTooltip:AddLine (AZT("Everything under 2% of the bill, everything a vendor sells, and everything no paying recipe wants today. None of them changes a decision, and the fix for a page that reads as noise is fewer rows."), 0.8, 0.8, 0.8, true);
+
+	local k, parts = f.kinds or {}, {};
+	if (k.small)  then tinsert (parts, string.format (AZT("%d under 2%%"), k.small)); end
+	if (k.vendor) then tinsert (parts, string.format (AZT("%d vendor-sold"), k.vendor)); end
+	if (k.idle)   then tinsert (parts, string.format (AZT("%d wanted by nothing that pays today"), k.idle)); end
+
+	if (#parts > 0) then
+		GameTooltip:AddLine (table.concat (parts, ",  "), 0.6, 0.6, 0.6, true);
+	end
+
+	-- The bucket that is not trivia, on a line of its own and in a colour that
+	-- is not grey: an unpriced reagent is an unknown, and an unknown counted in
+	-- with the small ones would be this table claiming something it cannot know.
+	if (k.unpriced) then
+		GameTooltip:AddLine (string.format (AZT("%d have never been priced -- scan them, and any one of them could turn out to be the biggest line on this bill."), k.unpriced), 1, 0.8, 0.4, true);
+	end
+
+	if (type (f.rows) == "table" and #f.rows > 0) then
+
+		GameTooltip:AddLine (" ");
+
+		local i;
+		for i = 1, math.min (#f.rows, AN_FOLD_NAMED) do
+			local r = f.rows[i];
+			GameTooltip:AddDoubleLine (r.name or "?",
+				r.vendor and AZT("vendor") or (r.outlay and An_Money (r.outlay) or AZT("not priced")),
+				0.7, 0.7, 0.7, 0.7, 0.7, 0.7);
+		end
+
+		if (#f.rows > AN_FOLD_NAMED) then
+			GameTooltip:AddLine (string.format (AZT("... and %d more"), #f.rows - AN_FOLD_NAMED), 0.6, 0.6, 0.6);
+		end
+	end
+
+	GameTooltip:AddLine (" ");
+	GameTooltip:AddLine (gAn_ReagFolded and AZT("Click the row to show them.")
+									     or AZT("Click the row to fold them away again."), 0.5, 0.5, 0.5);
+
+	GameTooltip:Show ();
+end
+
+-- The folded line drawn into a row that is otherwise a reagent.  Every cell the
+-- line does not use is blanked rather than left holding the last reagent that
+-- was drawn there -- the rows are reused, and a stale "147" beside a summary
+-- would read as part of it.
+local function An_DrawFoldRow (line, f)
+
+	local n = f.n or 0;
+
+	if (gAn_ReagFolded) then
+		line.ritem:SetText (string.format ("|cff888888+ %d folded|r", n));
+		line.rsupply:SetText ("|cff888888"..AZT("click to show").."|r");
+	else
+		line.ritem:SetText (string.format ("|cff888888%d folded rows below|r", n));
+		line.rsupply:SetText ("|cff888888"..AZT("click to hide").."|r");
+	end
+
+	line.rrecipes:SetText ("");
+	line.rneed:SetText ("");
+	line.rhave:SetText ("");
+	line.rcost:SetText ("");
+	line.rprofit:SetText ("");
+
+	-- The one number that survives the fold: what the whole pile costs, in the
+	-- column the page is sorted by.  "1% of the bill" is the claim being made
+	-- and this is it in money.
+	if ((f.outlay or 0) > 0) then
+		line.routlay:SetText ("|cff888888"..An_Money (f.outlay).."|r");
+	else
+		line.routlay:SetText ("");
+	end
 end
 
 local function An_ReagentSummary (stats, shown)
@@ -1818,7 +2175,11 @@ end
 
 local function An_RedisplayReagents ()
 
-	local rows, stats = An_ReagentRows ();
+	-- `n` is what the scroll bar counts, so it includes the folded line; `shown`
+	-- is how many REAGENTS are on the list, which is what the summary means when
+	-- it says "12 of 84".  They stopped being the same number when the fold
+	-- arrived.
+	local rows, stats, shown = An_ReagentRows ();
 	local n = #rows;
 
 	if (FauxScrollFrame_Update) then
@@ -1837,6 +2198,14 @@ local function An_RedisplayReagents ()
 
 			if (r == nil) then
 				line:Hide();
+
+			elseif (r.fold) then
+				-- not an item: the line standing in for the rows that do not
+				-- change a decision
+				An_DrawFoldRow (line, r);
+				line.rec = r;
+				line:Show();
+
 			else
 				line.ritem:SetText (r.name or ("item "..tostring (r.id)));
 
@@ -1862,6 +2231,23 @@ local function An_RedisplayReagents ()
 				end
 
 				line.rcost:SetText (r.unit and An_Money (r.unit) or "|cff666666--|r");
+
+				-- What this row actually costs you, and the column the page is
+				-- ranked by.  A row that is most of the bill is worth seeing as
+				-- such at a glance, so from a fifth of it up the number goes
+				-- gold -- the same threshold the Advisor's "most of the bill"
+				-- sentence will be built on (item 30), read off the same figure.
+				if (r.outlay == nil) then
+					line.routlay:SetText ("|cff666666--|r");
+				else
+					local share = An_ReagShare (r);
+					if (share and share >= 0.20) then
+						line.routlay:SetText ("|cffffd100"..An_Money (r.outlay).."|r");
+					else
+						line.routlay:SetText (An_Money (r.outlay));
+					end
+				end
+
 				line.rprofit:SetText (r.profit and An_Signed (r.profit) or "|cff666666--|r");
 				line.rsupply:SetText (An_Supply (r));
 
@@ -1872,7 +2258,7 @@ local function An_RedisplayReagents ()
 		end
 	end
 
-	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_ReagentSummary (stats, n)); end
+	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_ReagentSummary (stats, shown or n)); end
 end
 
 -- Swap the views over the shared table.  Nothing is re-anchored: every row
@@ -3009,6 +3395,10 @@ function Atr_An_Init ()
 			local rec = self.rec;
 			if (rec == nil or GameTooltip == nil) then return; end
 
+			-- The reagent view's folded line is not an item: no link, nothing to
+			-- look up, and its own tooltip is the list of what it stands for.
+			if (rec.fold) then An_ShowFoldTip (self, rec); return; end
+
 			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
 
 			local link = An_RowLink (rec);
@@ -3053,6 +3443,9 @@ function Atr_An_Init ()
 			-- just switched to
 			if (GameTooltip) then GameTooltip:Hide(); end
 			An_HideSideTip ();
+
+			-- the folded line: either button on it does the one thing it does
+			if (rec.fold) then An_ToggleReagFold (); return; end
 
 			if (button == "RightButton") then
 				if (type (Atr_An_ShowItemMenu) == "function") then

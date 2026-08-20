@@ -8,7 +8,8 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 28, 29 and 30** are new, with nothing built yet.
+**item 10** closed without any code, **item 29** has shipped its first two stages of three, and
+**items 28 and 30** are new, with nothing built yet.
 Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
@@ -3143,7 +3144,7 @@ What it would then feed, in rising order of ambition:
 
 ---
 
-## 29. NEW — the Reagents view ranks dependence; you decide with money
+## 29. The Reagents view ranked dependence; you decide with money — STAGES 1 AND 2 BUILT
 
 **Revised the same day it was written.** The owner's Advisor idea (item 30) took the verdict-text
 stage out of this item entirely and supplied a better driver for the plan. What is left here is
@@ -3277,6 +3278,59 @@ whatever happens to the rest, and not only for this table: the Advisor reads the
 Cost column that sorts and a Supply column that counts units make its *cards* more accurate as
 well.
 
+### Built, 2026-08-20 — stages 1 and 2. Stage 3 is still open
+
+All in `AuctionatorAnalysis.lua` except the saved field itself, which is `Atr_An_Observe`'s.
+Reasoned, not seen in game.
+
+**Stage 1 — the money column.**
+
+- **`routlay`, headed "Outlay"**, is a real column in `AN_RCOLS` and **the view's default sort**
+  (`gAn_Sort.reagents`). It prints `r.outlay`, which `Atr_Craft_ReagentPressure` already computed
+  and only the hover tooltip showed. Nothing new is calculated anywhere.
+- **Profit stays**, one place to its right, with its tooltip rewritten to say what it measures —
+  dependence — and why that is no longer the first question. Deleting it would have thrown away a
+  real answer to fix a wrong ranking.
+- **A row worth a fifth of the bill or more prints its outlay in gold**, so "this craft is a bet on
+  one market" is visible without hovering. Same threshold item 30's *most of the bill* sentence
+  will use, off the same figure.
+- **`rcost` is renamed "Each"**. With Outlay beside it, "Cost" named both numbers.
+- **Every other column paid for it.** The row is 702px on Blizzard's 768 auction house and eight
+  columns fit in 696 of it: Reagent 184→180, Recipes 56→46, Need and Have 48→42, Each 84→76,
+  Profit 92→84, Supply 80→78, Outlay 88 new. The arithmetic is spelled out over `AN_RCOLS` because
+  a ninth column does not fit — something would have to go.
+- **The fold** (`An_ReagFoldMark`): vendor-sold, under 2% of the bill, wanted by nothing that pays,
+  or never priced. It is marked **on the records where the ranking is built**, not per redraw, so
+  the fold does not move when you re-sort — a row is trivia whichever column you clicked.
+- **Never priced is folded but never called small.** It is counted apart and the fold line's
+  tooltip says so in its own colour: an unpriced reagent is an unknown that could be the biggest
+  line here, and folding it away as trivia would be a claim the data does not support.
+- **A flat bill is still a bill.** Spread the money over eighty reagents and every one is under 2%,
+  at which point the rule would fold the whole page into the line summarising it. `AN_REAG_MIN`
+  hands the biggest of the small ones their rows back until six stand.
+- **One line, and it unfolds.** `+ N folded` with the pile's total in the Outlay column and
+  `click to show` in Supply; its tooltip breaks the pile down by reason, names the ten biggest and
+  gives the share. Clicking either button toggles. **A filter overrides the fold** — you typed a
+  name to see that row.
+- **Fewer than two rows would fold → no fold line.** It would spend a line to save one.
+
+**Stage 2 — units, not listings.**
+
+- `Atr_An_Observe` sums each listing's `count` into **`o.units`** beside `o.listings`. It was
+  already reading it to divide the buyout into a unit price and throwing it away; this is the whole
+  change, and `Atr_An_Stats` passes it through.
+- **Supply now prints units** ("330 from 10" = 330 items, 10 sellers) and **turns red when the
+  market holds fewer than Need wants** — the one thing that stops a craft you can otherwise afford.
+  The row tooltip spells out units, listings and sellers, and says so in words when it is short.
+- **An old record reports `units` as nil, never 0.** It prints its listing count with a dim `*`
+  and says in the tooltip that units were not counted when that scan was taken. Backfills on the
+  next scan of that item. Pinned in `tools/analysis-feed-smoke.lua` (31 assertions, all passing) —
+  both the sum and the nil.
+
+**Not done, and deliberately:** no Share column. The percentage is in the row tooltip and on the
+fold line, which is where stage 3 and item 30 read it from; the row has no width for another
+column, and stage 3's table drops columns rather than adding them.
+
 ---
 
 ## 30. NEW — the Advisor: a tab that tells you what to do
@@ -3386,7 +3440,7 @@ Supply counts units. Build those first and the cards are accurate on the day the
 ## Suggested order
 
 Items 1–9 and 11–27 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28, 29 and 30 are unstarted**, all added 2026-08-20. What is otherwise left is
+(2026-08-19). **Items 28 and 30 are unstarted** and **item 29 has stage 3 left**, all added 2026-08-20. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
@@ -3398,12 +3452,9 @@ that something can finally read them out in sentences. The inference work left i
 ranks below that: it makes the evidence richer, but nobody is short of evidence right now, they are
 short of a readout. In order:
 
-1. **Item 29, stages 1 and 2** — the Reagents view ranks dependence, so a 29s filler reagent sits
-   above the two that own the craft cost. Stage 1 promotes the outlay the addon already computes
-   to a sortable column, flips the default sort to it and folds anything under ~2% of the bill;
-   stage 2 sums the stack sizes `Atr_An_Observe` already reads and throws away, so Supply counts
-   *units* against what you need instead of listings. Neither needs new data or a new capture, and
-   between them they answer the only thing that has confused anyone in use so far.
+1. ~~**Item 29, stages 1 and 2**~~ — **BUILT 2026-08-20**: the Outlay column and its default sort,
+   the ~2% fold, and units counted in the scan. See item 29's *Built* section. Reasoned, not yet
+   seen in game.
 2. **Item 28's stage 0** — one diagnostic at a Call Board, pasted back. It is minutes of work and
    it decides whether the addon can see the server's *published* weekly demand at all. Everything
    else on this list measures effects; this is the only candidate cause, so it is worth knowing
