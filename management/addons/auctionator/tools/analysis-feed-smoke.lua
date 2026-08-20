@@ -136,7 +136,22 @@ eq (o and o.scans,    1,   "... as one scan")
 eq (o and o.listings, 2,   "... with both of its listings")
 eq (o and o.sellers,  2,   "... and both sellers")
 eq (o and o.low,      500, "... priced per unit")
+eq (o and o.units,     40, "... and the UNITS in them, not just the listing count")
 eq (obs (IGNORED), nil,    "an unwatched item in the same batch is not recorded")
+
+-- BACKLOG item 29, rule 3: the reagent view compares supply against a Need
+-- counted in units, so "66 listings" is not an answer -- it could be 66 items or
+-- 1,300. The stack size was already being read here to work out the unit price
+-- and then discarded; this pins it being kept. A record written before it was
+-- must report units as UNKNOWN rather than as none, or every unrescanned
+-- watchlist item reads as an empty market.
+local stats = Atr_An_Stats (WATCHED)
+eq (stats and stats.units,    40, "the tab reads the unit count off the record")
+eq (stats and stats.listings,  2, "... beside the listing count, which still means listings")
+
+obs (WATCHED).units = nil			-- as a pre-item-29 record looks
+eq (Atr_An_Stats (WATCHED).units, nil, "a record from before units were counted reports nil, not 0")
+obs (WATCHED).units = 40
 
 --------------------------------------------------------------------
 -- 2.  Sold vs expired, which is the whole point of the time-left buckets.

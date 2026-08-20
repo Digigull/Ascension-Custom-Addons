@@ -172,7 +172,7 @@ matter:
 | `AUCTIONATOR_FINDER_SETTINGS` | Finder options, plus `statKeys` = set of every stat key ever seen on gear | Finder + options panel |
 | `AUCTIONATOR_ITEM_LOCATIONS` | who owns what, where | `FinderItemCount` |
 | `AUCTIONATOR_LEDGER` | `{ ver, rows = { {t, src, who, name, link, id, qty, unit, …} } }` — what you bought and listed | `AuctionatorLedger` (BACKLOG item 7) |
-| `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, low, id, …}}, ids = {[name]=itemID} }` — the watchlist and what scanning has learned about it | `AuctionatorAnalysis` (BACKLOG item 8) |
+| `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, listings, units, low, id, …}}, ids = {[name]=itemID}, plan = { batch, recipes = {[recipe name]=true} } }` — the watchlist, what scanning has learned about it, and the recipes you have ticked to make (BACKLOG item 29 stage 3) | `AuctionatorAnalysis` (BACKLOG item 8) |
 
 `ids` is the odd one and worth knowing about: a **name → item ID** map, because a tooltip needs an
 ID and this tab is full of rows that only have a name (a watch entry, and every enchant recipe,
@@ -276,7 +276,7 @@ the answer.
 |---|---|---|
 | Trades | `Atr_Ledger_ItemTotals()` | `AuctionatorLedger.lua` |
 | Crafting | `Atr_Craft_ProfitRanking()` | `AuctionatorFinderProfession.lua` |
-| Reagents | `Atr_Craft_ReagentPressure(ranking)` | `AuctionatorFinderProfession.lua` |
+| Reagents | `Atr_Craft_ReagentPressure(ranking, plan)` | `AuctionatorFinderProfession.lua` |
 | Market | `Atr_An_Stats(name)` | its own file — the one thing it does own |
 
 Reagents is the one view built on **two** of those: the pressure map comes from the profession
@@ -285,6 +285,15 @@ deliberate — `AuctionatorFinderProfession.lua` has no business reading the wat
 the shape to copy for any view that mixes two subsystems. It also passes the cached ranking *in*
 rather than letting the function build its own, so showing the same recipes two ways prices them
 once.
+
+The **plan** is passed the same way and for the same reason. `Atr_An_PlanMap()` (analysis file,
+global, reads `AUCTIONATOR_ANALYSIS.plan`) returns `{ [recipe name] = crafts }` and the view hands
+it to `Atr_Craft_ReagentPressure`; with it the basket is what you ticked, without it the basket is
+one craft of each recipe that pays. The profession file never looks the plan up itself — the same
+rule that keeps it out of the watchlist. Two views read the plan and they read it through **one**
+function, `An_PlanTotals`, which measures it against the ranking actually loaded and returns nil
+when nothing ticked still exists: the Crafting view for what the batch is worth, the Reagents view
+for the sell half of its spend/sell/keep line.
 
 **The arithmetic lives with the data, not with the table that draws it.** That is what keeps the
 crafting view and the trade skill window's own profit sort from disagreeing: both go through
