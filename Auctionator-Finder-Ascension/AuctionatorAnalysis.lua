@@ -56,6 +56,11 @@
 --              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
 --              arithmetic over today's prices, exact if the prices are current.
 --
+-- Every column in all three sorts: click a header, click it again to reverse,
+-- the way the Finder tab's headers have always worked.  Each view keeps its own
+-- key, and a cell with nothing in it sorts last in both directions rather than
+-- as a zero -- see the sorting block below for why that is not a detail.
+--
 -- This file owns only the views; the arithmetic and the reasoning behind each
 -- figure live with the rows, in AuctionatorLedger.lua and
 -- AuctionatorFinderProfession.lua respectively.
@@ -389,12 +394,14 @@ local AN_NUM_ROWS = 14;
 local AN_ROW_H    = 20;
 local AN_ROW_W    = 660;		-- a placeholder: Atr_An_Init recomputes it from the real window
 
--- ONE definition of the columns, used to build both the headers and the cells.
--- They were two separate lists and had drifted apart: every header sat at the
--- LEFT edge of a column whose value was centred or right-aligned, so nothing
--- lined up, and the right-hand pair overlapped -- "Low" ran under the "Gold/day"
--- header and "Gold/day" ran under the per-row delete button.  Deriving both from
--- this table is what stops that happening again.
+-- ONE definition of the columns, used to build the headers, the cells AND the
+-- sort.  The first two were separate lists and had drifted apart: every header
+-- sat at the LEFT edge of a column whose value was centred or right-aligned, so
+-- nothing lined up, and the right-hand pair overlapped -- "Low" ran under the
+-- "Gold/day" header and "Gold/day" ran under the per-row delete button.
+-- Deriving all three from this table is what stops that happening again: a
+-- column that cannot be sorted is now a column with no `val`, which is a thing
+-- you can see here rather than a case someone forgot to add somewhere else.
 --
 -- `w` is a column's MINIMUM width and `grow` its share of whatever the window
 -- has spare; An_LayoutCols fills in `cx`/`cw`, which are the numbers actually
@@ -414,16 +421,35 @@ local AN_COL_GAP  = 4;		-- gap between columns
 local AN_DEL_LANE = 26;		-- the delete button's own lane at the end of a row
 local AN_SB_LANE  = 26;		-- what the scroll bar needs to the RIGHT of the scroll frame
 
+--
+-- `val` is what the column SORTS on (see An_SortRows).  It returns nil for a
+-- cell with nothing in it, and nil always sorts last -- the rule the whole tab
+-- already followed by hand: an item that has never been scanned has not sold
+-- nothing, it has told us nothing, and ranking it as the worst row would be a
+-- statement about the market that the data does not support.
+--
+-- Sold/day and Gold/day sort on the UPPER bound of their range for the reason
+-- the original ranking did: for anyone scanning slowly the lower bound is zero
+-- on almost every item, and a ranking where everything ties is no ranking.
 local AN_COLS = {
-	{ key = "item",		head = "Item",		w = 184, grow = 3					},
-	{ key = "grp",		head = "Group",		w = 74,  grow = 1					},
-	{ key = "sellers",	head = "Sellers",	w = 48,  grow = 0, just = "CENTER"	},
-	{ key = "listings",	head = "Listings",	w = 54,  grow = 0, just = "CENTER"	},
+	{ key = "item",		head = "Item",		w = 184, grow = 3,					text = true,
+	  val = function (r) return string.lower (r.name or ""); end },
+	{ key = "grp",		head = "Group",		w = 74,  grow = 1,					text = true,
+	  val = function (r) return (r.group and r.group ~= "") and string.lower (r.group) or nil; end },
+	{ key = "sellers",	head = "Sellers",	w = 48,  grow = 0, just = "CENTER",
+	  val = function (r) return r.st and r.st.scans > 0 and r.st.sellers or nil; end },
+	{ key = "listings",	head = "Listings",	w = 54,  grow = 0, just = "CENTER",
+	  val = function (r) return r.st and r.st.scans > 0 and r.st.listings or nil; end },
 	{ key = "rate",		head = "Sold/day",	w = 80,  grow = 2, just = "CENTER",
-	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count." },
-	{ key = "low",		head = "Low",		w = 84,  grow = 1, just = "RIGHT"	},
+	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count.",
+	  val = function (r) return r.st and r.st.perDay and r.st.perDayMax or nil; end },
+	{ key = "low",		head = "Low",		w = 84,  grow = 1, just = "RIGHT",
+	  -- the scans guard matches the cell: an unscanned row prints "--" here, and
+	  -- what prints "--" sorts as unknown
+	  val = function (r) return r.st and r.st.scans > 0 and r.st.low or nil; end },
 	{ key = "farm",		head = "Gold/day",	w = 96,  grow = 4, just = "RIGHT",
-	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise." },
+	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise.",
+	  val = function (r) return r.st and r.st.farmMax or nil; end },
 };
 
 -- THE SECOND VIEW (BACKLOG item 8, group D): the same table, over the Ledger.
@@ -439,17 +465,29 @@ local AN_COLS = {
 -- BOTH sets of FontStrings and shows one of them -- so nothing has to be
 -- re-anchored when the view changes.
 local AN_TCOLS = {
-	{ key = "titem",	head = "Item",		w = 184, grow = 3					},
-	{ key = "tbought",	head = "Bought",	w = 54,  grow = 0, just = "CENTER"	},
+	{ key = "titem",	head = "Item",		w = 184, grow = 3,					text = true,
+	  val = function (r) return string.lower (r.name or ""); end },
+	{ key = "tbought",	head = "Bought",	w = 54,  grow = 0, just = "CENTER",
+	  val = function (r) return r.boughtQty > 0 and r.boughtQty or nil; end },
 	{ key = "tpaid",	head = "Paid",		w = 84,  grow = 1, just = "RIGHT",
-	  tip = "What you paid, from the delivery's own invoice -- so a purchase made by hand in the auction house counts too, not just ones the Buy tab drove. A * marks an item priced from what the buy loop intended, because no delivery invoice was seen for it." },
-	{ key = "tsold",	head = "Sold",		w = 54,  grow = 0, just = "CENTER"	},
+	  tip = "What you paid, from the delivery's own invoice -- so a purchase made by hand in the auction house counts too, not just ones the Buy tab drove. A * marks an item priced from what the buy loop intended, because no delivery invoice was seen for it.",
+	  val = function (r) return r.paid > 0 and r.paid or nil; end },
+	{ key = "tsold",	head = "Sold",		w = 54,  grow = 0, just = "CENTER",
+	  val = function (r) return r.soldQty > 0 and r.soldQty or nil; end },
 	{ key = "tgot",		head = "Got",		w = 84,  grow = 1, just = "RIGHT",
-	  tip = "The gold the sale actually earned: the invoice's winning bid less the auction house's cut. A returned deposit is not counted as profit." },
+	  tip = "The gold the sale actually earned: the invoice's winning bid less the auction house's cut. A returned deposit is not counted as profit.",
+	  val = function (r) return r.got > 0 and r.got or nil; end },
 	{ key = "tmargin",	head = "Margin",	w = 96,  grow = 3, just = "RIGHT",
-	  tip = "Got minus Paid, over the rows the ledger still holds -- not an estimate. Deposits are not netted in; they are in the totals line below, because a deposit on a listing that is still up is not lost yet." },
+	  tip = "Got minus Paid, over the rows the ledger still holds -- not an estimate. Deposits are not netted in; they are in the totals line below, because a deposit on a listing that is still up is not lost yet.",
+	  -- an item that has only ever been LISTED has a margin of zero by
+	  -- arithmetic and no margin in fact, which is why the cell prints "--";
+	  -- sorting it among real results would push what you made off the top
+	  -- spelled out, not `cond and nil or x`: that idiom returns x when the
+	  -- condition holds, which is exactly backwards here
+	  val = function (r) if (r.paid == 0 and r.got == 0) then return nil; end return r.margin; end },
 	{ key = "tthru",	head = "Sell-through", w = 78, grow = 1, just = "CENTER",
-	  tip = "Of the items whose listings resolved, how many sold rather than expired. Cancelling your own listing is your verdict, not the market's, so it counts on neither side." },
+	  tip = "Of the items whose listings resolved, how many sold rather than expired. Cancelling your own listing is your verdict, not the market's, so it counts on neither side.",
+	  val = function (r) return r.sellThrough; end },
 };
 
 -- THE THIRD VIEW (BACKLOG item 8, B2): what is worth CRAFTING.
@@ -466,17 +504,25 @@ local AN_TCOLS = {
 -- of Create costs and earns, and a recipe making 3 at 12g beats one making 1 at
 -- 20g.  Makes is right beside them so the two scales are never a guess.
 local AN_CCOLS = {
-	{ key = "citem",	head = "Item",		w = 184, grow = 3					},
+	{ key = "citem",	head = "Item",		w = 184, grow = 3,					text = true,
+	  val = function (r) return string.lower (r.name or ""); end },
 	{ key = "cmakes",	head = "Makes",		w = 48,  grow = 0, just = "CENTER",
-	  tip = "How many one craft yields. A ? is a yield we assumed: the recipe came from hovering a plan rather than from your profession window, so it was read as 1 and you may not even know it yet." },
+	  tip = "How many one craft yields. A ? is a yield we assumed: the recipe came from hovering a plan rather than from your profession window, so it was read as 1 and you may not even know it yet.",
+	  val = function (r) return r.made; end },
 	{ key = "ccost",	head = "Cost",		w = 84,  grow = 1, just = "RIGHT",
-	  tip = "What the reagents for ONE of them cost: the vendor price where a vendor sells it, otherwise the auction price you last scanned, otherwise its vendor value as a floor. Blank means one reagent has never been priced -- scan it and the row fills in." },
+	  tip = "What the reagents for ONE of them cost: the vendor price where a vendor sells it, otherwise the auction price you last scanned, otherwise its vendor value as a floor. Blank means one reagent has never been priced -- scan it and the row fills in.",
+	  val = function (r) return r.cost; end },
 	{ key = "csell",	head = "Price",		w = 84,  grow = 1, just = "RIGHT",
-	  tip = "What ONE sells for, from your own scans. An enchant is priced as the scroll it is sold as, and the vellum is counted as a reagent. Blank means you have never scanned it." },
+	  tip = "What ONE sells for, from your own scans. An enchant is priced as the scroll it is sold as, and the vellum is counted as a reagent. Blank means you have never scanned it.",
+	  val = function (r) return r.sell; end },
 	{ key = "cprofit",	head = "Profit/craft", w = 96, grow = 4, just = "RIGHT",
-	  tip = "Price less Cost, times the yield -- what ONE press of Create is worth at today's prices. Not an estimate and not a promise: it is exact arithmetic over prices that are only as fresh as your last scan, and it assumes the sale actually happens." },
+	  tip = "Price less Cost, times the yield -- what ONE press of Create is worth at today's prices. Not an estimate and not a promise: it is exact arithmetic over prices that are only as fresh as your last scan, and it assumes the sale actually happens.",
+	  val = function (r) return r.perCraft; end },
 	{ key = "cmargin",	head = "Margin",	w = 60,  grow = 1, just = "CENTER",
-	  tip = "Profit as a share of the sale price. 40% means four gold in every ten you take is profit -- a fat margin survives being undercut, a thin one does not." },
+	  tip = "Profit as a share of the sale price. 40% means four gold in every ten you take is profit -- a fat margin survives being undercut, a thin one does not.",
+	  -- the ratio, not the printed percent: two rows rounding to the same
+	  -- whole number are still in a real order
+	  val = function (r) return (r.profit and r.sell and r.sell > 0) and (r.profit / r.sell) or nil; end },
 };
 
 -- "market" (the watchlist, above), "trades" (the Ledger) or "craft" (recipes).
@@ -522,6 +568,131 @@ local function An_LayoutCols (cols, rowW)
 	end
 end
 
+-- SORTING: CLICK A HEADER (BACKLOG item 24) --------------------------------
+--
+-- Click a header to sort by it, click it again to reverse.  The Finder tab has
+-- worked this way since it was written and this is deliberately the same idiom
+-- -- the same arrow glyphs, the same faint highlight under the cursor, the same
+-- click-again-to-reverse (Fdr_MakeHeader / Fdr_HeaderClick in
+-- AuctionatorFinder.lua).
+--
+-- THREE STATES, ONE PER VIEW.  The views share a table and nothing else, and
+-- each one's default sort IS its point: the market view ranks on gold per day,
+-- the ledger on what you actually made, the crafting view on what one craft is
+-- worth.  Carrying one key across a view switch would land on a column the next
+-- view does not have; each view keeps its own and returns to it.
+--
+-- A CELL WITH NOTHING IN IT SORTS LAST IN BOTH DIRECTIONS.  "not scanned", a
+-- blank group, a "--" -- none of them are zeros.  Ascending by Sold/day would
+-- otherwise open on a page of items nobody has ever scanned, which is a
+-- statement about the watchlist and not about the market.  Each row builder
+-- used to hand-roll this for its own default ordering; a column's `val`
+-- returning nil is now the one place it lives.
+local gAn_Sort = {
+	market	= { key = "farm",    asc = false },
+	trades	= { key = "tmargin", asc = false },
+	craft	= { key = "cprofit", asc = false },
+};
+
+local gAn_ColsFor = { market = AN_COLS, trades = AN_TCOLS, craft = AN_CCOLS };
+
+-- The header Buttons, per view, keyed by column.  Filled in by Atr_An_Init.
+local gAn_Heads = { market = {}, trades = {}, craft = {} };
+
+local function An_ColByKey (cols, key)
+
+	local _, c;
+	for _, c in ipairs (cols) do
+		if (c.key == key) then return c; end
+	end
+	return nil;
+end
+
+-- Sort `rows` in place by the view's current key.  The tie-break is always the
+-- name, ascending: table.sort is not stable, so without one two rows carrying
+-- the same number can swap places on every redraw -- and a list that reshuffles
+-- under the cursor reads as a bug rather than as a tie.
+local function An_SortRows (view, rows)
+
+	local st  = gAn_Sort[view];
+	local col = st and An_ColByKey (gAn_ColsFor[view] or {}, st.key);
+	local val = col and col.val;
+
+	if (val == nil) then return rows; end
+
+	table.sort (rows, function (a, b)
+
+		local av, bv = val (a), val (b);
+
+		if (av == nil or bv == nil) then
+			if (av == bv) then return (a.name or "") < (b.name or ""); end
+			return (av ~= nil);				-- nothing to say sorts last, either way
+		end
+
+		if (av ~= bv) then
+			if (st.asc) then return av < bv; end
+			return av > bv;
+		end
+
+		return (a.name or "") < (b.name or "");
+	end);
+
+	return rows;
+end
+
+-- The arrow is appended to the header's own text rather than being a second
+-- FontString beside it.  A header spans its whole column and is justified like
+-- the cells under it, so an arrow anchored to the label's right edge would land
+-- in the NEXT column on everything right-aligned; appended, it sits with the
+-- word whatever the justification.  The cost is that the sorted column's header
+-- shifts by the width of a glyph, which is the column you are looking at.
+local function An_UpdateArrows (view)
+
+	local st = gAn_Sort[view];
+
+	local key, btn;
+	for key, btn in pairs (gAn_Heads[view] or {}) do
+		if (btn.label and btn.head) then
+			local mark = "";
+			if (st and key == st.key) then
+				mark = st.asc and " |cff88ccff^|r" or " |cff88ccffv|r";
+			end
+			btn.label:SetText (btn.head..mark);
+		end
+	end
+end
+
+-- Back to the top of the list.  Re-sorting under a scrolled offset leaves you
+-- looking at the middle of a list you just reordered, which is exactly where
+-- the rows you asked to see are not.  The bar has to move as well as the
+-- offset: it is what the offset is read back from.
+local function An_ScrollTop ()
+
+	if (FauxScrollFrame_SetOffset) then FauxScrollFrame_SetOffset (Atr_An_ScrollFrame, 0); end
+
+	local bar = _G["Atr_An_ScrollFrameScrollBar"];
+	if (bar and bar.SetValue) then bar:SetValue (0); end
+end
+
+local function An_HeaderClick (view, key)
+
+	local st = gAn_Sort[view];
+	if (st == nil) then return; end
+
+	if (st.key == key) then
+		st.asc = not st.asc;
+	else
+		st.key = key;
+		-- a name reads best A-Z; a number is being asked "which is the biggest"
+		local col = An_ColByKey (gAn_ColsFor[view] or {}, key);
+		st.asc = (col and col.text) and true or false;
+	end
+
+	An_UpdateArrows (view);
+	An_ScrollTop ();
+	Atr_An_Redisplay ();
+end
+
 local gAn_Group = nil;		-- nil = every group
 
 local AN_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:4:0|t";
@@ -551,9 +722,11 @@ local function An_Money (c)
 	return string.format ("%d%s", cp, AN_COPPER);
 end
 
--- Watched items in the current group, best farm score first.  Items never
--- scanned sort last: they have nothing to say yet, and pretending a missing
--- number is a zero would rank them as the worst rather than as unknown.
+-- Watched items in the current group, in the market view's current sort order
+-- (best farm score first until a header is clicked).  The ordering itself lives
+-- in An_SortRows and the columns' `val` functions -- including the rule this
+-- function used to carry alone, that an item never scanned sorts last rather
+-- than as a zero.
 local function An_Rows ()
 
 	local db   = Atr_An_DB ();
@@ -566,18 +739,7 @@ local function An_Rows ()
 		end
 	end
 
-	table.sort (out, function (a, b)
-		-- rank on the upper bound: for a slow scanner the lower bound is 0 for
-		-- almost everything, and a ranking where everything ties is no ranking
-		local fa = a.st and a.st.farmMax;
-		local fb = b.st and b.st.farmMax;
-		if (fa and fb) then return fa > fb; end
-		if (fa) then return true; end
-		if (fb) then return false; end
-		return a.name < b.name;
-	end);
-
-	return out;
+	return An_SortRows ("market", out);
 end
 
 -- THE LEDGER VIEW (BACKLOG item 8, group D) --------------------------------
@@ -593,25 +755,19 @@ local function An_Signed (v)
 	return "|cffff6060-"..An_Money (-v).."|r";
 end
 
--- Best margin first.  Items that have only ever been LISTED sort under the ones
--- that have actually traded: their margin is a true zero rather than an unknown,
--- but ranking them among real results would push what you made off the top of
--- the table.
+-- Best margin first, until a header is clicked.  Items that have only ever been
+-- LISTED still sort under the ones that actually traded -- their margin is a
+-- true zero rather than an unknown, but ranking them among real results would
+-- push what you made off the top of the table.  That rule now lives on the
+-- Margin column's `val`, which returns nil for exactly the rows whose cell
+-- prints "--".
 local function An_TradeRows ()
 
 	if (type (Atr_Ledger_ItemTotals) ~= "function") then return {}, nil; end
 
 	local list, tot = Atr_Ledger_ItemTotals ();
 
-	table.sort (list, function (a, b)
-		local ta = (a.boughtQty > 0 or a.soldQty > 0);
-		local tb = (b.boughtQty > 0 or b.soldQty > 0);
-		if (ta ~= tb) then return ta; end
-		if (a.margin ~= b.margin) then return a.margin > b.margin; end
-		return a.name < b.name;
-	end);
-
-	return list, tot;
+	return An_SortRows ("trades", list), tot;
 end
 
 local function An_TradeSummary (tot)
@@ -723,13 +879,18 @@ end
 
 local function An_CraftRows ()
 
-	if (gAn_CraftRows) then return gAn_CraftRows, gAn_CraftStats; end
+	if (gAn_CraftRows == nil) then
 
-	if (type (Atr_Craft_ProfitRanking) ~= "function") then return {}, nil; end
+		if (type (Atr_Craft_ProfitRanking) ~= "function") then return {}, nil; end
 
-	gAn_CraftRows, gAn_CraftStats = Atr_Craft_ProfitRanking ();
+		gAn_CraftRows, gAn_CraftStats = Atr_Craft_ProfitRanking ();
+	end
 
-	return gAn_CraftRows, gAn_CraftStats;
+	-- Re-sorted rather than re-priced: the ranking arrives best-per-craft first,
+	-- and a header click reorders the cached list without touching a price.
+	-- stats.best was taken when the list was built, so it keeps naming the best
+	-- craft however the table is currently ordered.
+	return An_SortRows ("craft", gAn_CraftRows), gAn_CraftStats;
 end
 
 -- Profit as a share of the SALE price, not of the cost.  Markup on cost is the
@@ -928,14 +1089,15 @@ function Atr_An_SetView (view)
 	-- last time this view was open (see An_CraftInvalidate).
 	if (view == "craft") then An_CraftInvalidate (); end
 
+	-- Each view keeps its own sort, so the arrow has to be redrawn for the one
+	-- coming up rather than left on whatever the last view was sorted by.
+	An_UpdateArrows (view);
+
 	-- Back to the top.  The views are different lengths, and an offset left over
 	-- from a scrolled watchlist lands past the end of a shorter ledger -- every
 	-- row then draws empty, which reads as "no trades" rather than as a scroll
-	-- position.  The bar has to be moved as well as the offset: it is what the
-	-- offset is read back from.
-	if (FauxScrollFrame_SetOffset) then FauxScrollFrame_SetOffset (Atr_An_ScrollFrame, 0); end
-	local bar = _G["Atr_An_ScrollFrameScrollBar"];
-	if (bar and bar.SetValue) then bar:SetValue (0); end
+	-- position.
+	An_ScrollTop ();
 
 	Atr_An_Redisplay ();
 end
@@ -1782,14 +1944,19 @@ function Atr_An_Init ()
 	grpLabel:SetPoint ("TOPLEFT", 386, -40);
 	grpLabel:SetText (AZT("New group"));
 
-	-- Headers: same x, width and justification as the cells beneath them.  They
-	-- sit at -84, not -74: the group dropdown's frame art hangs well below its
-	-- own anchor and was all but touching them.
+	-- Headers: same x, width and justification as the cells beneath them.  The
+	-- text sits at -84, not -74: the group dropdown's frame art hangs well below
+	-- its own anchor and was all but touching it.
 	--
 	-- Each view's headers go in a container of their own, laid over the panel so
 	-- the offsets below are unchanged, and the view switch is then one Show and
-	-- one Hide rather than a walk over two lists of FontStrings and hit frames.
-	local function headerSet (name, cols)
+	-- one Hide rather than a walk over three lists of frames.
+	--
+	-- EVERY HEADER IS A BUTTON NOW (item 24), because every one of them sorts.
+	-- They used to be FontStrings with an invisible hit frame added over the two
+	-- that had a tooltip to show; one Button per column does both jobs and there
+	-- is no second frame to keep in step with the first.
+	local function headerSet (name, view, cols)
 
 		local box = CreateFrame ("Frame", name, panel);
 		box:SetAllPoints (panel);
@@ -1797,39 +1964,57 @@ function Atr_An_Init ()
 		local c;
 		for _, c in ipairs (cols) do
 
-			local fs = box:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
-			fs:SetPoint ("TOPLEFT", AN_HEAD_X0 + c.cx, -84);
-			fs:SetWidth (c.cw);
-			fs:SetJustifyH (c.just or "LEFT");
-			fs:SetText (AZT (c.head));
+			local col = c;
 
-			-- A FontString cannot take scripts, so a column with something to explain
-			-- gets an invisible hit frame over its header.  It stops above the scroll
-			-- frame (-102) so it cannot eat a click meant for a row.
-			if (c.tip) then
-				local col = c;
-				local hit = CreateFrame ("Frame", nil, box);
-				hit:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.cx, -82);
-				hit:SetSize (col.cw, 16);
-				hit:EnableMouse (true);
-				hit:SetScript ("OnEnter", function (self)
-					if (GameTooltip) then
-						GameTooltip:SetOwner (self, "ANCHOR_BOTTOMRIGHT");
-						GameTooltip:SetText (AZT (col.head), 1, 1, 1);
-						GameTooltip:AddLine (AZT (col.tip), 0.8, 0.8, 0.8, true);
-						GameTooltip:Show();
-					end
-				end);
-				hit:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
-			end
+			-- 18 tall at -82, so the label still lands at -84 where it always has
+			-- and the button ends exactly where the scroll frame starts (-102).  A
+			-- header that overhung it would eat clicks meant for the first row.
+			local btn = CreateFrame ("Button", nil, box);
+			btn:SetPoint ("TOPLEFT", AN_HEAD_X0 + col.cx, -82);
+			btn:SetSize (col.cw, 18);
+
+			-- the Finder's header treatment exactly: a barely-there wash that
+			-- brightens under the cursor, so a sortable header looks sortable
+			local hi = btn:CreateTexture (nil, "BACKGROUND");
+			hi:SetAllPoints ();
+			hi:SetTexture (1, 1, 1, 0.06);
+
+			local fs = btn:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+			fs:SetPoint ("TOPLEFT", 0, -2);
+			fs:SetWidth (col.cw);
+			fs:SetJustifyH (col.just or "LEFT");
+			fs:SetText (AZT (col.head));
+
+			btn.label	= fs;
+			btn.head	= AZT (col.head);		-- An_UpdateArrows appends to this
+
+			btn:SetScript ("OnClick", function () An_HeaderClick (view, col.key); end);
+
+			btn:SetScript ("OnEnter", function (self)
+				hi:SetTexture (1, 1, 1, 0.15);
+				if (GameTooltip) then
+					GameTooltip:SetOwner (self, "ANCHOR_BOTTOMRIGHT");
+					GameTooltip:SetText (AZT (col.head), 1, 1, 1);
+					if (col.tip) then GameTooltip:AddLine (AZT (col.tip), 0.8, 0.8, 0.8, true); end
+					GameTooltip:AddLine (AZT("Click to sort by this column. Click again to reverse it."), 0.5, 0.5, 0.5, true);
+					GameTooltip:Show();
+				end
+			end);
+
+			btn:SetScript ("OnLeave", function ()
+				hi:SetTexture (1, 1, 1, 0.06);
+				if (GameTooltip) then GameTooltip:Hide(); end
+			end);
+
+			gAn_Heads[view][col.key] = btn;
 		end
 
 		return box;
 	end
 
-	headerSet ("Atr_An_HeadMarket", AN_COLS);
-	headerSet ("Atr_An_HeadTrades", AN_TCOLS);
-	headerSet ("Atr_An_HeadCraft",  AN_CCOLS);
+	headerSet ("Atr_An_HeadMarket", "market", AN_COLS);
+	headerSet ("Atr_An_HeadTrades", "trades", AN_TCOLS);
+	headerSet ("Atr_An_HeadCraft",  "craft",  AN_CCOLS);
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
 	scroll:SetPoint ("TOPLEFT", AN_HEAD_X0, -102);
