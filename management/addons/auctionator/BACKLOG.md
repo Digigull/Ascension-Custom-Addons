@@ -1799,9 +1799,90 @@ Load the epic and the rare alternately, by both paths, several times each.
 
 ---
 
+## 16. SELL tab — an epic sell item turned blue as its own search completed — DONE
+
+**Re-reported 2026-08-20**, after item 15 shipped: the SELL tab searches a Bloodforged epic and
+shows it **blue**; search it again and it comes back **purple**, correctly. Searching something
+else and coming back a few times gets it blue again.
+
+Item 15 was not wrong, it was **incomplete**. It fixed the identity the sell pane *starts* with.
+This one is the identity being **overwritten again, later, by the scan itself** — which is why the
+symptom survived a fix that provably corrects the sell slot's link, and why a second search
+(inside the 20 s rescan window it is a cache hit, so no batch runs) showed the right colour.
+
+### Two bugs in the batch loop, and both need the other
+
+`AtrSearch:AnalyzeResultsPage` (`AuctionatorScan.lua`) walks a page of listings, buckets them by
+quality (item 12 part 1), then ends each iteration with what was, verbatim:
+
+```lua
+if (scn.itemLink == nil or self.itemClass == nil) then
+    scn:UpdateItemLink (GetAuctionItemLink("list", x));
+end
+```
+
+`self` is the **AtrSearch**. `itemClass` is a field only **AtrScan** has — a search has never
+carried one — so `self.itemClass == nil` is **always true** and the guard never guarded anything.
+Every listing rewrote its bucket's identity, so a bucket ended up describing whichever listing it
+happened to see **last**, and `UpdateItemLink` also writes the shared name-keyed link cache, so
+every listing poisoned that too. A rare listed after the epic recoloured the epic on the spot.
+This is upstream's line, not the fork's; the quality split is what gave it teeth, because before
+that the overwriting links at least all belonged to one bucket.
+
+Fixing only that is not enough, because of the second bug: the **primary bucket adopted the
+quality of the first listing it saw**. So on an auction house that lists a rare first, the epic's
+own name-keyed bucket *becomes the rare's*, all the epic's listings go to a `#q4` side bucket —
+and the sell pane keeps showing the primary one. Blue name, and blue **prices**, on an epic.
+`Atr_OnSearchComplete` only re-points `activeScan` when a search yields exactly one scan, which
+after a split it does not, so nothing downstream corrected it either.
+
+That is the whole reported behaviour, including its intermittency: **it depends on the order the
+auction house returns the two variants in**, which is not stable between searches.
+
+### The fix
+
+Three lines of behaviour in `AuctionatorScan.lua`:
+
+- **Bucket the primary scan by the item it is ABOUT, not by listing order.**
+  `scn.variantQuality = scn.itemQuality or quality`. By the time a batch lands, the sell path has
+  already pushed the real sell item's link in (item 12 part 2 pushes it right after `DoSearch`,
+  which is the only `DoSearch` the sell slot ever triggers, and item 15's helper re-asserts it on
+  every `NEW_AUCTION_UPDATE`), so `scn.itemQuality` **is** the variant in the player's hands.
+  The old first-listing behaviour survives as the fallback for a scan that has no link — a cold
+  cache, and all a browse search ever has.
+- **Take a listing's link only when the bucket needs one**: no link at all, or a link whose
+  quality is not this bucket's. The second case is real and is why the test is not just
+  `itemLink == nil`: a **variant** bucket's `Init` can only look its name up in the same
+  name-keyed cache, so it starts out holding the *other* variant's link. Both cases are
+  self-limiting — once the link matches the bucket, it stops firing.
+- **`AtrScan:Init` now clears `itemQuality`** alongside `itemLink`. It never did, so a reused scan
+  whose link could not be resolved answered with the previous item's quality — harmless while
+  nothing read the field, load-bearing now that the bucketing does. `AtrSearch:Finish` reads
+  `scn.itemQuality + 1`, so that read is now nil-safe.
+
+### Why this one got a test when the house rule says not to build harnesses
+
+Because the symptom has now escaped twice, and because the cause is **listing order** — the exact
+thing reading the code kept getting wrong, in both write-ups. So the orders are enumerated instead
+of reasoned about: `management/addons/auctionator/tools/sell-variant-smoke.lua`, 27 assertions,
+run from the repo root under bare `lua5.1`. It stubs only what that loop touches and must not grow
+into a client emulator.
+
+Against the **pre-fix** source it fails 7 of 27, and fails them *only in the rare-listed-first
+order* — the epic-first order passes untouched. That asymmetry is the intermittency, reproduced.
+Against the fix, 27/27.
+
+**Verified** by `luac5.1 -p` and that test. **Not verified in game.**
+
+**What to watch:** the sell pane now shows the epic's **prices** as well as its name, so a
+Bloodforged epic with no epic listings up will correctly report no current auctions rather than
+quietly quoting the rare's. That is the intended change, not a new bug.
+
+---
+
 ## Suggested order
 
-Items 1–6, 11 and 14 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
+Items 1–6, 11, 14, 15 and 16 are **done**, and item 10 closed without any code (2026-08-19). Rewritten
 after the first real dump, same day. What is left, in order:
 
 1. **Item 12 parts 1 and 2** — **now startable.** The dump measured the one decision part 1 was
