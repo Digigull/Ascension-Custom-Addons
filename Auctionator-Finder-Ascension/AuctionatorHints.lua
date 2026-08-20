@@ -2210,17 +2210,24 @@ end
 --   rest of the tip is showing per-stack prices we scale both figures by the
 --   stack too, so the craft lines never disagree with the Auction line above.
 --
---   MULTI-OUTPUT RECIPES are shown PER CRAFT, tagged with the yield.  Distilled
---   Flask of the Unyielding makes 3, so "what does it cost" has two honest
---   answers -- one flask, or one press of Create -- and an unlabelled figure
---   sitting under a per-item Auction price is read as whichever the reader was
---   expecting.  One craft is the answer worth the tooltip room: it is what a
---   press of Create actually costs and earns, and it is what the profit sort
---   ranks on (Atr_ProfSort_BuildOrder), so the two agree by construction.  The
---   tag is what keeps it honest against the per-item Auction line above --
---   these lines say "x3" where that one says nothing.  Showing both scales was
---   the first shape of this; it was correct and it was clutter (owner,
---   2026-08-19).
+--   MULTI-OUTPUT RECIPES are shown PER CRAFT, and the PROFIT line carries the
+--   yield.  Distilled Flask of the Unyielding makes 3, so "what does it cost"
+--   has two honest answers -- one flask, or one press of Create -- and an
+--   unlabelled figure sitting under a per-item Auction price is read as
+--   whichever the reader was expecting.  One craft is the answer worth the
+--   tooltip room: it is what a press of Create actually costs and earns, and it
+--   is what the profit sort ranks on (Atr_ProfSort_BuildOrder), so the two agree
+--   by construction.  Showing both scales was the first shape of this; it was
+--   correct and it was clutter (owner, 2026-08-19).
+--
+--   BOTH LINES USED TO SAY "x3" AND THE COST LINE NO LONGER DOES (owner,
+--   2026-08-20).  Superseded rather than deleted, because "tag both, they are
+--   both scaled" is the reading somebody will arrive at again: the cost figure
+--   is not three of anything, it is the recipe's whole reagent bill for one
+--   press, and "x3" beside it claimed a multiple that is really just the
+--   arithmetic used to get there.  The profit figure genuinely does depend on
+--   how many items come out, so that is where the count belongs, and it reads
+--   "(3)" -- a statement of the yield rather than a multiplier.
 --
 --   skillIndex, when the caller has it, is the trade skill row this tooltip is
 --   for.  See the first source below -- it is worth more than it looks.
@@ -2311,24 +2318,42 @@ function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xst
 	if (madeCount < 1) then madeCount = 1; end
 	local perCraft = (madeCount > 1) and not (num and showStackPrices);
 
+	-- THE YIELD MARK BELONGS ON THE PROFIT LINE, NOT THE COST LINE (owner,
+	-- 2026-08-20: "remove the x3 there, then on Craft profit change it to Craft
+	-- profit(3)").  It read "Craft cost x3" and that was the wrong claim about
+	-- the wrong number: the figure beside it is what ONE press of Create costs
+	-- you -- the recipe's whole reagent bill -- not three of anything.  (It is
+	-- reached by multiplying a per-item cost back up by the yield, which is where
+	-- the x3 came from, but that is arithmetic and not a thing to label.)
+	--
+	-- The profit line is where the count actually earns its place: that margin is
+	-- the whole press, so it depends on selling all three, and "(3)" says which
+	-- number of items the figure assumes without pretending to be a multiplier.
+	--
+	-- Kept in xstring's own blue so the two marks still read as the same kind of
+	-- annotation, and appended AFTER xstring so a stack multiplier (which cannot
+	-- co-occur with this one -- see perCraft) would still come first.
+	local yieldMark = "";
+
 	if (perCraft) then
 		craftCost = craftCost * madeCount;
 		if (sellPrice) then sellPrice = sellPrice * madeCount; end
-		xstring = xstring.."|cFFAAAAFF x"..madeCount.."|r";
+		yieldMark = "|cFFAAAAFF ("..madeCount..")|r";
 	end
 
 	tip:AddDoubleLine (ZT("Craft cost")..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (craftCost));
 
 	if (sellPrice == nil or sellPrice <= 0) then			-- cost known, market price not
-		tip:AddDoubleLine (ZT("Craft profit")..xstring, "|cFFAAAAAA"..ZT("unknown").."|r");
+		tip:AddDoubleLine (ZT("Craft profit")..xstring..yieldMark, "|cFFAAAAAA"..ZT("unknown").."|r");
 		return;
 	end
 
 	local margin = sellPrice - craftCost;
 	if (margin >= 0) then
-		tip:AddDoubleLine (ZT("Craft profit")..xstring, "|cFF44FF44"..zc.priceToMoneyString (margin).."|r");
+		tip:AddDoubleLine (ZT("Craft profit")..xstring..yieldMark, "|cFF44FF44"..zc.priceToMoneyString (margin).."|r");
 	else
-		tip:AddDoubleLine (ZT("Craft loss")..xstring, "|cFFFF4444-"..zc.priceToMoneyString (-margin).."|r");
+		-- the loss line is the same row in the negative, so it carries the same mark
+		tip:AddDoubleLine (ZT("Craft loss")..xstring..yieldMark, "|cFFFF4444-"..zc.priceToMoneyString (-margin).."|r");
 	end
 end
 -- FINDER_TAB end: crafted-goods profitability -----------------------------
