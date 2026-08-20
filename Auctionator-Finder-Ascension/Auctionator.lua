@@ -955,7 +955,9 @@ function Atr_Init()
 	recommendElements[5] = _G["Atr_RecommendPerStack_Price"];
 	recommendElements[6] = _G["Atr_Recommend_Basis_Text"];
 	recommendElements[7] = _G["Atr_RecommendItem_Tex"];
-	recommendElements[8] = _G["Atr_An_BuyWatchButton"];		-- ANALYSIS_TAB: created by Atr_An_Init, just above
+	-- The Analysis tab's two Buy-tab buttons are deliberately NOT in here: this
+	-- strip is the SELL recommendation, which the BUY tab hides.  See
+	-- Atr_An_UpdateBuyButton for what shows them instead.		-- ANALYSIS_TAB
 
 	-- create the lines that appear in the item history scroll pane
 
@@ -1484,6 +1486,7 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
 		end
 
 		Atr_HideElems (recommendElements);
+		if (Atr_An_UpdateBuyButton) then Atr_An_UpdateBuyButton(); end		-- ANALYSIS_TAB: a tab that never repaints the header must not inherit them
 
 		if (index == Atr_FindTabIndex(FINDER_TAB)) then
 			if (Atr_Finder_Panel) then
@@ -3451,6 +3454,8 @@ function Atr_ShowItemNameAndTexture(itemName)
 
 	Atr_SetTextureButton ("Atr_RecommendItem_Tex", 1, gCurrentPane.activeScan.itemLink);
 
+	if (Atr_An_UpdateBuyButton) then Atr_An_UpdateBuyButton(); end		-- ANALYSIS_TAB: this IS the Buy tab's item header
+
 	-- After, not before: the call above shows the icon, and on the SELL tab the
 	-- icon is meant to stay hidden.  (This path is the BUY tab's, where the icon
 	-- is wanted, so the call is a no-op there -- it is here because the two tabs
@@ -3825,7 +3830,7 @@ function Atr_UpdateRecommendation (updatePrices)
 	local new_Item_StartPrice = Atr_CalcStartPrice (new_Item_BuyoutPrice);
 
 	Atr_ShowElems (recommendElements);
-	if (Atr_An_UpdateBuyButton) then Atr_An_UpdateBuyButton(); end		-- ANALYSIS_TAB: strip is shown on SELL too; Buy tab only
+	if (Atr_An_UpdateBuyButton) then Atr_An_UpdateBuyButton(); end		-- ANALYSIS_TAB: SELL repaints this header; the buttons are Buy-only
 	AuctionatorMessageFrame:Hide();
 	AuctionatorMessage2Frame:Hide();
 
