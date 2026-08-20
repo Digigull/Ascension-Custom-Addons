@@ -489,19 +489,23 @@ function Atr_FullScanStart ()
 end
 
 
--- "Full Scan..." is a misnomer once gear is excluded and the scan is
--- category-driven, so relabel the More... entry to match what it does.
+-- THE BUTTON KEEPS ITS XML LABEL, "Full Scan..." (owner, 2026-08-22).  Nothing
+-- relabels it here any more, and this note is what is left of the attempt --
+-- kept rather than deleted, because the next person to read this file will have
+-- the same idea and the history is the answer to it.
 --
--- A FUNCTION, CALLED FROM Atr_Init, AND IT USED TO BE NEITHER.  This was a bare
--- `if` at file scope, and at file scope Atr_FullScanButton DOES NOT EXIST: the
--- button is created with Atr_Main_Panel from the Atr_Sell_Template, inside
--- Atr_Init, which does not run until Blizzard_AuctionUI loads -- long after this
--- file is parsed.  So the guard was always false and the button has been reading
--- "Full Scan..." ever since, which is exactly what the owner called it when
--- asking for BACKLOG item 6.  Found 2026-08-22 while moving the button.
-function Fdr_FS_RelabelButton ()
-	if (Atr_FullScanButton and Atr_FullScanButton.SetText) then
-		Atr_FullScanButton:SetText (FT("Scan Categories..."));
-	end
-end
+-- SUPERSEDED REASONING: this file used to retitle the button to "Scan
+-- Categories...", on the grounds that "Full Scan..." is a misnomer once gear is
+-- excluded and the scan is category-driven.  That is still true of what the
+-- button DOES; it is simply not what the owner wants it called.
+--
+-- AND IT NEVER ACTUALLY RAN, which is the part worth keeping.  The retitle was a
+-- bare `if` at FILE SCOPE, and at file scope Atr_FullScanButton does not exist:
+-- the button is created with Atr_Main_Panel from Atr_Sell_Template inside
+-- Atr_Init, which does not run until Blizzard_AuctionUI loads, long after this
+-- file is parsed.  So the guard was always false and the button read "Full
+-- Scan..." for as long as it has existed.  It was made to work on 2026-08-22,
+-- the owner saw the new label for the first time, and asked for the old one
+-- back -- so the label is now what it always was in practice, and this time on
+-- purpose rather than by accident.
 -- FINDER_TAB end: full scan replacement
