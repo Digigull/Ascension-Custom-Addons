@@ -368,8 +368,9 @@ price in the addon improves at once.
 One column on the Analysis tab's Market view: `+240%`, no chart, nil when the comparison sample is
 too old to be honest.
 
-**Stage 4 — the readers that were waiting for it.** Item 30's ore card, item 28's demand signal,
-the Sell tab's "you are undercutting a rising market", the age-aware tooltip line.
+**Stage 4 — the readers that were waiting for it. — BUILT 2026-08-21 (the two that could be), see
+§13.** Item 30's ore card and item 28's demand signal want items that do not exist yet; the Sell
+tab's warning and the age-aware tooltip line did not, and shipped.
 
 **Stage 5 — retention polish.** The condenser, and only then the question of whether the mean
 database still earns its 5267 rows.
@@ -527,6 +528,77 @@ unit of retention. One store, one shape — which is the whole of §10's argumen
 the short-history fallback and its reported span, the three-day floor, the staleness age, and the
 cascade read. That off-by-one is the kind nothing in game would ever show you — the number would
 simply be wrong.
+
+---
+
+## 13. Stage 4 as built, 2026-08-21 — the readers, minus two that had nothing to read from
+
+**Two of the four listed readers were not buildable and are not built.** Item 30's ore card and
+item 28's demand signal are features of items that do not exist yet — there is no Advisor tab and no
+Call Board capture to put a line on. Nothing about them is blocked on the history any more, which is
+the point: when either gets built, its figure is one call away. The other two shipped.
+
+**Four surfaces now print this figure, so there is one function that phrases it.**
+`Atr_Hist_PctText` rounds and clamps; `Atr_Hist_MoveText` adds the span. Four sites rounding a
+percentage their own way is four chances to describe one number two ways, which is the duplication
+FRAMEWORK.md §6 warns about for prices and is no different here. The Analysis column was rewritten
+to go through it rather than keep its own copy.
+
+### The item tooltip — everywhere an item is drawn
+
+A fifth money line under Vendor / Auction / Auction median / Disenchant, reading
+`Auction 7d ago    12s  +240%`. It carries the old **price** as well as the move, because the other
+four lines are all money and a bare percentage in that stack reads as a different kind of thing.
+
+It **does not compete for the best-price highlight**. That highlight answers "what is this worth to
+me", and a week-old figure is not an offer.
+
+The label states the real span — `7d ago`, `4d ago` — never the word "week", for the same reason the
+Analysis column does: until a week has been recorded it is not one.
+
+This also covers the Sell tab's item hover for free, since that hover is `SetHyperlink` on the same
+tooltip.
+
+### The Sell tab's sentence
+
+One line on the drop-box hover, and the direction that matters is the one the flow makes dangerous.
+Auctionator's sell flow is *undercut the current lowest*, and the lowest listing is one seller's
+decision — so the case worth a warning is not a dear market, it is a **fallen** one: undercutting a
+crash prices you into it. The rise is reported too, shorter, because it is reassurance rather than a
+decision.
+
+Three gates, each for its own reason: **SELL tab only** (the same hover serves BUY, where
+"undercutting it" is not what you are doing), **±15% or nothing** (a few percent is the noise a
+daily close carries, and a tooltip that comments on noise teaches you to ignore it), and **nothing
+when the newer end is stale** — "the market has fallen" would then be a claim about a market nobody
+has looked at.
+
+`Atr_ShowRecTooltip` is re-run **every frame** while that tooltip is up. That is why
+`Atr_Hist_Delta` now memoises per name per day: a decode allocates a table per sample, so uncached
+this would be thousands of short-lived tables a second for a number that changes once a day. The
+cache entry is dropped whenever that name is written, and the stored day makes a day roll drop it by
+itself.
+
+### The Crafting and Reagents side tooltips
+
+One line each, and they answer the same question from opposite ends. On a **craft row**: a recipe
+that pays today because its product spiked is a different proposition from one that pays every week,
+and Profit/craft cannot tell them apart. On a **reagent row**: is this dear *today* — the difference
+between a bad recipe and a bad week. Neither could be a column; the Reagents view has no width left
+for a ninth and it was never a table's job to say it.
+
+### One bug, caught by re-reading rather than by running
+
+The sell sentence used `txt:gsub("^%-", "")` inline as a `string.format` argument. **`gsub` returns
+two values** — the string and a replacement count — and an unparenthesised call passes both, so the
+count landed in the `%d` and every sentence would have read *"on 1 days ago"*. Parenthesised, and
+pinned by an assertion that checks the span survives, because the test that was there passed happily
+without it.
+
+**Tested:** the smoke test is now **84 assertions**. The new ones cover the cache dropping on a
+same-day re-close and on a new day's write, the shared formatter's rounding and clamping in both
+directions, that the move text always carries the real span, and each gate on the sell sentence —
+the fall, the rise, the noise floor and the staleness floor.
 
 ---
 

@@ -2609,6 +2609,28 @@ local function ShowTipWithPricing (tip, link, num, skillIndex)
         if (auctionMedianPrice ~= nil) then
             tip:AddDoubleLine (Atr_TipLabel (ZT("Auction median"), medianShown, medianBest)..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (auctionMedianPrice));
         end
+
+		-- WHAT IT USED TO COST (BACKLOG item 31, stage 4).  Every other money
+		-- line here is present tense, and a price on its own cannot tell a normal
+		-- day from a spike.
+		--
+		-- It carries a PRICE and a PERCENTAGE and deliberately does not compete
+		-- for the best-price highlight: the highlight answers "what is this worth
+		-- to me", and a week-old figure is not an offer.  The label states the
+		-- real span rather than saying "week", because until a week has been
+		-- recorded it is not one -- the same rule the Analysis column follows.
+		if (type (Atr_Hist_Delta) == "function") then
+			local wk = Atr_Hist_Delta (itemName);
+			if (wk) then
+				local pcttxt = Atr_Hist_PctText (wk);
+				local col    = "|cFF888888";
+				if ((wk.age or 0) <= 3) then
+					if (wk.pct >= 0.05) then col = "|cFF40FF40"; elseif (wk.pct <= -0.05) then col = "|cFFFF6060"; end
+				end
+				tip:AddDoubleLine (string.format (ZT("Auction %dd ago"), wk.span or 0)..xstring,
+					"|cFFCCCCCC"..zc.priceToMoneyString (wk.from).."|r "..col..pcttxt.."|r");
+			end
+		end
 	end
 
 	-- disenchanting info

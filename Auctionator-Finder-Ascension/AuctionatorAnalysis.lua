@@ -1348,15 +1348,11 @@ local function An_WeekDelta (r)
 	local d = r and r.wow;
 	if (d == nil) then return "|cff666666--|r"; end
 
-	local pct = d.pct * 100;
-
-	-- the cell is 56px: a 12s reagent that went to 40g is +33,000%, which is true
-	-- and unreadable, and past a certain point the digits stop being the point
-	local txt;
-	if (pct > 999)      then txt = ">999%";
-	elseif (pct < -99)  then txt = "-99%";
-	elseif (pct >= 0)   then txt = string.format ("+%d%%", math.floor (pct + 0.5));
-	else                     txt = string.format ("%d%%",  math.ceil  (pct - 0.5)); end
+	-- Rounded and clamped by the store, not here: the same figure is printed on
+	-- item tooltips and on the Sell tab now, and four sites rounding it their own
+	-- way is four chances to describe one number two ways (item 31, stage 4).
+	local txt, pct = Atr_Hist_PctText (d);
+	if (txt == nil) then return "|cff666666--|r"; end
 
 	if ((d.age or 0) > ATR_AN_STALE_DAYS) then return "|cff888888"..txt.."|r"; end
 
@@ -1836,6 +1832,14 @@ local function An_ShowCraftTip (owner, r)
 	end
 	if (r.sell) then
 		tip:AddDoubleLine (AZT("Sells for, each"), An_Money (r.sell), 1, 1, 1, 1, 1, 1);
+
+		-- What that price has been doing (item 31, stage 4).  A recipe that pays
+		-- today because its product spiked is a different proposition from one
+		-- that pays every week, and Profit/craft cannot tell them apart.
+		local mv = (type (Atr_Hist_MoveText) == "function") and Atr_Hist_MoveText (r.name) or nil;
+		if (mv) then
+			tip:AddDoubleLine (AZT("Its price"), mv, 0.7, 0.7, 0.7, 0.8, 0.8, 0.8);
+		end
 	end
 	if (r.perCraft) then
 		tip:AddDoubleLine (AZT("Profit per craft"), An_Signed (r.perCraft), 1, 1, 1, 1, 1, 1);
@@ -2269,6 +2273,15 @@ local function An_ShowReagentTip (owner, r)
 	if (r.have and r.have > 0) then
 		tip:AddDoubleLine (AZT("You already hold"), tostring (r.have), 1, 1, 1, 1, 1, 1);
 	end
+	if (r.unit) then
+		-- Is it dear TODAY?  The difference between a bad recipe and a bad week,
+		-- and the Outlay column cannot show it (item 31, stage 4).
+		local mv = (type (Atr_Hist_MoveText) == "function") and Atr_Hist_MoveText (r.name) or nil;
+		if (mv) then
+			tip:AddDoubleLine (AZT("Its price"), mv, 0.7, 0.7, 0.7, 0.8, 0.8, 0.8);
+		end
+	end
+
 	if (r.outlay) then
 		tip:AddDoubleLine (AZT("That costs"), An_Money (r.outlay), 1, 1, 1, 1, 1, 1);
 

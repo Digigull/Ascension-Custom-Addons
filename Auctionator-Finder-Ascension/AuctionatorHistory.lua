@@ -115,6 +115,15 @@ local ATR_HIST_MAX      = 40;		-- ... and a hard sample cap behind it
 local ATR_HIST_TRIM_AT  = 620;		-- decode+trim only once a string passes this
 local ATR_HIST_NAMECAP  = 8000;		-- backstop: the feed itself is bounded by the AH
 
+-- Memoised per name per DAY.  Two of the callers make this a hot path and
+-- neither is obviously one: the Analysis view asks for every row on every
+-- redraw, and Atr_ShowRecTooltip is re-run EVERY FRAME while the sell tooltip is
+-- up (see its comment).  A decode allocates a table per sample, so uncached that
+-- is a few thousand short-lived tables a second for a number that changes once a
+-- day.  The entry is dropped when that name is written to, and the stored day
+-- makes a day roll drop it by itself.
+local gHist_DeltaCache = {};
+
 -- ===========================================================================
 -- THE COMPANION
 --
@@ -338,6 +347,7 @@ function Atr_Hist_Note (name, price, now)
 	if (type (packed) ~= "string" or packed == "") then
 		db.p[name] = Hist_Rec (day, price, 1);
 		db.n = (db.n or 0) + 1;
+		gHist_DeltaCache[name] = nil;
 		if (db.n > ATR_HIST_NAMECAP) then Atr_Hist_PruneNames (db, day); end
 		return true;
 	end
@@ -348,6 +358,7 @@ function Atr_Hist_Note (name, price, now)
 		-- the tail is not a record we wrote: start again rather than append to
 		-- something we cannot read back
 		db.p[name] = Hist_Rec (day, price, 1);
+		gHist_DeltaCache[name] = nil;
 		return true;
 
 	elseif (rec.d == day) then
@@ -366,6 +377,8 @@ function Atr_Hist_Note (name, price, now)
 	if (#db.p[name] > ATR_HIST_TRIM_AT) then
 		db.p[name] = Hist_Trim (db.p[name], day);
 	end
+
+	gHist_DeltaCache[name] = nil;		-- this name's cached delta is now stale
 
 	return true;
 end
@@ -439,10 +452,28 @@ local ATR_HIST_MINSPAN = 3;
 
 function Atr_Hist_Delta (name, days, now)
 
-	local s = Atr_Hist_Series (name, now);
-	if (#s < 2) then return nil; end
+	local today  = Hist_Day (now);
+	local cached = (days == nil) and gHist_DeltaCache[name] or nil;
 
+	if (cached and cached.day == today) then return cached.d; end
+
+	local s = Atr_Hist_Series (name, now);
+	if (#s < 2) then
+		if (days == nil and type (name) == "string") then
+			gHist_DeltaCache[name] = { day = today, d = nil };
+		end
+		return nil;
+	end
+
+	local asked = days;
 	days = tonumber (days) or ATR_HIST_WEEK;
+
+	local function keep (d)
+		if (asked == nil and type (name) == "string") then
+			gHist_DeltaCache[name] = { day = today, d = d };
+		end
+		return d;
+	end
 
 	local newest = s[#s];
 	local target = newest.d - days;
@@ -454,19 +485,96 @@ function Atr_Hist_Delta (name, days, now)
 	end
 
 	if (pick == nil) then
-		if ((newest.d - s[1].d) < ATR_HIST_MINSPAN) then return nil; end
+		if ((newest.d - s[1].d) < ATR_HIST_MINSPAN) then return keep (nil); end
 		pick = s[1];
 	end
 
-	if (pick.p == nil or pick.p <= 0) then return nil; end
+	if (pick.p == nil or pick.p <= 0) then return keep (nil); end
 
-	return {
+	return keep {
 		pct  = (newest.p - pick.p) / pick.p,
 		from = pick.p,
 		to   = newest.p,
 		span = newest.d - pick.d,		-- days actually compared, which may not be 7
 		age  = newest.age or 0,			-- how stale the NEWER end is
 	};
+end
+
+-- ONE PHRASING OF A MOVE, SHARED BY EVERY READER (item 31, stage 4).
+--
+-- The same figure now appears on the Analysis tab's Week column, on item
+-- tooltips, on the Sell tab's hover and inside two of the Analysis side
+-- tooltips.  Four sites rounding and clamping a percentage their own way is four
+-- chances for the addon to describe one number two ways, which is the thing
+-- FRAMEWORK.md warns about for prices and is no different here.
+--
+-- Clamped because the cell that shows it is 56px and because past a point the
+-- digits stop being the point: a 12s reagent that went to 40g is +33,000%, which
+-- is true and unreadable.
+function Atr_Hist_PctText (d)
+
+	if (d == nil or d.pct == nil) then return nil; end
+
+	local pct = d.pct * 100;
+
+	if (pct > 999)  then return ">999%", pct; end
+	if (pct < -99)  then return "-99%", pct; end
+	if (pct >= 0)   then return string.format ("+%d%%", math.floor (pct + 0.5)), pct; end
+
+	return string.format ("%d%%", math.ceil (pct - 0.5)), pct;
+end
+
+-- "+240% vs 7d ago", or nil when there is not enough history to say anything.
+-- The span is ALWAYS in the string: until a week has been recorded it is not a
+-- week, and a reader who is not told that will read it as one.
+function Atr_Hist_MoveText (name, now)
+
+	local d = Atr_Hist_Delta (name, nil, now);
+	local txt, pct = Atr_Hist_PctText (d);
+
+	if (txt == nil) then return nil; end
+
+	return string.format ("%s vs %dd ago", txt, d.span or 0), pct, d;
+end
+
+-- THE SELL TAB'S SENTENCE (item 31, stage 4).
+--
+-- Auctionator's whole sell flow is "undercut the current lowest", and the lowest
+-- listing is one seller's decision -- so the case worth a warning is not the
+-- market being dear, it is the market having FALLEN: undercutting a crash prices
+-- you into it. The other direction is said too, shorter, because it is
+-- reassurance rather than a decision.
+--
+-- Nothing at all under ATR_HIST_SAY: a few percent either way is the noise a
+-- daily close carries, and a tooltip that comments on it teaches you to ignore
+-- the line.  Nothing when the newer end is stale, because "the market has
+-- fallen" would then be a claim about a market nobody has looked at.
+local ATR_HIST_SAY   = 0.15;
+local ATR_HIST_FRESH = 3;
+
+function Atr_Hist_SellNote (name, now)
+
+	local d = Atr_Hist_Delta (name, nil, now);
+	if (d == nil or (d.age or 0) > ATR_HIST_FRESH) then return nil; end
+
+	local txt = Atr_Hist_PctText (d);
+	if (txt == nil) then return nil; end
+
+	-- The extra parentheses are load-bearing: gsub returns the string AND a
+	-- replacement count, and an unparenthesised call passes both, so the count
+	-- would land in %d and every sentence would read "on 1 days ago".
+	local bare = (txt:gsub ("^[%+%-]", ""));
+
+	if (d.pct <= -ATR_HIST_SAY) then
+		return string.format (HT("Down %s on %d days ago. The lowest listing may be a seller dumping rather than the market -- undercutting it prices you into that."),
+			bare, d.span or 0), 1, 0.5, 0.5;
+	end
+
+	if (d.pct >= ATR_HIST_SAY) then
+		return string.format (HT("Up %s on %d days ago."), bare, d.span or 0), 0.5, 0.9, 0.5;
+	end
+
+	return nil;
 end
 
 -- What the store holds, for the status line.

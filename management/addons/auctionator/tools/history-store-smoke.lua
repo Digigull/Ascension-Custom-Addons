@@ -289,6 +289,80 @@ gNow = day (6704); Atr_Hist_Note ("One Day Only", 500)
 eq (Atr_Hist_Delta ("One Day Only"), nil, "one reading is not a comparison")
 
 --------------------------------------------------------------------
+-- 15. THE CACHE (stage 4). Atr_Hist_Delta memoises per name per day because two
+--     of its callers are hot -- the Analysis view asks per row per redraw, and
+--     the sell tooltip is rebuilt every frame. A cache that does not drop on a
+--     write is a number frozen at yesterday's answer, which is exactly the sort
+--     of wrong that looks right.
+--------------------------------------------------------------------
+
+gNow = day (6800); Atr_Hist_Note ("Cached Ore", 1000)
+gNow = day (6807); Atr_Hist_Note ("Cached Ore", 2000)
+
+w = Atr_Hist_Delta ("Cached Ore")
+check (w and math.abs (w.pct - 1.0) < 0.0001, "a doubled price reads as +100%")
+
+-- a second write the same day must invalidate: same day, new close
+Atr_Hist_Note ("Cached Ore", 3000)
+w = Atr_Hist_Delta ("Cached Ore")
+check (w and math.abs (w.pct - 2.0) < 0.0001, "a re-close the same day drops the cached delta")
+
+-- and a new day's write, likewise
+gNow = day (6808); Atr_Hist_Note ("Cached Ore", 4000)
+w = Atr_Hist_Delta ("Cached Ore")
+eq (w and w.to, 4000, "a new day's write drops it too")
+
+--------------------------------------------------------------------
+-- 16. ONE PHRASING, SHARED. Four readers print this figure now; they all round
+--     and clamp through here so the addon cannot describe one number two ways.
+--------------------------------------------------------------------
+
+eq (Atr_Hist_PctText (nil), nil,                     "no reading, no text")
+eq (Atr_Hist_PctText ({ pct =  0.4118 }), "+41%",    "a rise rounds and signs")
+eq (Atr_Hist_PctText ({ pct = -0.4118 }), "-41%",    "a fall keeps its sign")
+eq (Atr_Hist_PctText ({ pct =  0 }),      "+0%",     "flat is a reading, not a blank")
+eq (Atr_Hist_PctText ({ pct = 330 }),     ">999%",   "an unreadable rise is clamped, not printed")
+eq (Atr_Hist_PctText ({ pct = -0.999 }),  "-99%",    "... and so is a total collapse")
+
+local mv = Atr_Hist_MoveText ("Cached Ore")
+check (mv and mv:find ("vs 8d ago", 1, true) ~= nil,
+	"the move text always carries the REAL span -- got " .. tostring (mv))
+
+--------------------------------------------------------------------
+-- 17. THE SELL SENTENCE. It fires on a fall (undercutting a crash is the
+--     mistake it exists to prevent), says less on a rise, and says nothing at
+--     all about noise or about a market nobody has looked at lately.
+--------------------------------------------------------------------
+
+gNow = day (6900); Atr_Hist_Note ("Crashing Ore", 10000)
+gNow = day (6907); Atr_Hist_Note ("Crashing Ore", 4000)
+
+local note = Atr_Hist_SellNote ("Crashing Ore")
+check (note ~= nil and note:find ("dumping", 1, true) ~= nil,
+	"a market down 60% warns about undercutting a dumper")
+check (note ~= nil and note:find ("60%% on 7 days ago", 1, false) ~= nil,
+	"... naming the move and the REAL span -- got " .. tostring (note))
+
+gNow = day (6910); Atr_Hist_Note ("Rising Ore", 1000)
+gNow = day (6917); Atr_Hist_Note ("Rising Ore", 3000)
+note = Atr_Hist_SellNote ("Rising Ore")
+check (note ~= nil and note:find ("Up", 1, true) ~= nil, "a rise is reported")
+check (note ~= nil and note:find ("dumping", 1, true) == nil, "... without the warning")
+check (note ~= nil and note:find ("on 7 days ago", 1, true) ~= nil,
+	"... and with the span intact (gsub returns two values; the count must not reach %d)")
+
+gNow = day (6920); Atr_Hist_Note ("Flat Ore", 1000)
+gNow = day (6927); Atr_Hist_Note ("Flat Ore", 1030)
+eq (Atr_Hist_SellNote ("Flat Ore"), nil, "3% either way is noise and gets no sentence")
+
+-- stale: the reading stands on the Analysis column but must not become advice
+gNow = day (6930)
+eq (Atr_Hist_SellNote ("Crashing Ore"), nil,
+	"a reading nobody has refreshed in days is not advice about today")
+
+eq (Atr_Hist_SellNote ("Never Heard Of It"), nil, "and an unrecorded item says nothing")
+
+--------------------------------------------------------------------
 
 print (string.format ("%d passed, %d failed", passed, failed))
 os.exit (failed == 0 and 0 or 1)

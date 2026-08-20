@@ -9,9 +9,10 @@ A heading marked **DONE** has shipped in full — item 12's three parts included
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
 **item 10** closed without any code, and **items 28 and 30** are new, with nothing built yet.
-**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 has shipped stages 1-3** on
-2026-08-21 — the store, the price-cascade rung and the Week column, which between them close
-**item 8's group C**; its write-up is `HISTORY-STORE.md`.
+**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 has shipped stages 1-4** on
+2026-08-21 — the store, the price-cascade rung, the Week column (which closes **item 8's group C**)
+and the readers; its write-up is `HISTORY-STORE.md`. Only stage 5, the retention condenser, is
+left, and it wants a month of real data first.
 Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
@@ -3500,7 +3501,7 @@ Supply counts units. Build those first and the cards are accurate on the day the
 
 ---
 
-## 31. A market price history, in a companion file, off by default — STAGES 1-3 BUILT
+## 31. A market price history, in a companion file, off by default — STAGES 1-4 BUILT
 
 **Asked (owner, 2026-08-21):** bring back the original addon's history SavedVariables *companion
 file*, make it a toggleable feature that populates from scan history, let the rest of the addon use
@@ -3687,6 +3688,48 @@ retention. One store, one shape.
 short-history fallback and its span, the three-day floor, the staleness age, and the cascade read.
 That off-by-one is the kind nothing in game would ever show you; the number would simply be wrong.
 
+### Stage 4 built, 2026-08-21 — the readers, minus two that had nothing to read from
+
+**Two of the four listed readers are not built, and could not be.** Item 30's ore card and item 28's
+demand signal are features of items that do not exist yet — there is no Advisor tab and no Call
+Board capture to hang a line on. Neither is blocked on the history any more, which is the point:
+when either gets built its figure is one call away. The other two shipped. Detail in
+`HISTORY-STORE.md` §13.
+
+- **The item tooltip** gains a fifth money line under Vendor / Auction / Auction median /
+  Disenchant: `Auction 7d ago   12s  +240%`. It carries the old **price** as well as the move,
+  because the other four lines are money and a bare percentage in that stack reads as a different
+  kind of thing — and it **does not compete for the best-price highlight**, which answers "what is
+  this worth to me", where a week-old figure is not an offer. Covers the Sell tab's item hover for
+  free, since that hover is `SetHyperlink` on the same tooltip.
+- **The Sell tab gains one sentence**, and the direction that matters is the one the flow makes
+  dangerous: Auctionator's sell flow is *undercut the current lowest*, so the case worth a warning
+  is not a dear market but a **fallen** one — undercutting a crash prices you into it. The rise is
+  reported too, shorter, because it is reassurance rather than a decision. Gated to the SELL tab
+  (the same hover serves BUY), to ±15% (a few percent is the noise a daily close carries, and a
+  tooltip that comments on noise teaches you to ignore it), and to a fresh reading.
+- **The Crafting and Reagents side tooltips** gain a line each, answering the same question from
+  opposite ends: a recipe that pays today because its product spiked is a different proposition from
+  one that pays every week, and a reagent that is dear *today* is the difference between a bad
+  recipe and a bad week. Neither could be a column — the Reagents view has no width for a ninth, and
+  it was never a table's job to say it.
+- **Four surfaces print this figure now, so one function phrases it.** `Atr_Hist_PctText` rounds and
+  clamps, `Atr_Hist_MoveText` adds the span, and the Analysis column was rewritten to go through
+  them rather than keep its own copy.
+- **`Atr_Hist_Delta` now memoises per name per day**, because `Atr_ShowRecTooltip` is re-run **every
+  frame** while the sell tooltip is up and a decode allocates a table per sample. The entry drops
+  when that name is written and the stored day makes a day roll drop it by itself.
+
+**One bug, caught by re-reading rather than by running.** The sell sentence used
+`txt:gsub("^%-", "")` inline as a `string.format` argument. **`gsub` returns two values** — the
+string and a replacement count — so the count landed in the `%d` and every sentence would have read
+*"on 1 days ago"*. The assertion that was there passed happily without noticing; there is now one
+that checks the span survives.
+
+**Tested:** 84 assertions, up from 66 — the cache dropping on a same-day re-close and on a new day,
+the shared formatter in both directions and at both clamps, the span surviving into the sentence,
+and each of the sell note's four gates.
+
 **What it unblocks.** Item 8 group C (the week-over-week `+240%` column — this *is* that item's
 missing input), item 28's weekly demand signal, item 30's "ore is up, go mine" card, an age-aware
 tooltip line, and a Sell tab that can say you are undercutting a rising market. Eventually it makes
@@ -3698,7 +3741,7 @@ the history has proven itself on a real account, and not part of this one.**
 ## Suggested order
 
 Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28 and 30 are unstarted**, **item 29 is done in full** and **item 31 has shipped stages 1-3
+(2026-08-19). **Items 28 and 30 are unstarted**, **item 29 is done in full** and **item 31 has shipped stages 1-4
 of five** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
@@ -3719,12 +3762,14 @@ short of a readout. In order:
    else on this list measures effects; this is the only candidate cause, so it is worth knowing
    before more effort goes into inferring what it would simply state. If it reads, it outranks C
    outright — a leading indicator beats a lagging one built from a series that does not exist yet.
-3. ~~**Item 31's stages 1-3**~~ — **BUILT 2026-08-21**: the store and its toggle, the price-cascade
-   rung, and the Week column that closes item 8's group C. **What is left is elapsed time** — the
-   Week column reads blank until a few days of history exist, which is the one ingredient nobody
-   can write. Play with it on, then take a second `/cpp load` and compare against the 96.2 ms /
-   1052 KB baseline; the companion should appear as a line of its own, which is the per-addon
-   attribution the separate file was for.
+3. ~~**Item 31's stages 1-4**~~ — **BUILT 2026-08-21**: the store and its toggle, the price-cascade
+   rung, the Week column that closes item 8's group C, and the four readers that could be built
+   (two of them wait on items 28 and 30 existing). **What is left is elapsed time** — every one of
+   those readings is blank until a few days of history exist, which is the one ingredient nobody can
+   write. Play with it on, then take a second `/cpp load` and compare against the 96.2 ms / 1052 KB
+   baseline; the companion should appear as a line of its own, which is the per-addon attribution
+   the separate file was for. **Stage 5** (the condenser, and then whether
+   `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its 5267 rows) wants a month of data behind it.
 4. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
    five or six cards in plain sentences over figures four existing functions already return. No
    new capture and no new saved variable — it is a renderer, and its whole discipline is that it
