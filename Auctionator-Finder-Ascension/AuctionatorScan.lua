@@ -810,6 +810,18 @@ function AtrSearch:Finish()
 					Atr_MeanAppend (gAtr_MeanDB, scn.itemName, medsample);		-- item 13: one-sample shape
 				end
 
+				-- WHEN A SEARCH LAST WROTE A PRICE (BACKLOG item 4).  Not
+				-- AUCTIONATOR_LAST_SCAN_TIME, which this path does not touch and must
+				-- not: that one is set only when a FULL SCAN finishes
+				-- (AuctionatorScan.lua's Atr_FullScan report, and the Finder's feed) and
+				-- it gates the 15-minute full-scan cooldown.  Writing it here would
+				-- reset that cooldown on every Buy search.
+				--
+				-- A plain global, not a saved variable: it exists so /atrprices can say
+				-- whether THIS SESSION's searches are feeding the database, and a value
+				-- carried over from last week answers a question nobody asked.
+				gAtr_LastPriceWrite = (type (time) == "function") and time() or 0;
+
 				-- The dated series takes its OWN sample off the same listings
 				-- (BACKLOG item 31): it drops your own auctions and rejects the
 				-- junk end of the book, neither of which the mean database does.
