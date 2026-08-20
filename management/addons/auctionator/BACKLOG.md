@@ -8,7 +8,7 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 28 and 30** are new, with nothing built yet.
+**item 10** closed without any code, and **items 28, 30 and 32** are new, with nothing built yet.
 **Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 shipped in full** on 2026-08-21 —
 the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
 and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
@@ -3810,6 +3810,12 @@ version, where the cascade fell through to your own **posting** history.
    the median drops them outright. An always-thin item gets no "typical price" at all, which is the
    honest answer. The suffix costs 2-3 bytes on the minority of days that carry one.
 
+**One assumption in here is not verified:** that `UnitName("player")` matches the scan's `owner`
+field. If this server decorates owner names at all, the filter silently does not match, your own
+listings stay in the sample, and nothing reports it. The check is one deliberate experiment — list
+something at a distinctive price on a thin item, scan it, and see whether that price becomes the
+day's close.
+
 **Deliberately left alone:** the mean database still gets the *uncleaned* sample. Changing it would
 be a behaviour change to a shipped number for the sake of a store that is being superseded anyway —
 and it is one more reason for the deletion `/atrhistory audit` exists to justify.
@@ -3827,11 +3833,46 @@ the history has proven itself on a real account, and not part of this one.**
 
 ---
 
+## 32. NEW — retire the mean price database, once the history covers it
+
+**Promised by item 31 stage 5 and given a home here**, because a follow-on living only inside
+another item's prose is a follow-on that gets lost. `/atrhistory audit` was built to decide it and
+is the only input this item needs.
+
+**The case.** `AUCTIONATOR_MEAN_PRICE_DATABASE` exists to answer "what is this normally worth" and
+cannot: `Atr_MeanAppend` sorts by PRICE and evicts at `math.random`, so temporal order was never
+written; nothing carries a date, so a three-month-old sample counts as much as this morning's; and
+it **averages 1.97 samples per name with 64% holding exactly one** (item 12 part 3b). Item 31's
+series answers the same question with dated daily closes, honest age-based retention, your own
+listings excluded and the junk end of the book rejected.
+
+**The prize** is 5267 rows out of the main saved-variables file — the one whose corruption takes the
+ledger and the vendor learning with it — plus the deletion of `Atr_MeanAppend`, `Atr_MeanMedian`,
+`Atr_MeanCount`, four append sites and a tooltip fallback. Item 12 part 3b's "deliberately not
+variant-aware" decision becomes moot with it.
+
+**THE DEPENDENCY, and it is the whole reason this is not simply a deletion.** The history is
+**opt-in and off by default**. Delete the mean database today and a default install has no median
+line at all — the tooltip would lose a figure rather than gain a better one. So this item is
+**coupled to making the history core**, which is the direction the owner already flagged
+(`HISTORY-STORE.md` §10): *"if this works out, we may make it core instead of toggleable."* The
+order is fixed: measure with `/atrhistory audit` → make the history core → then delete. The other
+way round removes a number and gives nothing back.
+
+**What the audit has to show first.** That the two agree where both can answer — if they mostly
+agree, the old store is redundant rather than wrong, which is the safe case for deleting it. Wide
+disagreement means one of them is wrong, and that has to be understood rather than deleted past.
+
+**Should not start** until the history has a month of real data behind it.
+
+---
+
 ## Suggested order
 
 Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28 and 30 are unstarted** and **items 29 and 31 are done in full** — items 28-30 added
-2026-08-20, item 31 on 2026-08-21 and built the same day. What is otherwise left is
+(2026-08-19). **Items 28, 30 and 32 are unstarted** and **items 29 and 31 are done in full** — items 28-30 added
+2026-08-20, item 31 on 2026-08-21 and built the same day, and item 32 recorded the same day as the
+follow-on item 31 promised. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
@@ -3875,19 +3916,23 @@ short of a readout. In order:
    `{ t, low }` on each watched item's existing `obs` record, not a retrofit of the mean database,
    which sorts by price and evicts at random. The item carries the owner's worked example, the
    storage limits of keeping history for everything, and why the obvious shortcut fails.
-7. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+7. **Item 32 — retire the mean price database.** Not startable yet, and parked behind two things:
+   a month of real history on the owner's account, and the decision to make that history **core**
+   rather than opt-in. Deleting it while the history is off by default would take a number off the
+   tooltip and give nothing back. `/atrhistory audit` is the input.
+8. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
-8. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+9. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
    all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
    data has never been seen.
-9. **Item 12's sizing question** — how many names on this server carry more than one variant.
+10. **Item 12's sizing question** — how many names on this server carry more than one variant.
    Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
    only whether extending part 3 is worth it, not what shape it would take.
-10. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+11. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
    purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
    comparison against a real mismatched pair, never an imagined one.
-11. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+12. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
    price. The craft cost reproduces exactly from real data, so this is an auction-house question
    rather than an addon one, and there may be no work here at all.
 
