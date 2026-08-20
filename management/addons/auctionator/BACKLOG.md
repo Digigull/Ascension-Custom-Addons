@@ -2403,6 +2403,38 @@ exactly on the delete lane, and at 600 they fall back to their minimums rather t
 **Not verified in game** — the widths are now measured rather than assumed, which is the point,
 but nothing here has been seen on screen.
 
+### Follow-up, same day, from a screenshot of the result
+
+The above shipped and the tab was **screenshotted in game**, which settled two things the reasoning
+had not.
+
+**Gold/day still wrapped onto two lines.** Not a width problem — a *content* problem.
+`zc.priceToMoneyString` always ends on copper and pads every coin with two trailing spaces, and
+Gold/day can print a **range**, so `279g 10s 31c-310g 28s 78c` ran past twenty glyphs. Analysis now
+has its own `An_Money`: gold and silver, single-spaced, no trailing pad (which on a right-aligned
+cell had been holding the number off its own right edge). Under a gold it prints silver; under a
+silver it prints copper, because dropping it *there* would leave the cell blank rather than coarse.
+The rest of the addon keeps `zc.priceToMoneyString` — this is a table of estimates, not a receipt.
+
+**A FauxScrollFrame's bar hangs OUTSIDE the scroll frame.** It is anchored to the frame's
+`TOPRIGHT` at x=+6, so the lane it needs comes off the *panel*, not off the rows. Reserving it
+inside as well — rows were `scrollW - 30` — spent it twice, which is why a band of backdrop
+survived to the right of the delete buttons in the screenshot. Rows are now the full scroll width,
+`AN_SB_LANE` (26) is reserved beyond it and 4 more keeps the bar off the backdrop's edge. Worth
+~12px, no more: what is left at the right edge **is** the bar's lane, and it has to stay reserved
+or the bar lands on the delete buttons the moment the watchlist passes 14 rows. The Ledger reserves
+the same lane twice and is untouched.
+
+Column budget retuned with the space that freed: Sold/day 68→80 minimum and grow 1→2, Gold/day
+88→96 and 2→4, Low's grow 2→1. The two that can print a range are the greedy ones; Low never can.
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each), and by loading the real `An_Money` and
+`An_LayoutCols` straight out of the file under bare lua5.1 — `An_Money` against the exact values in
+the screenshot (`984g 49s`, `279g 10s`, `37s`, `6g 80s`, and 45 copper still printing as `45c`),
+and the layout at 768/830/1024 to confirm the columns end exactly on the delete lane and the bar's
+lane clears the last one. Gold/day at a ~830px window is 128px against a ~118px worst-case range.
+**Not verified in game.**
+
 ---
 
 ## Suggested order

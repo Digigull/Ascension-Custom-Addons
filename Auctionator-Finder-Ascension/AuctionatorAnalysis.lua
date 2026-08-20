@@ -383,21 +383,26 @@ local AN_ROW_W    = 660;		-- a placeholder: Atr_An_Init recomputes it from the r
 -- third of the tab sat empty while the two money columns were squeezed hard
 -- enough to wrap onto two lines.  Nothing here may assume a window width.
 --
+-- Sold/day and Gold/day are the greedy ones because they are the two that can
+-- print a RANGE -- "279g 10s-310g 28s" is twice the width of the value beside
+-- it, and a cell that overflows wraps onto a second line rather than clipping.
+--
 -- A header is the same cx shifted by the scroll frame's own inset (AN_HEAD_X0).
 local AN_HEAD_X0  = 14;
 local AN_LEAD     = 6;		-- gap before the first column
 local AN_COL_GAP  = 4;		-- gap between columns
-local AN_DEL_LANE = 30;		-- the delete button's own lane at the end of a row
+local AN_DEL_LANE = 26;		-- the delete button's own lane at the end of a row
+local AN_SB_LANE  = 26;		-- what the scroll bar needs to the RIGHT of the scroll frame
 
 local AN_COLS = {
 	{ key = "item",		head = "Item",		w = 184, grow = 3					},
 	{ key = "grp",		head = "Group",		w = 74,  grow = 1					},
 	{ key = "sellers",	head = "Sellers",	w = 48,  grow = 0, just = "CENTER"	},
 	{ key = "listings",	head = "Listings",	w = 54,  grow = 0, just = "CENTER"	},
-	{ key = "rate",		head = "Sold/day",	w = 68,  grow = 1, just = "CENTER",
+	{ key = "rate",		head = "Sold/day",	w = 80,  grow = 2, just = "CENTER",
 	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count." },
-	{ key = "low",		head = "Low",		w = 84,  grow = 2, just = "RIGHT"	},
-	{ key = "farm",		head = "Gold/day",	w = 88,  grow = 2, just = "RIGHT",
+	{ key = "low",		head = "Low",		w = 84,  grow = 1, just = "RIGHT"	},
+	{ key = "farm",		head = "Gold/day",	w = 96,  grow = 4, just = "RIGHT",
 	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise." },
 };
 
@@ -435,10 +440,31 @@ end
 
 local gAn_Group = nil;		-- nil = every group
 
+local AN_GOLD   = "|TInterface\\MoneyFrame\\UI-GoldIcon:12:12:4:0|t";
+local AN_SILVER = "|TInterface\\MoneyFrame\\UI-SilverIcon:12:12:4:0|t";
+local AN_COPPER = "|TInterface\\MoneyFrame\\UI-CopperIcon:12:12:4:0|t";
+
+-- Gold and silver only.
+--
+-- This was zc.priceToMoneyString, which always ends on copper and pads every
+-- coin with two trailing spaces.  A Gold/day RANGE is two of those joined by a
+-- dash, so it ran past twenty glyphs and wrapped onto a second line -- and the
+-- trailing pad on a right-aligned cell held the number off its own right edge.
+-- Copper is not a digit anyone trades on at these prices, so it goes, and the
+-- spacing is single.
+--
+-- Under a gold, silver is all that is shown; under a silver, copper is, since
+-- dropping it there would leave the cell blank rather than merely coarse.
 local function An_Money (c)
+
 	if (c == nil or c == 0) then return "|cff666666--|r"; end
-	if (zc and zc.priceToMoneyString) then return zc.priceToMoneyString (c); end
-	return tostring (c);
+	if (zc == nil or zc.val2gsc == nil) then return tostring (c); end
+
+	local g, s, cp = zc.val2gsc (c);
+
+	if (g ~= 0) then return string.format ("%d%s %02d%s", g, AN_GOLD, s, AN_SILVER); end
+	if (s ~= 0) then return string.format ("%d%s", s, AN_SILVER); end
+	return string.format ("%d%s", cp, AN_COPPER);
 end
 
 -- Watched items in the current group, best farm score first.  Items never
@@ -1217,10 +1243,14 @@ function Atr_An_Init ()
 	panel:SetPoint ("TOPLEFT", 10, 0);
 	panel:Hide();
 
-	-- Row and scroll widths follow from that: the scroll frame keeps a small right
-	-- margin, and a row stops short of the scroll bar by AN_DEL_LANE.
-	local scrollW = panelW - AN_HEAD_X0 - 8;
-	AN_ROW_W = scrollW - 30;
+	-- Row and scroll widths follow from that.  A FauxScrollFrame's bar is anchored
+	-- to the scroll frame's TOPRIGHT and hangs OUTSIDE it, so the lane it needs
+	-- comes off the panel, not off the rows -- reserving it inside as well (rows
+	-- were scrollW - 30) spent it twice and left the table short of the right edge
+	-- by that much again.  Rows are the full scroll width; the bar gets AN_SB_LANE
+	-- beyond it, and 4 more keeps it off the backdrop's edge.
+	local scrollW = panelW - AN_HEAD_X0 - AN_SB_LANE - 4;
+	AN_ROW_W = scrollW;
 	An_LayoutCols (AN_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
