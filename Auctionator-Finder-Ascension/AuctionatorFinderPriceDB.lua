@@ -251,12 +251,33 @@ function Fdr_PriceDB_Report ()
 
 	say (string.format ("  price DB: |cffffffff%d|r names, mean DB: |cffffffff%d|r names", names, mean));
 
-	local t = tonumber (AUCTIONATOR_LAST_SCAN_TIME or 0) or 0;
-	if (t > 0 and time) then
+	-- TWO CLOCKS, AND THEY ANSWER DIFFERENT QUESTIONS (BACKLOG item 4).
+	--
+	-- This line used to read "last write" off AUCTIONATOR_LAST_SCAN_TIME alone,
+	-- which was wrong in the way that costs somebody an evening: that timestamp
+	-- is set ONLY when a full scan finishes, or by the Finder's own feed. The
+	-- ordinary per-item write -- every Buy and Sell search, through
+	-- AtrSearch:ProcessBatch -> Atr_PriceStore -- never touches it. So a report
+	-- saying "last write: 126 minutes ago" after an evening of searching was
+	-- describing the last FULL SCAN and reading as "nothing has been written",
+	-- which is exactly the impression item 4 was opened to chase.
+	local function ago (t)
+		t = tonumber (t or 0) or 0;
+		if (t <= 0 or not time) then return nil; end
 		local mins = math.floor ((time() - t) / 60);
-		say (string.format ("  last write: |cffffffff%d|r minute%s ago", mins, (mins == 1) and "" or "s"));
+		return string.format ("|cffffffff%d|r minute%s ago", mins, (mins == 1) and "" or "s");
+	end
+
+	local full = ago (AUCTIONATOR_LAST_SCAN_TIME);
+	say ("  last full scan: "..(full or "|cff888888never|r"));
+
+	local one = ago (gAtr_LastPriceWrite);
+	if (one) then
+		say ("  last search wrote: "..one);
 	else
-		say ("  last write: |cff888888never|r");
+		-- Session-only, so "not yet" is the honest word: it does not mean no
+		-- search has ever written, only that none has since this login.
+		say ("  last search wrote: |cff888888not yet this session|r");
 	end
 
 	say (string.format ("  quality floor: |cffffffff%d|r  (Auctionator options; rows below it are ignored)",

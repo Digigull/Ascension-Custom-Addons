@@ -13,9 +13,8 @@ are layout and wiring. Item 4 is the only one that may be a bug rather than a re
 written up as a diagnosis rather than a fix, because the write path it doubts turns out to exist.
 
 **Built 2026-08-21: items 1, 2, 3, 5, 6 and 7**, in three branches; **item 6 reopened and finished
-2026-08-22** after the first in-game session, which is written up under it. **Item 4 needs a reading
-from the owner** rather than code — one bare `/atrprices` says whether the Buy tab's feed is
-switched off or arriving empty. **Item 8 is new, 2026-08-22, nothing built.**
+2026-08-22** after the first in-game session, which is written up under it. **Item 4 was answered 2026-08-22** and its premise was wrong:
+the feed works, the report's clock was mislabelled. **Item 8 is new, 2026-08-22, nothing built.**
 
 ---
 
@@ -249,7 +248,7 @@ the popup's wording at width, and whether (-16, -46) sits where the owner means 
 
 ---
 
-## 4. Do Buy-tab searches update the price database and the tooltip?
+## 4. Do Buy-tab searches update the price database and the tooltip? — ANSWERED: yes; the report was lying
 
 **Asked (owner, 2026-08-21):** *"I don't think that Buy tab searches are updating the price data in
 the database or tooltip, it should."*
@@ -302,6 +301,56 @@ the write landed under a key the reader is not looking at.
 **It prints to chat**, which this repo's own rule says a diagnostic should not do — but it is six
 short lines rather than forty numbers, so a screenshot carries it. If the answer turns out to need
 paging through more than that, it wants a copy box first.
+
+### Answered 2026-08-22, from the owner's two readings
+
+```
+Finder price feed: ON
+  price DB: 5977 names, mean DB: 5977 names
+  last write: 126 minutes ago
+  quality floor: 2
+
+Price DB inspect: Moss Agate
+  auction (gAtr_ScanDB): 1g 70s
+  median samples (gAtr_MeanDB): 4/15
+    86s 50c, 86s 50c, 1g 04s, 3g 94s
+  tooltip shows -> auction 1g 70s   median 95s 25c
+```
+
+**Buy-tab searches DO write the price database, and always did.** The write is
+`AuctionatorScan.lua:775-811`, in `AtrSearch`'s finish path: `Atr_PriceStore (gAtr_ScanDB,
+scn.itemName, newprice, vkey)`, then a mean sample, then the dated history sample. Every Buy and
+Sell search runs it. The item's premise was wrong.
+
+**What was actually broken is the instrument, and it is why the impression formed.** The report's
+`last write` line read `AUCTIONATOR_LAST_SCAN_TIME` — set **only** when a full scan finishes
+(`AuctionatorScan.lua:1566`) or by the Finder's own feed (`AuctionatorFinderPriceDB.lua:209`). The
+per-item path never touches it, and **must not**: that timestamp gates the 15-minute full-scan
+cooldown, so writing it on every Buy search would reset the cooldown each time. So "last write: 126
+minutes ago" after an evening of searching was reporting the last *full scan* under a label that
+reads as *the database*.
+
+**Fixed by splitting the one clock in two**: `last full scan` keeps the saved timestamp, and `last
+search wrote` reads a new session-only global `gAtr_LastPriceWrite`, set in the per-item write path.
+Session-only on purpose — the question is "are my searches feeding it *now*", so an unwritten one
+says "not yet this session" rather than "never".
+
+**The other two numbers are both healthy, for the record.** `5977 names` in each database is the
+expected shape, not a coincidence: the same block appends a mean sample whenever it stores a price,
+which the comment at `:790` says was fixed for exactly this reason. And Moss Agate's auction price
+(1g 70s) legitimately differs from all four of its median samples — they are different statistics
+off the same listings, `Atr_CalcNewDBprice` against `Atr_ScanListingsMedian`: one the low-price
+estimate, the other the quantity-weighted median of the whole book.
+
+**What is left of this item is the tooltip half, and it is now cheap to test.** `/atrprices` before
+and after a Buy search: `last search wrote` moving to 0 proves the write. If a tooltip is still
+stale after that, the fault is in the read path rather than the feed — a different bug with a
+different fix, and worth its own item rather than living on under this one.
+
+**One thing worth deciding:** the quality floor is 2, applied as `itemQuality + 1 >= floor`, so
+**grey (quality 0) items are never priced**. Almost certainly wanted; recorded because it is the one
+silent exclusion in this path and would otherwise look like the same bug next time somebody looks up
+a grey item.
 
 ---
 
