@@ -180,6 +180,64 @@ function Atr_An_AddGroup (name)
 	return true;
 end
 
+-- DELETE A GROUP (owner, 2026-08-20: "I don't have a way to delete watch
+-- groups").
+--
+-- A GROUP IS A LABEL, AND DELETING A LABEL MUST NOT DELETE WHAT IT LABELS.
+-- Every item filed under the group stays watched and simply loses its group,
+-- which is the one choice here that cannot lose data the user would miss:
+-- watched items carry observation history (db.obs) that scanning rebuilt over
+-- days, and taking a dozen of them out with one click on a red x is not
+-- recoverable by any amount of rescanning.  The confirmation says how many items
+-- are about to be unfiled, so "delete" never quietly means more than it looks.
+--
+-- Returns nil when there is no such group, so a caller can tell "nothing to do"
+-- from "removed, and it was empty"; otherwise the number of items unfiled.
+function Atr_An_DeleteGroup (name)
+
+	if (type (name) ~= "string" or name == "") then return nil; end
+
+	local db = Atr_An_DB ();
+
+	local at, i;
+	for i = 1, #db.groups do
+		if (db.groups[i] == name) then at = i; break; end
+	end
+
+	if (at == nil) then return nil; end
+
+	tremove (db.groups, at);
+
+	local freed = 0;
+	local nm, w;
+	for nm, w in pairs (db.watch) do
+		if (type (w) == "table" and w.group == name) then
+			w.group = nil;
+			freed = freed + 1;
+		end
+	end
+
+	return freed;
+end
+
+-- How many watched items are filed under a group.  Its only job is to fill in
+-- the confirmation before anything is deleted, which is the whole reason the
+-- count is computed separately from the deletion that returns it.
+function Atr_An_GroupCount (name)
+
+	if (type (name) ~= "string" or name == "") then return 0; end
+
+	local db = Atr_An_DB ();
+	local n  = 0;
+	local nm, w;
+
+	for nm, w in pairs (db.watch) do
+		if (type (w) == "table" and w.group == name) then n = n + 1; end
+	end
+
+	return n;
+end
+
 -- WHAT THE CLIENT NEEDS TO DRAW A TOOLTIP, AND WHY IT SO OFTEN HAS NEITHER --
 --
 -- A tooltip needs an item ID. This tab's three views mostly have a NAME: the
@@ -2860,6 +2918,69 @@ local function An_GroupDD_Init ()
 		UIDropDownMenu_AddButton (info);
 	end
 end
+
+-- WHAT IS ON THE GROUP MENU.  Pure: it reads the database and returns a list,
+-- and every click it wires is a closure over that -- so the shape of the menu
+-- (what rows, in what order, which of them can be deleted) is checkable without
+-- a client, which is the same bargain Atr_An_MenuEntries struck.
+--
+-- "All groups" carries no x on purpose: it is not a group, it is the absence of
+-- a filter, and there is nothing there to delete.
+-- DECLARED HERE, above its only writer, and that placement is the whole point.
+-- Written below Atr_An_GroupMenuEntries it would be a different variable: the
+-- entries builder would assign a GLOBAL of this name while the confirmation
+-- popup, defined after the local, read the local -- so every delete would
+-- confirm and then quietly do nothing.
+local gAn_PendingGroup = nil;	-- the group whose x was clicked, across the popup
+
+local function An_SelectGroup (g)
+
+	gAn_Group = g;
+
+	if (Atr_An_GroupDD and UIDropDownMenu_SetText) then
+		UIDropDownMenu_SetText (Atr_An_GroupDD, g or AZT("All groups"));
+	end
+
+	Atr_An_Redisplay ();
+end
+
+function Atr_An_GroupMenuEntries ()
+
+	local db  = Atr_An_DB ();
+	local out = {};
+
+	tinsert (out, { text = AZT("All groups"), func = function () An_SelectGroup (nil); end });
+
+	local i;
+	for i = 1, #db.groups do
+
+		local g = db.groups[i];
+
+		-- The one on screen is marked, because this menu is now the only place
+		-- that shows the whole list and "which am I looking at" was previously
+		-- answered by the dropdown's own check mark.
+		local label = g;
+		if (gAn_Group == g) then label = "|cffffd100"..g.."|r"; end
+
+		tinsert (out, {
+			text	= label,
+			func	= function () An_SelectGroup (g); end,
+			xfunc	= function ()
+				gAn_PendingGroup = g;
+				-- the name and the count go INTO the question -- see the dialog
+				if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_DEL_GROUP", g, Atr_An_GroupCount (g)); end
+			end,
+			xtip		= string.format (AZT("Delete the group \"%s\""), g),
+			xtipBody	= AZT("Deletes the group only. Anything filed under it stays watched and simply loses its label -- your scan history for those items is not touched. You will be asked to confirm."),
+		});
+	end
+
+	if (#db.groups == 0) then
+		tinsert (out, { text = AZT("no groups yet"), disabled = true });
+	end
+
+	return out;
+end
 -- ADDING FROM ELSEWHERE ---------------------------------------------------
 --
 -- BACKLOG item 18.  The watchlist was only reachable from this tab -- an edit box
@@ -3250,22 +3371,74 @@ local function An_MenuRow (f, i)
 		if (fn) then fn(); end
 	end);
 
+	-- THE DELETE X (owner, 2026-08-20), a CHILD of the row rather than a sibling.
+	--
+	-- Being a child is what makes it win the click: the row underneath it is a
+	-- Button covering the full width, and two overlapping frames at the same
+	-- level would hand the click to whichever the layout engine happened to put
+	-- on top.  A child is unambiguously in front of its parent, so the x deletes
+	-- and never selects.
+	--
+	-- Created for every row and shown only where the entry asks for one -- rows
+	-- are recycled between the item menu and the group menu, so one that grew an
+	-- x once must be able to lose it again.
+	local x = CreateFrame ("Button", nil, r);
+	x:SetSize (AN_MENU_ROW_H - 2, AN_MENU_ROW_H - 2);
+	x:SetPoint ("RIGHT", r, "RIGHT", -2, 0);
+	x:Hide();
+
+	x.text = x:CreateFontString (nil, "OVERLAY", "GameFontNormalSmall");
+	x.text:SetPoint ("CENTER");
+	x.text:SetText ("x");
+	x.text:SetTextColor (1, 0.25, 0.25);
+
+	x:SetScript ("OnEnter", function (self)
+		self.text:SetTextColor (1, 0.55, 0.55);
+		if (GameTooltip and self.tip) then
+			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+			GameTooltip:SetText (self.tip, 1, 1, 1);
+			if (self.tipBody) then GameTooltip:AddLine (self.tipBody, 0.8, 0.8, 0.8, true); end
+			GameTooltip:Show();
+		end
+	end);
+	x:SetScript ("OnLeave", function (self)
+		self.text:SetTextColor (1, 0.25, 0.25);
+		if (GameTooltip) then GameTooltip:Hide(); end
+	end);
+	x:SetScript ("OnClick", function (self)
+		local fn = self.func;
+		Atr_An_HideItemMenu ();
+		if (fn) then fn(); end
+	end);
+
+	r.x = x;
+
 	f.rows[i] = r;
 	return r;
 end
 
--- `anchor` is the frame the menu hangs off -- the button or row that was clicked.
-function Atr_An_ShowItemMenu (anchor, itemName, mode)
+-- THE SHARED SHOW (generalised so the group menu can use it too).
+--
+-- `anchor` is the frame the menu hangs off -- the button or row that was
+-- clicked.  `entries` is the pure list; every decision about WHAT is on the menu
+-- is made by a function that returns one of these and can be checked offline,
+-- which is the property the item menu was built for and the group menu inherits.
+-- `xoff` nudges the menu sideways from the anchor's left edge.  It exists for
+-- one caller: a UIDropDownMenuTemplate frame is 50px wider than the box you can
+-- see (25 of dead art each side, as the layout note at the dropdown says), so
+-- anchoring to the frame hangs the menu left of the control it belongs to.
+-- Cosmetic, and nothing else passes it.
+function Atr_An_ShowMenu (anchor, title, entries, xoff)
 
-	local entries = Atr_An_MenuEntries (itemName, mode);
-	if (#entries == 0) then return false; end
+	if (entries == nil or #entries == 0) then return false; end
 
 	local f = An_EnsureMenu ();
 	if (f == nil) then return false; end
 
-	f.title:SetText ("|cffffd100"..tostring (itemName).."|r");
+	f.title:SetText ("|cffffd100"..tostring (title).."|r");
 
 	local widest = f.title:GetStringWidth() or 0;
+	local anyX   = false;
 
 	local i;
 	for i = 1, #entries do
@@ -3287,6 +3460,17 @@ function Atr_An_ShowItemMenu (anchor, itemName, mode)
 			r.func = e.func;
 		end
 
+		if (e.xfunc) then
+			r.x.func    = e.xfunc;
+			r.x.tip     = e.xtip;
+			r.x.tipBody = e.xtipBody;
+			r.x:Show();
+			anyX = true;
+		else
+			r.x.func = nil;
+			r.x:Hide();
+		end
+
 		local w = r.text:GetStringWidth() or 0;
 		if (w > widest) then widest = w; end
 
@@ -3297,6 +3481,10 @@ function Atr_An_ShowItemMenu (anchor, itemName, mode)
 		f.rows[i]:Hide();
 	end
 
+	-- Room for the x column when any row has one, or the longest group name ends
+	-- up underneath its own delete button.
+	if (anyX) then widest = widest + AN_MENU_ROW_H + 6; end
+
 	f:SetWidth (math.max (130, widest + AN_MENU_PAD * 2 + 10));
 	f:SetHeight (AN_MENU_TOP + #entries * AN_MENU_ROW_H + 8);
 
@@ -3306,18 +3494,45 @@ function Atr_An_ShowItemMenu (anchor, itemName, mode)
 
 	local bottom = anchor and anchor.GetBottom and anchor:GetBottom();
 
+	xoff = xoff or 0;
+
 	if (anchor == nil) then
 		f:SetPoint ("CENTER");
 	elseif (bottom and bottom < f:GetHeight() + 20) then
-		f:SetPoint ("BOTTOMLEFT", anchor, "TOPLEFT", 0, 2);
+		f:SetPoint ("BOTTOMLEFT", anchor, "TOPLEFT", xoff, 2);
 	else
-		f:SetPoint ("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2);
+		f:SetPoint ("TOPLEFT", anchor, "BOTTOMLEFT", xoff, -2);
 	end
 
 	gAnMenuEater:Show();
 	f:Show();
 
 	return true;
+end
+
+function Atr_An_ShowItemMenu (anchor, itemName, mode)
+
+	local entries = Atr_An_MenuEntries (itemName, mode);
+	if (#entries == 0) then return false; end
+
+	return Atr_An_ShowMenu (anchor, itemName, entries);
+end
+
+-- THE GROUP MENU (owner, 2026-08-20: "I don't have a way to delete watch
+-- groups... maybe we can add some small red x buttons into the drop down with
+-- confirmation").
+--
+-- WHY THIS REPLACES THE BLIZZARD DROPDOWN'S LIST RATHER THAN ADDING TO IT.
+-- UIDropDownMenu has no per-entry widget in 3.3.5 -- its rows are the shared
+-- globals DropDownList1Button1..N, recycled by every dropdown in the interface,
+-- so an x parented to one of them would turn up on somebody else's menu. This
+-- file already met that class of problem once (see the note above
+-- Atr_An_MenuEntries: two attempts, "it opened nothing either time") and already
+-- carries the answer -- a plain frame it owns outright. So the dropdown BOX
+-- stays exactly as it looks and reads, and only the list it opens is ours.
+function Atr_An_ShowGroupMenu (anchor)
+
+	return Atr_An_ShowMenu (anchor, AZT("Analysis groups"), Atr_An_GroupMenuEntries (), 15);
 end
 
 if (StaticPopupDialogs) then
@@ -3356,6 +3571,41 @@ if (StaticPopupDialogs) then
 		end,
 		OnShow			= function (self) self.editBox:SetText(""); self.editBox:SetFocus(); end,
 		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
+	};
+
+	-- DELETING A GROUP.  The count is in the question, not just in the tooltip:
+	-- "Delete Ore?" and "Delete Ore? 14 items are filed under it" are different
+	-- decisions, and only one of them is being asked.  %d is filled by
+	-- StaticPopup_Show's first argument at the call site.
+	StaticPopupDialogs["ATR_AN_DEL_GROUP"] = {
+		text			= AZT("Delete the group \"%s\"?\n\n%d watched items are filed under it. They stay watched and lose the label; nothing else about them changes."),
+		button1			= YES,
+		button2			= NO,
+		OnAccept		= function ()
+
+			local g = gAn_PendingGroup;
+			gAn_PendingGroup = nil;
+			if (g == nil) then return; end
+
+			local freed = Atr_An_DeleteGroup (g);
+			if (freed == nil) then return; end
+
+			-- Looking at the group that just went is the one state this must not
+			-- leave behind: the list would filter on a label nothing carries and
+			-- read as an empty watchlist.
+			if (gAn_Group == g) then An_SelectGroup (nil); else Atr_An_Redisplay (); end
+
+			if (zc and zc.msg_atr) then
+				if (freed > 0) then
+					zc.msg_atr (string.format (AZT("Analysis: deleted group %s -- %d items are still watched, without a group"), g, freed));
+				else
+					zc.msg_atr (string.format (AZT("Analysis: deleted group %s"), g));
+				end
+			end
+		end,
+		OnCancel		= function () gAn_PendingGroup = nil; end,
+		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1,
+		showAlert = 1,			-- the yellow (!): this one removes something
 	};
 
 	StaticPopupDialogs["ATR_AN_ADD_WATCH"] = {
@@ -3727,6 +3977,26 @@ function Atr_An_Init ()
 		UIDropDownMenu_SetWidth (grpDD, 90);
 		UIDropDownMenu_Initialize (grpDD, An_GroupDD_Init);
 		UIDropDownMenu_SetText (grpDD, AZT("All groups"));
+
+		-- THE BOX STAYS, THE LIST CHANGES (owner, 2026-08-20: delete groups from
+		-- the dropdown).  The template's own button opens DropDownList1, whose
+		-- rows are interface-wide globals with nowhere to hang a per-group delete
+		-- (see Atr_An_ShowGroupMenu for the long version).  Re-pointing that one
+		-- OnClick swaps the list for this file's own menu and leaves everything
+		-- else about the control -- its art, its width, its text -- untouched.
+		--
+		-- An_GroupDD_Init is deliberately still installed above: it costs nothing,
+		-- and it means anything that opens this dropdown by the usual route still
+		-- finds a populated menu rather than an empty one.
+		local ddButton = _G["Atr_An_GroupDDButton"];
+
+		if (ddButton) then
+			ddButton:SetScript ("OnClick", function (self)
+				if (CloseDropDownMenus) then CloseDropDownMenus(); end
+				if (PlaySound) then PlaySound ("igMainMenuOptionCheckBoxOn"); end
+				Atr_An_ShowGroupMenu (grpDD);
+			end);
+		end
 	end
 
 	local function rowButton (name, w, label, popup, tipTitle, tipBody)

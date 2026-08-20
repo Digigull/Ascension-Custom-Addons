@@ -285,6 +285,62 @@ findEntry (groups, "Ore").func ()
 eq (Atr_An_DB().watch[WATCHED].group, "Ore", "picking a second group moves it")
 
 --------------------------------------------------------------------
+-- DELETING A GROUP (owner, 2026-08-20).  Pinned rather than reasoned for one
+-- reason: it is the only destructive operation on this tab's saved data, and
+-- the rule it has to keep -- a group is a label, deleting it must not delete
+-- what it labels -- is invisible from the call site.  A watched item carries
+-- observation history that scanning rebuilt over days; taking a dozen of them
+-- out with one click on a red x is not recoverable.
+--------------------------------------------------------------------
+
+reset ()
+Atr_An_AddGroup ("Cloth")
+Atr_An_AddGroup ("Ore")
+
+Atr_An_Watch ("Linen Cloth", "Cloth")
+Atr_An_Watch ("Wool Cloth",  "Cloth")
+Atr_An_Watch ("Copper Ore",  "Ore")
+
+eq (Atr_An_GroupCount ("Cloth"), 2, "the count is taken before anything is deleted")
+eq (Atr_An_GroupCount ("Ore"),   1, "... per group")
+eq (Atr_An_GroupCount ("Nope"),  0, "... and a group nobody has is empty, not an error")
+
+local menu = Atr_An_GroupMenuEntries ()
+eq (texts (menu), "All groups | Cloth | Ore", "the group menu lists every group under All groups")
+eq (findEntry (menu, "All groups").xfunc, nil, "All groups has no delete: it is not a group")
+check (findEntry (menu, "Cloth").xfunc ~= nil, "every real group has one")
+
+eq (Atr_An_DeleteGroup ("Cloth"), 2, "deleting reports how many items it unfiled")
+
+eq (Atr_An_GroupCount ("Cloth"), 0, "the group is gone")
+eq (#Atr_An_DB().groups, 1, "... and off the list")
+eq (Atr_An_DB().groups[1], "Ore", "... leaving the others alone")
+
+-- THE RULE. Both items are still watched, just unlabelled.
+eq (Atr_An_IsWatched ("Linen Cloth"), true, "an item in a deleted group is STILL WATCHED")
+eq (Atr_An_IsWatched ("Wool Cloth"),  true, "... all of them")
+eq (Atr_An_DB().watch["Linen Cloth"].group, nil, "... and simply loses the label")
+eq (Atr_An_DB().watch["Wool Cloth"].group,  nil, "... all of them")
+
+-- Nothing outside the group is touched.
+eq (Atr_An_DB().watch["Copper Ore"].group, "Ore", "another group's items are untouched")
+
+eq (Atr_An_DeleteGroup ("Cloth"), nil, "deleting a group twice reports nothing to do")
+eq (Atr_An_DeleteGroup (nil),     nil, "no name, nothing to do")
+eq (Atr_An_DeleteGroup (""),      nil, "empty name, nothing to do")
+
+-- An empty group deletes as 0 unfiled, which is not the same answer as "no such
+-- group" -- the caller has to be able to tell them apart.
+Atr_An_AddGroup ("Empty")
+eq (Atr_An_DeleteGroup ("Empty"), 0, "an empty group deletes, reporting 0 unfiled")
+
+eq (texts (Atr_An_GroupMenuEntries ()), "All groups | Ore", "the menu follows the deletions")
+
+reset ()
+eq (texts (Atr_An_GroupMenuEntries ()), "All groups | no groups yet", "with no groups it says so")
+eq (findEntry (Atr_An_GroupMenuEntries (), "no groups yet").disabled, true, "... as a disabled line")
+
+--------------------------------------------------------------------
 
 print (string.format ("%d passed, %d failed", passed, failed))
 os.exit (failed == 0 and 0 or 1)
