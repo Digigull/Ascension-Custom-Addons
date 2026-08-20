@@ -8,7 +8,9 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 28, 30 and 32** are new, with nothing built yet.
+**item 10** closed without any code, and **items 30 and 32** are new, with nothing built yet.
+**Item 28's stage 0 shipped** on 2026-08-21 — the reconnaissance command, waiting on one paste from
+a Call Board; its stages 1–3 exist or not depending on what comes back.
 **Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 shipped in full** on 2026-08-21 —
 the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
 and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
@@ -3161,6 +3163,84 @@ What it would then feed, in rising order of ambition:
   *signal*, not a demand *quantity*, and the tab must say so — the same rule the turnover estimates
   already follow.
 
+### What the owner's screenshots settled, 2026-08-21 — before a line of code ran
+
+Four screenshots of the Hero's Call Board and its chat output answered most of the "two cases"
+question above, and **the answer is both**:
+
+- **The board is a custom Ascension frame, and not marginally so.** Categories down the left
+  (Weekly Rewards, PvE, PvP, Professions, High Risk, Miscellaneous, Instances), quest cards in a
+  two-column grid, per-card *Complete Now* buttons, *Accept All Quests* / *Turn In All Quests*,
+  a **Callboard Cache** progress bar, and daily/weekly reset timers. Nothing in stock 3.3.5 draws
+  any of that, so the gossip and quest-greeting APIs are the *least* likely route — the reverse of
+  how this item ranked them when it was written.
+- **But the quests behind it are ordinary quest log entries.** The chat log reads *"A Thin Line:
+  Raw Nightfin Snapper has been removed from your quest log"* and *"Short on Supplies: Spidersilk
+  Boots has been removed from your quest log"* — the client only says that about a quest it held.
+  **So the owner's own suggestion is the strong route**: accept all, then read the log, where
+  `GetQuestLogLeaderBoard` returns "Silk Bandage: 0/30"-shaped objective strings. That is the form
+  this item wants — name and count in one string — with no frame scraping at all.
+- **The board's tooltip states the requirement outright.** Hovering *Wrapping Things Up: Silk
+  Bandage* gives "Collect 30 Silk Bandages. / **Requirements:** - Silk Bandage x 30 / **Rewards:**
+  - Rune of Ascension 1500". If the log route is ever barred, hovering a card and reading
+  `GameTooltip` is the fallback — and it is the one capture that has to happen *while* hovering,
+  which is why stage 0 snapshots it rather than reading it on demand.
+- **The quest names are already the material names**, in a small number of templates: *A Delicate
+  Situation: Dense Stone*, *Short on Supplies: Blackmouth Oil*, *A Thin Line: Raw Nightfin Snapper*,
+  *Wrapping Things Up: Silk Bandage*. Even a title-only capture would name the wanted item; the
+  objective string is only needed for the **count**.
+
+### The completion budget — a demand *quantity*, which this item did not expect to get
+
+The board says **Remaining Completions 7** on the *Daily Crafting and Gathering* group and **5** on
+*Weekly Master Crafts*, and the owner tested it (2026-08-21): the first quest took roughly seven
+repeats, the next only a few, then two, then one. Completions also pay into a **Callboard Cache**
+bar (45/75 → 60/75 across the two screenshots, with "[Callboard Cache Progress] x20" in chat), and
+finished quests **leave the board** — the second screenshot shows the Professions group down from
+eight cards to three.
+
+That behaviour reads as a **budget shared across the group**, not a per-quest allowance, and it
+matters more than it looks: a per-player cap on repeats is the missing multiplier between "the
+server wants Dense Stone this week" and "and here is roughly how much of it". It is not verified —
+the owner's own account is one sample and the ordering of their runs is not recorded — so nothing
+should be built on the exact number yet. What stage 0 can do cheaply is **record the group's
+remaining-completion figure**, if the board exposes it, alongside the quests. Even the untested
+version of this is a better demand estimate than anything else in the addon.
+
+### Built: stage 0, 2026-08-21 — `AuctionatorCallBoard.lua`
+
+One new file, one command, and it is deleted whole if nothing reads. `/atrcallboard` (alias
+`/atrcb`) fills the copy/paste box — never chat — with **five independent sections**, any one of
+which succeeding is enough to build stages 1–3 on:
+
+| | Section | Asks |
+|---|---|---|
+| 1 | **QUEST LOG** | the owner's route. Every `GetQuestLogTitle` return, then each quest's objective strings and objective text. |
+| 2 | **SHOWN FRAMES** | can Lua read the board's text *without* accepting? Every visible frame that is window-sized or name-hinted, walked for font strings and button labels. |
+| 3 | **GLOBALS** | the jackpot: did Ascension leave the board's data in a Lua **table**? Tables only, so a `…Board` function name cannot crowd out a real find. |
+| 4 | **TOOLTIP** | the requirement line, snapshotted a frame after `GameTooltip` shows, since a slash command cannot run mid-hover. |
+| 5 | **QUEST GIVER** | the stock gossip/greeting APIs, for the record rather than in hope. |
+| 6 | **EVENT TAPE** | which of eleven quest events fire, capped ring, consecutive repeats folded to a count. |
+
+Sub-commands narrow it: `log`, `frames`, `tip`, `npc`, `tape`, plus `watch on|off` and `clear`.
+
+Three decisions inside it are worth keeping if this grows:
+
+- **No signature is assumed.** Every client call goes through one helper that reports `ABSENT`
+  rather than erroring and prints *all* returns by count. On a custom server "`GetQuestLogTitle`
+  returns eight things" is itself a finding, and a dump written against the stock signature would
+  hide exactly the difference it was sent to find.
+- **Collapsed quest log headers are expanded for the walk and put back.** A dump taken with the
+  Professions header collapsed would report nothing and read identically to "the log route does not
+  work" — the one way this diagnostic could have produced a confident wrong answer.
+- **The event tape records from load**, against the house "ship it dark and off" habit, because a
+  tape that had to be armed first costs a second trip to the board — the round trip the whole file
+  exists to avoid.
+
+**The flow:** stand at a board, hover one quest card, `/atrcallboard`, paste. If quests are already
+accepted the log section answers on its own; accepting all first is the owner's shortcut and makes
+section 1 conclusive.
+
 ---
 
 ## 29. The Reagents view ranked dependence; you decide with money — DONE
@@ -3937,11 +4017,14 @@ short of a readout. In order:
 1. ~~**Item 29, stages 1 and 2**~~ — **BUILT 2026-08-20**: the Outlay column and its default sort,
    the ~2% fold, and units counted in the scan. See item 29's *Built* section. Reasoned, not yet
    seen in game.
-2. **Item 28's stage 0** — one diagnostic at a Call Board, pasted back. It is minutes of work and
-   it decides whether the addon can see the server's *published* weekly demand at all. Everything
-   else on this list measures effects; this is the only candidate cause, so it is worth knowing
-   before more effort goes into inferring what it would simply state. If it reads, it outranks C
-   outright — a leading indicator beats a lagging one built from a series that does not exist yet.
+2. ~~**Item 28's stage 0**~~ — **BUILT 2026-08-21** as `AuctionatorCallBoard.lua` / `/atrcallboard`,
+   and the owner's screenshots settled half of it before the code ran: the board is a custom frame,
+   but its quests are **real quest log entries**, so reading the log after *Accept All* is the
+   strong route and frame scraping is the fallback. **What is left is one paste** at a board. It
+   still decides whether the addon can see the server's *published* weekly demand at all —
+   everything else on this list measures effects; this is the only candidate cause. If it reads, it
+   outranks C outright, and item 28 now also has a route to a demand *quantity* (the group's
+   remaining-completion budget), which is more than it was scoped for.
 3. ~~**Item 31, all five stages**~~ — **BUILT 2026-08-21**. **What is left is elapsed time**: every
    reading it added is blank until a few days of history exist, which is the one ingredient nobody
    can write. Play with it on, then take a second `/cpp load` against the 96.2 ms / 1052 KB baseline
