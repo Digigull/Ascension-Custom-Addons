@@ -6,18 +6,22 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
-and deliberately declined. Six items do not carry that label and are the ones to know about:
+and deliberately declined. Five items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 30 and 32** are new, with nothing built yet.
+**item 10** closed without any code, and **item 32** is new, with nothing built yet.
 **Item 28's stages 0 and 1 shipped** on 2026-08-20: the reconnaissance answered — all four routes
 read, and the board turned out to be a real gossip NPC behind a custom frame — and the weekly
 capture went in dark on the strength of it. Its stages 2–3 are readers waiting on elapsed time.
-**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 shipped in full** on 2026-08-21 —
+**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 30 — the Advisor — shipped in
+full** on 2026-08-21: a main tab, `AuctionatorAdvisor.lua`, six cards over figures four other
+subsystems already returned, and it is the payoff the whole run of work was heading for.
+**Item 31 shipped in full** on 2026-08-21 —
 the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
 and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
 follow-on: whether `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its rows, which `/atrhistory audit`
 now measures.
-Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
+Item 30 was item 8's original *Advisor* request returning once the data to support it existed, and
+it closed the same way. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
 was and was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14,
@@ -3576,7 +3580,7 @@ you own on every keystroke in the filter box; the two views answer the two halve
 
 ---
 
-## 30. NEW — the Advisor: a tab that tells you what to do
+## 30. The Advisor: a tab that tells you what to do — DONE
 
 **Asked (owner, 2026-08-20):** "separate some of this and possibly rehash the Advisor idea into a
 new tab that could give more layman type instructions to do? That way we can preserve the good data
@@ -3677,6 +3681,91 @@ Supply counts units. Build those first and the cards are accurate on the day the
   and the tab should say so once rather than per card.
 - **Never recommend buying something it cannot price.** An unpriced reagent is a reason to go and
   scan, which is a different card.
+
+All four held. The first two are the `ADV_MIN_SCANS` gate and the empty-state card; the third is
+said once in the panel's subtitle and never per card; the fourth falls out of the cards only ever
+ranking on figures that exist — an unpriced reagent has no `outlay`, so it cannot win the Buy card,
+and it lands in the Watch card instead, which is exactly the "go and scan" card the note asked for.
+
+---
+
+### Built, 2026-08-21 — `AuctionatorAdvisor.lua`, and the item is done
+
+Shipped in one pass, because it turned out to be what it was scoped as: a renderer. 15 sites in
+`Auctionator.lua` tagged `-- ADVISOR_TAB` (the §8 recipe, unchanged for the fourth time), one new
+file, one new `.toc` line, **no new saved variable and no event handler**. `ADVISOR_TAB = 8`.
+
+**What each card actually fires on**, since the table above was a sketch and these are the numbers:
+
+| Card | Fires when | Gold at stake is | Buttons |
+|---|---|---|---|
+| **Stale** | freshest `Atr_An_Stats().last` older than **3 days**, or nothing on the watchlist ever scanned | — (a warning, not a bet) | `[Rescan]` |
+| **Make** | first ranking entry with `perCraft >= 1g` **and** margin `>= 15%` | `perCraft` | `[Plan N]` `[Show me]` |
+| **Buy** | one reagent is `>= 35%` of `pstats.outlay` | that reagent's `outlay` | `[Show me]` |
+| **Watch** | a reagent the bill needs, not vendor-sold, not watched | the biggest one's `outlay` | `[Watch 3]` |
+| **Careful** | a realised ledger loss, else `topShare >= 0.8` over `>= 3` listings | the loss, else depth × price | `[Show me]` |
+| **Farm** | best `farmAvg` on the watchlist, `scans >= 2` | `farmAvg` | `[Show me]` |
+
+Six thresholds, all gathered at the top of the file rather than buried in the rules, because every
+one of them is a judgement about when advice is worth giving and they should be arguable in one
+place. The one that is not free-standing is the stale window: **3 days is `ATR_AN_MAX_GAP`**, the
+point at which a watched item stops accumulating at all. Past it the rates have stopped being
+updated, which is exactly when the tab should say so.
+
+**The one rule held, and the interesting part is where the exception went.** The Make card wanted
+"74% of that cost is Essence of Fire", and no function returned a per-recipe cost share. Working it
+out in the Advisor would have been a second copy of the craft cost's own arithmetic — so it went
+into `AuctionatorFinderProfession.lua` instead, as **`Atr_Craft_TopReagent(entry)`**, beside the
+cost it is a share *of*, walking the same reagent list through the same `Atr_Craft_ReagentPrice`
+and adding the same vellum. It cannot be a share of a total `Atr_Craft_GetCraftCost` disagrees
+with, which is the whole point. **That is the pattern for the next card that wants a figure nobody
+returns**: add it to the subsystem that owns the data.
+
+Ratios of two figures one table already prints side by side — a reagent's `outlay` over
+`pstats.outlay` — are read in the Advisor, because that is reading a table and not re-deriving it.
+
+**One global was published for it**: `Atr_An_PlanTick(name, on)`, which is the Crafting view's own
+tick-box writer made global. The Make card ticks a recipe from the other end of the addon and goes
+through it rather than writing `db.plan.recipes` itself — a second writer that skipped
+`An_PlanChanged` would leave the Reagents view drawing a bill for a basket nobody has, and the
+reagent list changes *length* when the plan does. It does not touch the batch: `[Plan 5]` says
+which number it is going to use rather than choosing a different one.
+
+**Three decisions worth recording, because each was a fork:**
+
+- **The Make card walks the ranking, it does not take `rank[1]`.** `perCraft` is absolute, so a
+  big-ticket recipe returning 40g on a 3800g outlay heads the list at 1% margin — and stopping at
+  the first row would let it veto a card for the 300g-at-69% recipe two rows below. Walking to the
+  first entry that clears both gates is still reading the ranking's own order, not a re-sort.
+- **Careful ranks a realised loss above a thin book, not the larger number.** They are not the
+  same kind of claim: money that left is not comparable by magnitude with money somebody else
+  might extract. Ranking them together let 20g of depth outrank 12g actually handed over.
+- **The negative-margin gate is `soldQty >= boughtQty`.** Without it every item you have bought and
+  not yet sold reads as a loss, because the stock is in your bags. The gate costs a genuine loss
+  you are still half-holding, which is the right way round for a warning.
+
+**Ordering is band, then gold.** Three bands: a warning that qualifies every figure below it
+(Stale) outranks all the money cards however little is riding on the warning itself; the money
+cards rank among themselves by gold; "do this and I can tell you more" (Watch, and the empty state)
+sits last. Ties break on the head text, because `pairs()` over the watchlist is unordered and two
+cards worth the same would otherwise swap places on every repaint.
+
+**The empty state is a card, not a blank page.** On a fresh install it names what is missing, one
+per line, in the order that fixing it unlocks the most. That is the "it must be willing to say it
+has nothing" requirement, built rather than promised.
+
+**Reasoned and exercised offline, not seen in game.** `Atr_Advisor_Cards()` is global and free of
+any WoW API it does not guard, so all six rules were driven through hand-made returns in a scratch
+harness — fresh install, the owner's own 2026-08-20 shape, a week-stale watchlist, and a watchlist
+that has never been scanned. That is what caught "1 items", the comma-spliced empty-state list, and
+the two ranking forks above. The harness was thrown away rather than committed (CLAUDE.md: tooling
+is a fallback). What has **not** been seen is the page itself: card heights come from
+`GetStringHeight` after `Show`, and the eleventh tab fitting on the strip is measured on paper.
+
+**What is left for the owner to look at, in one sitting:** does the strip still fit; do the cards
+stack without overlapping; do `[Plan N]`, `[Watch 3]` and `[Show me]` land on the right row (they
+drive the Analysis filter box, which is a substring match). Everything else on the tab is a figure
+the Analysis tab was already showing.
 
 ---
 
@@ -4094,12 +4183,18 @@ which covers the feed rather than the cells.
 
 ## Suggested order
 
-Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28, 30 and 32 are unstarted** and **items 29 and 31 are done in full** — items 28-30 added
-2026-08-20, item 31 on 2026-08-21 and built the same day, and item 32 recorded the same day as the
-follow-on item 31 promised. What is otherwise left is
-follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
-all.
+Items 1–9, 11–27, 29, 30 and 31 are **DONE** or deliberately parked, and item 10 closed without any
+code (2026-08-19). **Item 32 is unstarted** and **item 28 is two stages in, waiting on elapsed
+time** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day, item 30 built
+the day after that, and item 32 recorded the same day as the follow-on item 31 promised. What is
+otherwise left is follow-on work inside shipped items, two standing deferrals, and two questions
+that need no code at all.
+
+**Reordered again 2026-08-21, after item 30 shipped.** With the Advisor built, *nothing at the top
+of this list is a build any more* — the three things ahead of the remaining code are elapsed time
+(items 28 and 31 both need real weeks nobody can write), one in-game sitting with the new tab, and
+one diagnostic. The unbuilt half of item 8 is now the largest piece of actual work left, and it is
+what makes the Advisor's cards richer rather than what makes them exist.
 
 **Reordered 2026-08-20**, after the first in-game session with the Reagents view and the owner's
 Advisor request. The shape of it: the cheapest correction to something that was actually confusing
@@ -4128,10 +4223,13 @@ short of a readout. In order:
    separate file was for, and it is the number that settles whether this becomes core. Then
    `/atrhistory audit`, which decides the one follow-on: whether
    `AUCTIONATOR_MEAN_PRICE_DATABASE` still earns its 5267 rows.
-4. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
-   five or six cards in plain sentences over figures four existing functions already return. No
-   new capture and no new saved variable — it is a renderer, and its whole discipline is that it
-   computes nothing. Wants entry 1 under it, because it reads those same figures.
+4. ~~**Item 30 — the Advisor**~~ — **BUILT 2026-08-21**, in one pass, exactly as scoped: a
+   renderer, no new capture, no new saved variable. Its prediction held in both directions — the
+   §8 main-tab recipe took 15 sites unchanged, and the one figure no function returned went into
+   the *profession file* rather than into the Advisor (`Atr_Craft_TopReagent`), which is the rule
+   the tab is built on. **What is left is one in-game sitting**: does the eleventh tab still fit
+   on the strip, do the cards stack without overlapping, and do the three buttons land on the
+   right row. See item 30's *Built* section for what was and was not verified.
 5. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
    fallback driver (tick boxes on the Crafting view plus a batch size) turned out to be the cheap
    half, and item 30's Make card can hand the same plan in through `Atr_An_PlanMap()` when it

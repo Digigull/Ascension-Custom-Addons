@@ -47,6 +47,7 @@ AuctionatorFinderItemCount.lua
 AuctionatorHistory.lua
 AuctionatorLedger.lua
 AuctionatorAnalysis.lua
+AuctionatorAdvisor.lua
 AuctionatorCallBoard.lua
 
 AuctionatorConfig.xml

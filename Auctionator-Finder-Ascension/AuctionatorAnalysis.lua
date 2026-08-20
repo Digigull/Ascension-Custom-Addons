@@ -1641,6 +1641,19 @@ local function An_PlanClear ()
 	An_PlanChanged ();
 end
 
+-- The tick box's own writer, published (BACKLOG item 30).  The Advisor's Make
+-- card ticks a recipe from the other end of the addon, and it goes through THIS
+-- rather than writing db.plan.recipes itself: a second writer that skipped
+-- An_PlanChanged would leave the Reagents view drawing a bill for a basket
+-- nobody has, and the reagent list changes length when the plan does.
+--
+-- It does not touch the batch.  The batch is one number for the whole plan and
+-- the person who set it meant it; the Advisor's button says which number it is
+-- going to use rather than choosing a different one.
+function Atr_An_PlanTick (name, on)
+	An_PlanSet (name, on and true or false);
+end
+
 -- THE PLAN MEASURED AGAINST THE RECIPES THAT ARE ACTUALLY LOADED.
 --
 -- A ticked name that no longer matches a harvested recipe counts for nothing --

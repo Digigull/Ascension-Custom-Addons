@@ -137,11 +137,11 @@ Everything awkward about the SELL tab follows from this:
   zone and the Ignore button are built in Lua rather than XML (`:2443`, `:1652`) — both say so.
 - `Atr_Sell_ReflowControls` exists because a *hidden* frame still occupies its anchor.
 
-### World 2 — own panel (local: Finder, Bazaar, Ledger, Analysis)
+### World 2 — own panel (local: Finder, Bazaar, Ledger, Analysis, Advisor)
 
-`AuctionatorFinder.lua:3869`, `AuctionatorBazaar.lua:1382`, `AuctionatorLedger.lua` and
-`AuctionatorAnalysis.lua` each `CreateFrame` their **own** panel parented to `AuctionFrame`, and
-build every widget in Lua. They share nothing with the upstream tabs and need no save/restore
+`AuctionatorFinder.lua:3869`, `AuctionatorBazaar.lua:1382`, `AuctionatorLedger.lua`,
+`AuctionatorAnalysis.lua` and `AuctionatorAdvisor.lua` each `CreateFrame` their **own** panel
+parented to `AuctionFrame`, and build every widget in Lua. They share nothing with the upstream tabs and need no save/restore
 dance.
 
 > **Rule for new work: build in World 2.** New UI gets its own panel, created in Lua, in its own
@@ -250,6 +250,13 @@ Four global functions answer "what is this worth":
 | `Atr_GetNPCPrice(itemID)` | fixed vendor *buy* price | `AuctionatorFinderMerchant.lua:58` |
 | `Atr_GetSellValue(item)` | vendor *sell* value floor | `AuctionatorAPI.lua:24` |
 
+One more sits on top of the cascade rather than in it: **`Atr_Craft_TopReagent(entry)`**
+(`AuctionatorFinderProfession.lua`, BACKLOG item 30) answers "which reagent IS this craft's cost",
+returning the dominant one and its share. It walks the same reagent list through the same
+`Atr_Craft_ReagentPrice` and adds the same vellum that `Atr_Craft_GetCraftCost` does, which is the
+entire reason it lives there — a share worked out anywhere else would be a share of a total the
+craft cost disagrees with.
+
 Four functions, three home files, none of them named for pricing. Callers span seven files. The **cascade** — NPC price, then auction price, then vendor floor —
 is written out twice, in `Atr_Craft_GetCraftCost` (`AuctionatorFinderProfession.lua:126-140`)
 and `Atr_ProfSort_ReagentPrice`, and the second one's comment said it "mirrored" the first. Two
@@ -322,6 +329,21 @@ crafting view and the trade skill window's own profit sort from disagreeing: bot
 `Atr_Craft_GetCraftCost` and the one reagent cascade above. A view that computed its own figures
 would be a second opinion nobody asked for.
 
+**The Advisor tab (item 30) is that rule applied to a whole tab, and it owns no data at all.**
+`AuctionatorAdvisor.lua` reads `Atr_Craft_ProfitRanking`, `Atr_Craft_TopReagent`,
+`Atr_Craft_ReagentPressure`, `Atr_An_Stats`, `Atr_An_PlanMap`/`Atr_An_PlanBatch` and
+`Atr_Ledger_ItemTotals`, and computes nothing of its own — its cards are readings of those
+figures, and ratios of two figures one table already prints side by side. Where a card wanted a
+figure nobody returned, the figure was added to the subsystem that owns the data
+(`Atr_Craft_TopReagent`), never worked out in the renderer. **That is the rule to keep**: the
+moment the Advisor does its own sums it becomes a second opinion, and the first time it disagrees
+with the table on the tab next door the addon stops being trustworthy.
+
+It writes through other people's surfaces too, rather than into their saved variables:
+`Atr_An_PlanTick` (published for it, and the same writer the Crafting view's tick box uses) and
+`Atr_An_Watch`. A second writer to `AUCTIONATOR_ANALYSIS.plan` that skipped `An_PlanChanged` would
+leave the Reagents view drawing a bill for a basket nobody has.
+
 Two more globals belong to that tab and are worth knowing before adding anything that needs an
 item ID from a name: `Atr_An_IdForName(name)` and `Atr_An_LearnId(name, id)`
 (`AuctionatorAnalysis.lua`). The index behind them is assembled once per session out of tables the
@@ -375,9 +397,17 @@ The Bazaar author tagged every one with `-- BAZAAR_TAB`, so the census is exact:
 Mechanical, but skip one and the symptom is remote from the cause. `grep -n BAZAAR_TAB
 Auctionator.lua` is the checklist; **tag the new sites the same way.**
 
-Two later tabs followed it exactly and are the worked examples to copy from: `-- LEDGER_TAB`
-(item 7) and `-- ANALYSIS_TAB` (item 8, 15 sites). `grep -n ANALYSIS_TAB Auctionator.lua` is the
-most recent census.
+Three later tabs followed it exactly and are the worked examples to copy from: `-- LEDGER_TAB`
+(item 7), `-- ANALYSIS_TAB` (item 8) and `-- ADVISOR_TAB` (item 30). All three are 15 sites, in the
+same places, and `grep -n ADVISOR_TAB Auctionator.lua` is the most recent census — the recipe has
+now held four times without a site being added or dropped.
+
+**The tab strip is the thing that will eventually bite, not the 15 sites.** Tabs chain off each
+other's right edge with an 8px overlap and each sizes itself to its own text, so the strip is a
+running total that nothing checks. The Advisor is the **eleventh** tab (Blizzard's three plus our
+eight) and it fits, with room to spare on Ascension's wider window — but a twelfth needs measuring
+rather than assuming, and the failure mode is a tab drawn off the end of the frame rather than an
+error.
 
 ### Adding a view to an existing own-panel tab
 
@@ -519,13 +549,14 @@ view of what is left; what this table is still good for is the *world* column an
 | 8 | Advisor | new file | 2 | Blocked on §5 — no market series exists. |
 | 9 | Grovewood Log/Plank | investigation | — | Parked until 7 lands. |
 
-**Two of the 2026-08-20 additions would need new homes, and they take different recipes.**
-**Item 30 (the Advisor)** is a §8 *main tab* — 15 sites in `Auctionator.lua`, tagged the way
-`-- LEDGER_TAB` and `-- ANALYSIS_TAB` are — and it is deliberately a renderer: it reads
-`Atr_Craft_ProfitRanking`, `Atr_Craft_ReagentPressure`, `Atr_An_Stats` and `Atr_Ledger_ItemTotals`
-and computes nothing of its own, which is §6's "one function per view" rule applied to a whole tab.
-It is also what relieves the Analysis control row, since it is the fifth view that is now not going
-to be crammed onto that toggle.
+**Two of the 2026-08-20 additions needed new homes, and they took different recipes.**
+**Item 30 (the Advisor) shipped 2026-08-21** as `AuctionatorAdvisor.lua`, exactly as predicted
+here: a §8 *main tab*, 15 sites in `Auctionator.lua` tagged `-- ADVISOR_TAB`, no upstream file
+edited, and a renderer that computes nothing of its own — §6's "one function per view" rule applied
+to a whole tab. It also did what this note said it would to the Analysis control row: it is the
+fifth view that is now not going to be crammed onto that toggle. The one thing it needed beyond
+the four functions named here was `Atr_Craft_TopReagent`, and the interesting part is *where* that
+went — into the profession file beside the craft cost, not into the Advisor (§6).
 
 **Item 28 (Call Board demand capture)** is the §8 "adding a subsystem file" recipe almost exactly: own file, own event
 frame, no UI of its own at first, and a passive harvest from a window the player opens anyway —
