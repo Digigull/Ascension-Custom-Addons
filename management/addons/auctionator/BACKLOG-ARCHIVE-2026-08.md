@@ -978,9 +978,13 @@ it reads `since <date>` rather than presenting a window as an all-time figure.
 25-assertion check of `Atr_Ledger_ItemTotals` against hand-built rows — the deposit-inside-`money`
 case, the hand-bought item with no `buy` row, the intent fallback and its `*`, the no-invoice
 sale, sold-vs-expired, outstanding stock valued at the last ask, and an empty ledger. All passed
-first run; not kept, per the repo's tooling rule. **Not verified in game.** The checks are: the
+first run; not kept, per the repo's tooling rule. The checks were: the
 toggle switches both the headers and the rows, the Rescan button and the add/group controls
 disappear on the Ledger view, and a known flip's margin matches what you remember making.
+
+**Confirmed working in game 2026-08-20** (owner), on the first build — so the line above is a
+record rather than a caveat. Carried into this file 2026-08-22 from a branch that was never merged;
+the same commit's correction to B2 is already here, in the "B2 shipped" section, in better form.
 
 #### Still to come
 
