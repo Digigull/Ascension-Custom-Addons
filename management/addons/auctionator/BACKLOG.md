@@ -956,8 +956,8 @@ disappear on the Ledger view, and a known flip's margin matches what you remembe
 
 #### Still to come
 
-B3 (reagent pressure), C (price trend — needs the dated series), A5/A6 (listing lifetime,
-undercut churn).
+C (price trend — needs the dated series), A5/A6 (listing lifetime, undercut churn). B3 shipped
+the same day; see below.
 
 ### B2 shipped 2026-08-20 — "Crafting", the third view
 
@@ -1033,6 +1033,79 @@ sinking to the bottom in name order. All passed; not kept, per the repo's toolin
 **Not verified in game.** The checks are: the toggle switches headers, rows and controls three
 ways; the top of the list is a recipe you would recognise as profitable; a `?` row is one you
 hovered rather than learned; and a row's tooltip names the reagent a blank Cost is waiting on.
+
+### B3 shipped 2026-08-20 — "Reagents", the fourth view
+
+**The crafting table read from the other end.** B2 answers "what is worth making"; this answers
+the question that comes straight after it, at the same mailbox: *then what do I have to buy, and
+can I actually get it*. `Atr_Craft_ReagentPressure` in `AuctionatorFinderProfession.lua` is behind
+it, and the toggle is now **Market / Trades / Crafting / Reagents**. **No new saved variable, no
+new capture, and no second pricing pass** — it takes `Atr_Craft_ProfitRanking`'s own list (the
+view hands it the cached one) and inverts the map, which is exactly what the suggested order
+predicted would make this cheap.
+
+Columns: Reagent, Recipes, Need, Have, Cost, Profit, Supply.
+
+**What "pressure" is counted over, because a total means nothing without it.** One craft of each
+**paying** recipe that needs the reagent. Paying is `perCraft > 0` and nothing else: a recipe that
+cannot be priced has not been shown to be worth making, and one that loses money is not a reason
+to buy anything. `Need` is the units that basket costs and `Profit` is what it is worth, over the
+same set of crafts — which is what makes the two comparable on one row. Recipes shows the paying
+ones **out of all of them**, because "3 of the 8 things I can make with this pay today" is a
+different position from "3 of 3".
+
+Five judgements are in the code:
+
+- **Profit is the answer, not cost.** The column the view ranks on is how much of your *own* craft
+  profit is waiting on a reagent — the sum of `perCraft` over the paying recipes that need it. The
+  reagent to go and get is the one at the top, and that is a different list from the expensive
+  ones.
+- **The vellum is a reagent, though no recipe lists one.** An enchant is unsellable until it is on
+  one, so on an enchanter's table it is the single most-wanted item there is, and leaving it out
+  would have been the largest omission on the view. `Atr_Craft_VellumCost` now returns the *name*
+  it priced from as a second value, so the row and the price can never come from different
+  candidate vellums.
+- **A reagent stored with an ID by one recipe and name-only by another is ONE reagent.** The
+  harvest keeps whatever the client handed it, per row (item 14's fix is why name-only rows exist
+  at all), so keying naively would have produced two rows each holding half the demand. The names
+  are keyed once and the IDs filled in from wherever they were seen — which also hands the
+  name-only copy an ID, and an ID is what an NPC price needs.
+- **`Have` is counted, not guessed.** `Atr_ItemCount_Query` already knows what every character,
+  bank and realm bank this account has opened holds (`AuctionatorFinderItemCount.lua`). You do not
+  buy what is already in the bank, and the cell goes green once the bank covers the basket.
+- **Supply is attached by the view, not by the arithmetic.** Everything else on a row comes out of
+  the recipes; how deep the auction house is on a reagent is *this tab's own* watchlist data, and
+  `AuctionatorFinderProfession.lua` has no business reading the watchlist. So the column says
+  **Vendor** where a vendor sells it (unlimited, at a price that never moves — the one supply
+  answer needing no scan), listings-from-sellers where the reagent is watched, and **not watched**
+  otherwise. That last state is the useful one: the view hands you the watchlist candidates in the
+  order worth adding, and a right-click on the row adds them.
+
+**Limits, stated rather than discovered.** `Need` is a measure of dependence, not a shopping list
+for tonight — nobody crafts one of everything. The outlay on the summary line is over the reagents
+that *could* be priced, so the count that could not is printed beside it rather than quietly left
+out. And most rows will say "not watched" on a fresh install, which is the honest state of the
+evidence and not a gap in the view.
+
+**Layout.** A fourth toggle button forced the control row down a size: buttons 62 → 58, the group
+dropdown 110 → 90, Add Item 76 → 70, Add Group 82 → 76. On Blizzard's 768px window (a 746 panel)
+the toggle now runs 476–720 and the group chain ends at ~466. **"My trades" became "Trades"** —
+nine characters no longer fit at 58 and no other label needed them; its tooltip still says whose
+trades they are. The reagent columns go through the same `An_LayoutCols` weighting as the other
+three. The second tooltip is now shared by two views and renamed accordingly
+(`An_ShowCraftTip` / `An_ShowReagentTip` over one `An_SideTipFrame`).
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each — `analysis-feed-smoke` loads the
+changed file), and a throwaway 34-assertion check of `Atr_Craft_ReagentPressure` against a
+hand-built recipe database: the name-only/ID merge, the vellum appearing as a reagent no recipe
+lists, the loss-making recipe counted in `Recipes` but excluded from `Need` and `Profit`,
+have/short/to-buy against a stocked bank, the per-reagent use list ordered best-paying-first with
+the loss-maker last and its sign kept, the summary totals, the ranking order, and the same map
+coming back from a supplied ranking. All passed first run; not kept, per the repo's tooling rule.
+**Not verified in game.** The checks are: the toggle switches headers, rows and controls four ways
+and nothing overlaps in the control row; the top of the list is a reagent you would recognise as
+the one your best crafts eat; a vendor-sold reagent says Vendor; and a row's tooltip names the
+recipes that want it.
 
 ### Original v1 suggestion, for the record
 
@@ -2898,13 +2971,12 @@ is left is follow-on work inside shipped items, two standing deferrals, and two 
 need no code at all. In order:
 
 1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
-   all of **D** and then **B2** (the Crafting view). Left: **A5/A6** (listing lifetime, undercut
-   churn) and **B3** (reagent pressure), which are arithmetic over data the addon already holds —
-   B3 in particular is now cheap, since the Crafting view already prices every reagent of every
-   harvested recipe and only has to invert that map. **C** (price trend) ranks last of the three —
-   it needs a dated series that does not exist, so it is a writer plus a retention rule, and it
-   must be watchlist-scoped: the naive all-names version is several megabytes, immediately after
-   item 13 clawed back 384 KB.
+   all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
+   inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing
+   lifetime, undercut churn), which are arithmetic over data the addon already holds. **C** (price
+   trend) ranks last — it needs a dated series that does not exist, so it is a writer plus a
+   retention rule, and it must be watchlist-scoped: the naive all-names version is several
+   megabytes, immediately after item 13 clawed back 384 KB.
 2. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.

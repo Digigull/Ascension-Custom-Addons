@@ -42,10 +42,10 @@
 --     numNilOwners for this reason), so unknown sellers are tracked apart rather
 --     than collapsed into one.
 --
--- THREE VIEWS OVER ONE TABLE.  Everything above is an ESTIMATE inferred from
--- listings that vanished.  The other two views are not, and the tab keeps the
--- three apart rather than mixing them into one table: a fact printed in the same
--- row as an estimate reads as an estimate.
+-- FOUR VIEWS OVER ONE TABLE.  Everything above is an ESTIMATE inferred from
+-- listings that vanished.  The other three are not, and the tab keeps them apart
+-- rather than mixing them into one table: a fact printed in the same row as an
+-- estimate reads as an estimate.
 --
 --   Market     the watchlist above -- what the market is doing, from scanning.
 --   My trades  (group D, 2026-08-20) your own paid, got, margin and sell-through
@@ -55,21 +55,26 @@
 --              by what one craft is worth -- Atr_Craft_ProfitRanking, in
 --              AuctionatorFinderProfession.lua.  Neither an estimate nor a fact:
 --              arithmetic over today's prices, exact if the prices are current.
+--   Reagents   (B3, 2026-08-20) that same table inverted -- what the profitable
+--              half of it makes you BUY, ranked by how much of your own craft
+--              profit is waiting on each reagent.  Atr_Craft_ReagentPressure,
+--              in the same file; the supply half of each row is this tab's own
+--              watchlist data, attached here (see An_ReagentRows).
 --
--- ONE FILTER BOX serves all three: it narrows whichever table is up, live, as
+-- ONE FILTER BOX serves all four: it narrows whichever table is up, live, as
 -- you type, and it deliberately survives a view switch -- "show me the linen" is
 -- the same question on any of them.  The box used to be for ADDING a watched
 -- item, which is a once-per-item job; that moved to a popup behind the Add
 -- button beside it.
 --
--- EVERY ROW BEHAVES THE SAME WAY in all three views, because they are all the
+-- EVERY ROW BEHAVES THE SAME WAY in all four views, because they are all the
 -- same kind of thing -- an item you are deciding about.  Hover shows the item's
--- own tooltip (and, on the crafting view, a second tooltip beside it with the
--- reagents and the figures); left click looks the item up, gear on the Finder
--- tab and everything else on Buy; right click opens the list menu.  See
+-- own tooltip (and, on the crafting and reagent views, a second tooltip beside
+-- it with the workings); left click looks the item up, gear on the Finder tab
+-- and everything else on Buy; right click opens the list menu.  See
 -- An_RowLink / An_OpenItem below for why those two tabs and not one.
 --
--- Every column in all three sorts: click a header, click it again to reverse,
+-- Every column in all four sorts: click a header, click it again to reverse,
 -- the way the Finder tab's headers have always worked.  Each view keeps its own
 -- key, and a cell with nothing in it sorts last in both directions rather than
 -- as a zero -- see the sorting block below for why that is not a detail.
@@ -79,8 +84,9 @@
 -- AuctionatorFinderProfession.lua respectively.
 --
 -- Storage: AUCTIONATOR_ANALYSIS, account-wide, declared in the .toc.  The other
--- two views add none of their own -- they are readers of AUCTIONATOR_LEDGER and
--- AUCTIONATOR_CRAFT_RECIPES.
+-- three views add none of their own -- they are readers of AUCTIONATOR_LEDGER,
+-- AUCTIONATOR_CRAFT_RECIPES and (for what you already hold) the item-count
+-- cache.
 
 local addonName, addonTable = ...;
 local zc = addonTable and addonTable.zc or _G.zc;
@@ -703,7 +709,56 @@ local AN_CCOLS = {
 	  val = function (r) return (r.profit and r.sell and r.sell > 0) and (r.profit / r.sell) or nil; end },
 };
 
--- "market" (the watchlist, above), "trades" (the Ledger) or "craft" (recipes).
+-- THE FOURTH VIEW (BACKLOG item 8, B3): the crafting table INVERTED.
+--
+-- "What is worth making" and "what do I have to buy" are the same table read
+-- from opposite ends, and only one end existed.  A recipe knows its reagents;
+-- nothing knew which recipes wanted a REAGENT, so the number that actually
+-- decides a trip to the auction house -- how much of your own craft profit is
+-- waiting on this one stack of ore -- could not be read off anything the addon
+-- held.  Atr_Craft_ReagentPressure does the inversion and carries the reasoning;
+-- this is its table.
+--
+-- Need and Profit are counted over the same basket -- one craft of each recipe
+-- that pays -- so a row's cost and its worth are the same question asked twice.
+-- Recipes shows the paying ones out of all of them, because "3 of the 8 things
+-- I can make with this pay today" is a different situation from "3 of 3".
+--
+-- Supply is the half this file owns: everything else on the row comes out of the
+-- recipes, but whether you can BUY the stuff is market data, and market data
+-- here means the watchlist.  So most rows say "not watched" until you add them,
+-- and the view hands you the candidates in the order worth adding.
+local AN_RCOLS = {
+	{ key = "ritem",	head = "Reagent",	w = 184, grow = 3,					text = true,
+	  val = function (r) return string.lower (r.name or ""); end },
+	{ key = "rrecipes",	head = "Recipes",	w = 56,  grow = 0, just = "CENTER",
+	  tip = "How many of the recipes needing this reagent pay at today's prices, out of how many you have harvested. Everything else on the row is counted over the paying ones only.",
+	  val = function (r) return r.pays; end },
+	{ key = "rneed",	head = "Need",		w = 48,  grow = 0, just = "CENTER",
+	  tip = "Units to run ONE craft of each recipe that pays. Not a shopping list for tonight -- a measure of how much of your crafting leans on this one reagent.",
+	  val = function (r) return r.need; end },
+	{ key = "rhave",	head = "Have",		w = 48,  grow = 0, just = "CENTER",
+	  tip = "How many you already hold, across every character, bank and realm bank this account has opened a window on. You do not have to buy what is already in the bank.",
+	  val = function (r) return (r.have and r.have > 0) and r.have or nil; end },
+	{ key = "rcost",	head = "Cost",		w = 84,  grow = 1, just = "RIGHT",
+	  tip = "What ONE costs: the vendor price where a vendor sells it, otherwise the auction price you last scanned, otherwise its vendor value as a floor. The same cascade the craft costs use, so the two can never disagree about a reagent.",
+	  val = function (r) return r.unit; end },
+	{ key = "rprofit",	head = "Profit",	w = 92,  grow = 4, just = "RIGHT",
+	  tip = "How much of your own craft profit is waiting on this reagent: the per-craft profit of every paying recipe that needs it, added up. The one to go and get is the one at the top.",
+	  val = function (r) return r.profit; end },
+	{ key = "rsupply",	head = "Supply",	w = 80,  grow = 2, just = "CENTER",
+	  tip = "Whether you can actually buy it. Vendor means a vendor sells it -- unlimited supply at a price that never moves. Otherwise it is what your last scan saw: how many listings, from how many sellers. Needs the reagent on your watchlist; right-click a row to put it there.",
+	  -- Vendor sorts above every scanned depth on purpose: a vendor cannot run
+	  -- out, which is a bigger number than any listing count could be.  A reagent
+	  -- nobody has scanned sorts last rather than as an empty auction house.
+	  val = function (r)
+		if (r.vendor) then return math.huge; end
+		return (r.st and r.st.scans > 0) and r.st.listings or nil;
+	  end },
+};
+
+-- "market" (the watchlist), "trades" (the Ledger), "craft" (recipes) or
+-- "reagents" (those recipes inverted).
 local gAn_View = "market";
 
 -- Widgets that belong to the market view only, filled in by Atr_An_Init and
@@ -767,15 +822,16 @@ end
 -- used to hand-roll this for its own default ordering; a column's `val`
 -- returning nil is now the one place it lives.
 local gAn_Sort = {
-	market	= { key = "farm",    asc = false },
-	trades	= { key = "tmargin", asc = false },
-	craft	= { key = "cprofit", asc = false },
+	market		= { key = "farm",    asc = false },
+	trades		= { key = "tmargin", asc = false },
+	craft		= { key = "cprofit", asc = false },
+	reagents	= { key = "rprofit", asc = false },
 };
 
-local gAn_ColsFor = { market = AN_COLS, trades = AN_TCOLS, craft = AN_CCOLS };
+local gAn_ColsFor = { market = AN_COLS, trades = AN_TCOLS, craft = AN_CCOLS, reagents = AN_RCOLS };
 
 -- The header Buttons, per view, keyed by column.  Filled in by Atr_An_Init.
-local gAn_Heads = { market = {}, trades = {}, craft = {} };
+local gAn_Heads = { market = {}, trades = {}, craft = {}, reagents = {} };
 
 local function An_ColByKey (cols, key)
 
@@ -1309,22 +1365,40 @@ end
 -- happen without leaving this view -- there is no search control on it and the
 -- panel is hidden the moment another tab is clicked.  So the cache is dropped
 -- where those journeys come back: entering the view, and re-entering the tab.
+--
+-- ONE ranking, TWO VIEWS OF IT: the reagent view (B3) is the same list inverted,
+-- so it goes through the same cache rather than pricing everything a second time
+-- to show it a second way.  Both are dropped together, because both are stale
+-- for the same reason.
 local gAn_CraftRows	= nil;
 local gAn_CraftStats	= nil;
+local gAn_ReagRows	= nil;
+local gAn_ReagStats	= nil;
 
 local function An_CraftInvalidate ()
 	gAn_CraftRows  = nil;
 	gAn_CraftStats = nil;
+	gAn_ReagRows   = nil;
+	gAn_ReagStats  = nil;
+end
+
+-- The cached ranking itself, built on first ask.  Both price-derived views go
+-- through this rather than calling Atr_Craft_ProfitRanking for themselves.
+local function An_CraftList ()
+
+	if (gAn_CraftRows == nil) then
+
+		if (type (Atr_Craft_ProfitRanking) ~= "function") then return nil; end
+
+		gAn_CraftRows, gAn_CraftStats = Atr_Craft_ProfitRanking ();
+	end
+
+	return gAn_CraftRows;
 end
 
 local function An_CraftRows ()
 
-	if (gAn_CraftRows == nil) then
-
-		if (type (Atr_Craft_ProfitRanking) ~= "function") then return {}, nil; end
-
-		gAn_CraftRows, gAn_CraftStats = Atr_Craft_ProfitRanking ();
-	end
+	if (An_CraftList () == nil) then return {}, nil; end
 
 	-- Re-sorted rather than re-priced: the ranking arrives best-per-craft first,
 	-- and a header click reorders the cached list without touching a price.
@@ -1363,10 +1437,12 @@ local function An_Margin (r)
 	return string.format ("|cffff6060%d%%|r", pct);
 end
 
--- THE CRAFTING TOOLTIP, BESIDE THE ITEM'S OWN (owner's request, 2026-08-20)
+-- THE SECOND TOOLTIP, BESIDE THE ITEM'S OWN (owner's request, 2026-08-20)
 --
--- What the Cost column is made of: a bare number is one you cannot check, and
--- the reagent it is waiting on is the thing you would go and scan.
+-- What a computed column is made of: a bare number is one you cannot check, and
+-- the reagent it is waiting on is the thing you would go and scan.  The crafting
+-- view uses it for a recipe's reagents and the reagent view for the recipes that
+-- want one -- the same box, read in either direction.
 --
 -- It used to be extra lines appended UNDER the item's real tooltip. It is a
 -- tooltip of its own now, drawn beside that one, because the two are different
@@ -1380,27 +1456,46 @@ end
 -- able to take it. The template parks it on the TOOLTIP strata, which is the
 -- one placement management/docs/CLAUDE.md leaves alone -- a tooltip that draws
 -- under what it describes is not a tooltip.
-local gAn_CraftTip = nil;
+local gAn_SideTip = nil;
 
-local function An_CraftTipFrame ()
+local function An_SideTipFrame ()
 
-	if (gAn_CraftTip) then return gAn_CraftTip; end
+	if (gAn_SideTip) then return gAn_SideTip; end
 	if (type (CreateFrame) ~= "function") then return nil; end
 
-	gAn_CraftTip = CreateFrame ("GameTooltip", "Atr_An_CraftTooltip", UIParent, "GameTooltipTemplate");
+	gAn_SideTip = CreateFrame ("GameTooltip", "Atr_An_SideTooltip", UIParent, "GameTooltipTemplate");
 
-	return gAn_CraftTip;
+	return gAn_SideTip;
 end
 
-local function An_HideCraftTip ()
-	if (gAn_CraftTip) then gAn_CraftTip:Hide(); end
+local function An_HideSideTip ()
+	if (gAn_SideTip) then gAn_SideTip:Hide(); end
+end
+
+-- Right of the item's tooltip if it fits, left of it if it does not. A row is as
+-- wide as the table, so GameTooltip is already out at the auction house's right
+-- edge and there is not always a second tooltip's worth of screen past it.
+-- Measured after Show, which is what gives it a width.
+local function An_SideTipPlace (tip)
+
+	tip:ClearAllPoints ();
+	tip:SetPoint ("TOPLEFT", GameTooltip, "TOPRIGHT", 4, 0);
+	tip:Show ();
+
+	local right  = tip.GetRight and tip:GetRight ();
+	local screen = (UIParent and UIParent.GetRight) and UIParent:GetRight () or nil;
+
+	if (right and screen and right > screen) then
+		tip:ClearAllPoints ();
+		tip:SetPoint ("TOPRIGHT", GameTooltip, "TOPLEFT", -4, 0);
+	end
 end
 
 local function An_ShowCraftTip (owner, r)
 
 	if (r == nil or r.reagents == nil or GameTooltip == nil) then return; end
 
-	local tip = An_CraftTipFrame ();
+	local tip = An_SideTipFrame ();
 	if (tip == nil) then return; end
 
 	-- ANCHOR_NONE and then our own point: what this hangs off is the ITEM's
@@ -1460,21 +1555,7 @@ local function An_ShowCraftTip (owner, r)
 			0.8, 0.8, 0.8, true);
 	end
 
-	-- Right of the item's tooltip if it fits, left of it if it does not. A row
-	-- is as wide as the table, so GameTooltip is already out at the auction
-	-- house's right edge and there is not always a second tooltip's worth of
-	-- screen past it. Measured after Show, which is what gives it a width.
-	tip:ClearAllPoints ();
-	tip:SetPoint ("TOPLEFT", GameTooltip, "TOPRIGHT", 4, 0);
-	tip:Show ();
-
-	local right  = tip.GetRight and tip:GetRight ();
-	local screen = (UIParent and UIParent.GetRight) and UIParent:GetRight () or nil;
-
-	if (right and screen and right > screen) then
-		tip:ClearAllPoints ();
-		tip:SetPoint ("TOPRIGHT", GameTooltip, "TOPLEFT", -4, 0);
-	end
+	An_SideTipPlace (tip);
 end
 
 local function An_CraftSummary (stats, shown)
@@ -1558,12 +1639,248 @@ local function An_RedisplayCraft ()
 	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_CraftSummary (stats, n)); end
 end
 
+-- THE REAGENT VIEW (BACKLOG item 8, B3) -------------------------------------
+
+-- How many recipes a reagent's tooltip will list before it gives up counting. A
+-- bulk reagent is in fifty of them and a tooltip taller than the screen answers
+-- nothing; the ones worth reading are the best-paying, which is the order
+-- Atr_Craft_ReagentPressure puts them in.
+local AN_TIP_USES = 8;
+
+local function An_ReagentRows ()
+
+	if (gAn_ReagRows == nil) then
+
+		if (type (Atr_Craft_ReagentPressure) ~= "function") then return {}, nil; end
+
+		gAn_ReagRows, gAn_ReagStats = Atr_Craft_ReagentPressure (An_CraftList ());
+
+		-- THE SUPPLY HALF, and it is attached here rather than in the pressure
+		-- function on purpose: everything else on a row comes out of the recipes,
+		-- but how deep the auction house is on a reagent is this tab's OWN data,
+		-- observed from scanning a watched item. AuctionatorFinderProfession.lua
+		-- has no business reading the watchlist.
+		local i;
+		for i = 1, #gAn_ReagRows do
+			local e = gAn_ReagRows[i];
+			e.st = e.name and Atr_An_Stats (e.name) or nil;
+		end
+	end
+
+	An_SortRows ("reagents", gAn_ReagRows);
+
+	-- A copy, for the reason the crafting view makes one: the cache is every
+	-- reagent, and filtering it in place would throw the rest away on the first
+	-- keystroke.
+	if (gAn_Filter ~= "") then
+		local keep, i = {}, nil;
+		for i = 1, #gAn_ReagRows do
+			if (An_PassesFilter (gAn_ReagRows[i].name)) then tinsert (keep, gAn_ReagRows[i]); end
+		end
+		return keep, gAn_ReagStats;
+	end
+
+	return gAn_ReagRows, gAn_ReagStats;
+end
+
+-- Can you buy it, in one cell.  Three answers and they are not the same kind of
+-- thing, which is why none of them is a bare number: a vendor cannot run out, a
+-- scan is a snapshot of one moment, and an unwatched reagent has told you
+-- nothing at all.
+local function An_Supply (r)
+
+	if (r.vendor) then return "|cff40ff40"..AZT("Vendor").."|r"; end
+
+	local st = r.st;
+	if (st == nil or st.scans == 0) then return "|cff666666"..AZT("not watched").."|r"; end
+
+	-- one seller holding nearly all of the supply is a different market from ten
+	-- sharing it -- the same rule, and the same colour, as the market view
+	local col = (st.topShare >= 0.8) and "|cffff8080" or "|cffffffff";
+
+	return col..string.format (AZT("%d from %d"), st.listings, st.sellers).."|r";
+end
+
+local function An_ShowReagentTip (owner, r)
+
+	if (r == nil or r.uses == nil or GameTooltip == nil) then return; end
+
+	local tip = An_SideTipFrame ();
+	if (tip == nil) then return; end
+
+	tip:SetOwner (owner, "ANCHOR_NONE");
+	tip:ClearLines ();
+
+	tip:AddDoubleLine (r.name or "", r.vendor and AZT("vendor-sold") or "",
+		1, 0.82, 0, 0.5, 0.9, 0.5);
+
+	tip:AddLine (" ");
+	tip:AddDoubleLine (AZT("Wanted by"), AZT("per craft"), 1, 1, 1, 0.6, 0.6, 0.6);
+
+	local shown, _, u = 0, nil, nil;
+	for _, u in ipairs (r.uses) do
+		if (shown >= AN_TIP_USES) then break; end
+		shown = shown + 1;
+
+		local left = string.format ("%s x%d", u.name or "?", u.count or 1);
+
+		if (u.perCraft == nil) then
+			tip:AddDoubleLine (left, AZT("not priced"), 0.6, 0.6, 0.6, 1, 0.4, 0.4);
+		elseif (u.perCraft > 0) then
+			tip:AddDoubleLine (left, An_Signed (u.perCraft), 0.9, 0.9, 0.9, 1, 1, 1);
+		else
+			-- it is priced and it loses money: greyed, because it is one of the
+			-- recipes this row's Need and Profit deliberately do not count
+			tip:AddDoubleLine (left, An_Signed (u.perCraft), 0.6, 0.6, 0.6, 1, 1, 1);
+		end
+	end
+
+	if (#r.uses > shown) then
+		tip:AddLine (string.format (AZT("... and %d more"), #r.uses - shown), 0.6, 0.6, 0.6);
+	end
+
+	-- The row's own numbers, spelled out: the columns behind the cursor are
+	-- under the item's tooltip while this is being read.
+	tip:AddLine (" ");
+
+	if (r.need) then
+		tip:AddDoubleLine (AZT("Units for one craft of each"), tostring (r.need), 1, 1, 1, 1, 1, 1);
+	end
+	if (r.have and r.have > 0) then
+		tip:AddDoubleLine (AZT("You already hold"), tostring (r.have), 1, 1, 1, 1, 1, 1);
+	end
+	if (r.outlay) then
+		tip:AddDoubleLine (AZT("That costs"), An_Money (r.outlay), 1, 1, 1, 1, 1, 1);
+	end
+	if (r.toBuy and r.short and (r.have or 0) > 0) then
+		tip:AddDoubleLine (string.format (AZT("Still to buy (%d)"), r.short), An_Money (r.toBuy), 1, 1, 1, 1, 1, 1);
+	end
+	if (r.profit) then
+		tip:AddDoubleLine (AZT("Profit waiting on it"), An_Signed (r.profit), 1, 1, 1, 1, 1, 1);
+	end
+
+	-- The supply half in words. The cell has room for two numbers and this is
+	-- where what they mean goes -- including the case that is not a number at
+	-- all, which is also the one with something to do about it.
+	tip:AddLine (" ");
+
+	if (r.vendor) then
+		tip:AddLine (AZT("A vendor sells this, so there is no supply question: it is there whenever you are, at that price."), 0.5, 0.9, 0.5, true);
+	elseif (r.st and r.st.scans > 0) then
+		tip:AddLine (string.format (AZT("Your last scan saw %d listings from %d sellers."), r.st.listings, r.st.sellers), 0.8, 0.8, 0.8, true);
+		if (r.st.topShare >= 0.8) then
+			tip:AddLine (AZT("One of them holds most of the supply, and can move the price at will."), 1, 0.5, 0.5, true);
+		end
+	else
+		tip:AddLine (AZT("Not on your watchlist, so nothing has counted how deep the auction house is on it. Right-click to add it."), 0.8, 0.8, 0.8, true);
+	end
+
+	An_SideTipPlace (tip);
+end
+
+local function An_ReagentSummary (stats, shown)
+
+	if (stats == nil or stats.reagents == 0) then
+		return AZT("No recipes harvested yet. Open a profession window once and this fills itself in.");
+	end
+
+	local s;
+	if (gAn_Filter ~= "" and shown) then
+		s = string.format (AZT("%d of %d reagents -- across %d recipes, %d of them paying"),
+				shown, stats.reagents, stats.recipes, stats.profitable);
+	else
+		s = string.format (AZT("%d reagents -- across %d recipes, %d of them paying"),
+				stats.reagents, stats.recipes, stats.profitable);
+	end
+
+	-- Nothing paying is a real state, not an empty table, and saying so beats a
+	-- page of dashes: every recipe you know loses money at today's prices.
+	if (stats.profitable == 0) then
+		return s..AZT("  |  nothing pays at today's prices, so nothing here is worth buying yet");
+	end
+
+	if (stats.outlay > 0) then
+		s = s..string.format (AZT("  |  one craft of each paying recipe: %s of reagents"), An_Money (stats.outlay));
+	end
+
+	if (stats.vendor > 0) then
+		s = s..string.format (AZT("  |  %d vendor-sold"), stats.vendor);
+	end
+
+	-- The total above is over what could be priced, so what could not is said
+	-- rather than quietly left out of it.
+	if (stats.priced < stats.reagents) then
+		s = s..string.format (AZT("  |  %d never priced"), stats.reagents - stats.priced);
+	end
+
+	return s;
+end
+
+local function An_RedisplayReagents ()
+
+	local rows, stats = An_ReagentRows ();
+	local n = #rows;
+
+	if (FauxScrollFrame_Update) then
+		FauxScrollFrame_Update (Atr_An_ScrollFrame, n, AN_NUM_ROWS, AN_ROW_H);
+	end
+
+	local offset = (FauxScrollFrame_GetOffset and FauxScrollFrame_GetOffset (Atr_An_ScrollFrame)) or 0;
+
+	local i;
+	for i = 1, AN_NUM_ROWS do
+
+		local line = _G["Atr_An_Row"..i];
+		if (line) then
+
+			local r = rows[offset + i];
+
+			if (r == nil) then
+				line:Hide();
+			else
+				line.ritem:SetText (r.name or ("item "..tostring (r.id)));
+
+				-- paying recipes out of all of them, and the pair is the point:
+				-- 3/3 and 3/40 are the same demand from very different positions
+				local pays = r.pays or 0;
+				if (pays > 0) then
+					line.rrecipes:SetText (string.format ("|cffffffff%d|r|cff888888/%d|r", pays, r.recipes));
+				else
+					line.rrecipes:SetText (string.format ("|cff666666%d/%d|r", pays, r.recipes));
+				end
+
+				line.rneed:SetText (r.need and ("|cffffffff"..r.need.."|r") or "|cff666666--|r");
+
+				-- green once the bank already covers the basket: there is nothing
+				-- to buy, whatever the rest of the row says
+				if (r.have == nil or r.have == 0) then
+					line.rhave:SetText ("|cff666666--|r");
+				elseif (r.need and r.have >= r.need) then
+					line.rhave:SetText ("|cff40ff40"..r.have.."|r");
+				else
+					line.rhave:SetText ("|cffffffff"..r.have.."|r");
+				end
+
+				line.rcost:SetText (r.unit and An_Money (r.unit) or "|cff666666--|r");
+				line.rprofit:SetText (r.profit and An_Signed (r.profit) or "|cff666666--|r");
+				line.rsupply:SetText (An_Supply (r));
+
+				line.rec = r;
+				An_WarmItem (r);
+				line:Show();
+			end
+		end
+	end
+
+	if (Atr_An_Summary) then Atr_An_Summary:SetText (An_ReagentSummary (stats, n)); end
+end
+
 -- Swap the views over the shared table.  Nothing is re-anchored: every row
--- already carries all three sets of cells and each header set has its own
+-- already carries all four sets of cells and each header set has its own
 -- container, so this is Show and Hide only.
 function Atr_An_SetView (view)
 
-	if (view ~= "trades" and view ~= "craft") then view = "market"; end
+	if (view ~= "trades" and view ~= "craft" and view ~= "reagents") then view = "market"; end
 	gAn_View = view;
 
 	local market = (view == "market");
@@ -1573,9 +1890,10 @@ function Atr_An_SetView (view)
 		if (on) then f:Show(); else f:Hide(); end
 	end
 
-	vis (Atr_An_HeadMarket, market);
-	vis (Atr_An_HeadTrades, view == "trades");
-	vis (Atr_An_HeadCraft,  view == "craft");
+	vis (Atr_An_HeadMarket,   market);
+	vis (Atr_An_HeadTrades,   view == "trades");
+	vis (Atr_An_HeadCraft,    view == "craft");
+	vis (Atr_An_HeadReagents, view == "reagents");
 
 	local i;
 	for i = 1, #gAn_MarketOnly do vis (gAn_MarketOnly[i], market); end
@@ -1587,13 +1905,15 @@ function Atr_An_SetView (view)
 			for _, c in ipairs (AN_COLS)  do vis (line[c.key], market); end
 			for _, c in ipairs (AN_TCOLS) do vis (line[c.key], view == "trades"); end
 			for _, c in ipairs (AN_CCOLS) do vis (line[c.key], view == "craft");  end
+			for _, c in ipairs (AN_RCOLS) do vis (line[c.key], view == "reagents"); end
 			vis (line.del, market);
 		end
 	end
 
 	-- the active view's button is the disabled one: the others are the things
 	-- left to press, which is what a button should be
-	local btn = { market = Atr_An_ViewMarket, trades = Atr_An_ViewTrades, craft = Atr_An_ViewCraft };
+	local btn = { market = Atr_An_ViewMarket, trades = Atr_An_ViewTrades,
+				  craft = Atr_An_ViewCraft, reagents = Atr_An_ViewReagents };
 	local k, b;
 	for k, b in pairs (btn) do
 		if (b and b.Enable) then
@@ -1605,11 +1925,13 @@ function Atr_An_SetView (view)
 	if (not market) then Atr_An_RefreshStop (true); end
 
 	-- Re-price on the way in, rather than showing whatever the prices were the
-	-- last time this view was open (see An_CraftInvalidate).
-	if (view == "craft") then An_CraftInvalidate (); end
+	-- last time either of the price-derived views was open (see
+	-- An_CraftInvalidate).  Both go through the same cached ranking, so entering
+	-- either one is the journey back that has to drop it.
+	if (view == "craft" or view == "reagents") then An_CraftInvalidate (); end
 
-	-- the crafting tooltip belongs to a view that may just have gone
-	An_HideCraftTip ();
+	-- the second tooltip belongs to a view that may just have gone
+	An_HideSideTip ();
 
 	-- Each view keeps its own sort, so the arrow has to be redrawn for the one
 	-- coming up rather than left on whatever the last view was sorted by.
@@ -1628,8 +1950,9 @@ function Atr_An_Redisplay ()
 
 	if (not Atr_An_Panel or not Atr_An_Panel:IsShown()) then return; end
 
-	if (gAn_View == "trades") then return An_RedisplayTrades (); end
-	if (gAn_View == "craft")  then return An_RedisplayCraft ();  end
+	if (gAn_View == "trades")   then return An_RedisplayTrades ();   end
+	if (gAn_View == "craft")    then return An_RedisplayCraft ();    end
+	if (gAn_View == "reagents") then return An_RedisplayReagents (); end
 
 	local rows = An_Rows ();
 	local n    = #rows;
@@ -2397,7 +2720,7 @@ function Atr_An_OnTabClick (index)
 		-- the pump follows the current pane, so a run cannot survive the tab
 		Atr_An_RefreshStop (true);
 		if (Atr_An_HideItemMenu) then Atr_An_HideItemMenu (); end
-		An_HideCraftTip ();		-- the panel can go while the cursor is still on a row
+		An_HideSideTip ();		-- the panel can go while the cursor is still on a row
 		Atr_An_Panel:Hide();
 	end
 end
@@ -2435,6 +2758,7 @@ function Atr_An_Init ()
 	An_LayoutCols (AN_COLS,  AN_ROW_W);
 	An_LayoutCols (AN_TCOLS, AN_ROW_W);
 	An_LayoutCols (AN_CCOLS, AN_ROW_W);
+	An_LayoutCols (AN_RCOLS, AN_ROW_W);
 
 	local bg = panel:CreateTexture (nil, "BACKGROUND");
 	bg:SetTexture (0, 0, 0, 0.85);
@@ -2496,17 +2820,24 @@ function Atr_An_Init ()
 	-- permanent edit box for each was two boxes' worth of row spent on it.
 	--
 	-- Anchored to each other rather than at fixed x from the dropdown onwards:
-	-- UIDropDownMenu_SetWidth(110) makes a frame 160 wide (25 of dead art each
+	-- UIDropDownMenu_SetWidth(90) makes a frame 140 wide (25 of dead art each
 	-- side), and hard-coding where that ends is how the last layout ended up
 	-- being retuned from a screenshot.  The chain starts at x=176, which is just
-	-- past the filter box's own border art, and ends around x=492 on Blizzard's
-	-- 768px window -- clear of the view toggle, which starts at 526 there.
+	-- past the filter box's own border art, and ends at ~466 on Blizzard's 768px
+	-- window -- clear of the view toggle, which starts at 476 there.
+	--
+	-- EVERY WIDTH HERE CAME DOWN when B3 added a fourth view button (dropdown
+	-- 110 -> 90, Add Item 76 -> 70, Add Group 82 -> 76): four buttons need 244 of
+	-- a row that only has so much of it, and the toggle is anchored to the right
+	-- edge, so the two chains meet in the middle.  The trimmed dropdown shows a
+	-- long group name less of, which is the cheapest of the things that could
+	-- have given.
 	local grpDD;
 
 	if (UIDropDownMenu_Initialize) then
 		grpDD = CreateFrame ("Frame", "Atr_An_GroupDD", panel, "UIDropDownMenuTemplate");
 		grpDD:SetPoint ("TOPLEFT", 176, -48);
-		UIDropDownMenu_SetWidth (grpDD, 110);
+		UIDropDownMenu_SetWidth (grpDD, 90);
 		UIDropDownMenu_Initialize (grpDD, An_GroupDD_Init);
 		UIDropDownMenu_SetText (grpDD, AZT("All groups"));
 	end
@@ -2534,11 +2865,11 @@ function Atr_An_Init ()
 		return b;
 	end
 
-	local addBtn = rowButton ("Atr_An_AddButton", 76, "Add Item", "ATR_AN_ADD_WATCH",
+	local addBtn = rowButton ("Atr_An_AddButton", 70, "Add Item", "ATR_AN_ADD_WATCH",
 		"Watch an item",
 		"Type a name, or shift-click an item link into the box. It joins the group you are looking at.");
 
-	local grpBtn = rowButton ("Atr_An_AddGroupButton", 82, "Add Group", "ATR_AN_ADD_GROUP",
+	local grpBtn = rowButton ("Atr_An_AddGroupButton", 76, "Add Group", "ATR_AN_ADD_GROUP",
 		"Make a group",
 		"Groups are your own labels for watched items -- ore, flasks, whatever you actually farm. The new one becomes the one you are looking at, so the next item you add lands in it.");
 
@@ -2620,9 +2951,10 @@ function Atr_An_Init ()
 		return box;
 	end
 
-	headerSet ("Atr_An_HeadMarket", "market", AN_COLS);
-	headerSet ("Atr_An_HeadTrades", "trades", AN_TCOLS);
-	headerSet ("Atr_An_HeadCraft",  "craft",  AN_CCOLS);
+	headerSet ("Atr_An_HeadMarket",   "market",   AN_COLS);
+	headerSet ("Atr_An_HeadTrades",   "trades",   AN_TCOLS);
+	headerSet ("Atr_An_HeadCraft",    "craft",    AN_CCOLS);
+	headerSet ("Atr_An_HeadReagents", "reagents", AN_RCOLS);
 
 	local scroll = CreateFrame ("ScrollFrame", "Atr_An_ScrollFrame", panel, "FauxScrollFrameTemplate");
 	scroll:SetPoint ("TOPLEFT", AN_HEAD_X0, -102);
@@ -2647,7 +2979,7 @@ function Atr_An_Init ()
 		-- every view's cells, on every row: the keys do not collide and only one
 		-- set is ever shown, which is what makes the switch free of re-anchoring
 		local cols, cc;
-		for _, cols in ipairs ({ AN_COLS, AN_TCOLS, AN_CCOLS }) do
+		for _, cols in ipairs ({ AN_COLS, AN_TCOLS, AN_CCOLS, AN_RCOLS }) do
 			for _, cc in ipairs (cols) do
 				local fs = line:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
 				fs:SetPoint ("LEFT", cc.cx, 0);
@@ -2694,13 +3026,14 @@ function Atr_An_Init ()
 			GameTooltip:AddLine (AZT("Left click to look it up.  Right click for lists."), 0.5, 0.5, 0.5);
 			GameTooltip:Show();
 
-			-- the crafting figures go BESIDE it, not under it
-			if (gAn_View == "craft") then An_ShowCraftTip (self, rec); end
+			-- the workings go BESIDE it, not under it
+			if (gAn_View == "craft")    then An_ShowCraftTip (self, rec);   end
+			if (gAn_View == "reagents") then An_ShowReagentTip (self, rec); end
 		end);
 
 		line:SetScript ("OnLeave", function ()
 			if (GameTooltip) then GameTooltip:Hide(); end
-			An_HideCraftTip ();
+			An_HideSideTip ();
 		end);
 
 		-- A plain Button hears the left click only, and the right one is now half
@@ -2719,7 +3052,7 @@ function Atr_An_Init ()
 			-- OnLeave never fires and the tooltips would sit there over the tab we
 			-- just switched to
 			if (GameTooltip) then GameTooltip:Hide(); end
-			An_HideCraftTip ();
+			An_HideSideTip ();
 
 			if (button == "RightButton") then
 				if (type (Atr_An_ShowItemMenu) == "function") then
@@ -2768,7 +3101,7 @@ function Atr_An_Init ()
 	progress:SetJustifyH ("RIGHT");
 	progress:SetText ("");
 
-	-- THE VIEW TOGGLE (BACKLOG item 8, group D; a third view added for B2).
+	-- THE VIEW TOGGLE (BACKLOG item 8, group D; B2 added a third view, B3 a fourth).
 	--
 	-- Top right, which is the one part of the control row that is empty: the add
 	-- box, the group dropdown and the new-group box run along the left of it, and
@@ -2778,14 +3111,16 @@ function Atr_An_Init ()
 	-- auction house.
 	local function viewButton (name, label, view, tipTitle, tipBody)
 
-		-- 62 apiece and a 4px gap: three of those is 194, so on Blizzard's 768
-		-- window (a 746 panel) the row runs 526..720 and the group controls,
-		-- moved left to end at ~508, clear it by 18. The pair used to be 72 wide
-		-- against controls ending at ~558, which a third button would have run
-		-- straight into. 62 still fits "My trades" at GameFontNormalSmall, which
-		-- is the widest of the three labels.
+		-- 58 apiece and a 4px gap: four of those is 244, so on Blizzard's 768
+		-- window (a 746 panel) the row runs 476..720 and the group controls,
+		-- trimmed to end at ~466, clear it by 10. They were 62 for three buttons
+		-- against controls ending at ~508; a fourth at that width would have run
+		-- straight into them, so both chains gave a little.
+		-- 58 fits "Reagents" and "Crafting" at GameFontNormalSmall but not "My
+		-- trades", which is why that one is now "Trades" -- its tooltip still
+		-- says whose trades they are, and no other label had nine characters.
 		local b = CreateFrame ("Button", name, panel, "UIPanelButtonTemplate");
-		b:SetSize (62, 22);
+		b:SetSize (58, 22);
 		b:SetText (AZT (label));
 		b:SetNormalFontObject ("GameFontNormalSmall");
 		b:SetHighlightFontObject ("GameFontHighlightSmall");
@@ -2804,13 +3139,18 @@ function Atr_An_Init ()
 	end
 
 	-- Right to left, in the order they are read: what the market is doing, what
-	-- you made, what you could make.
+	-- you made, what you could make, and what making it costs you.
+	local vReag = viewButton ("Atr_An_ViewReagents", "Reagents", "reagents",
+		"What you have to buy",
+		"The crafting list inverted: every reagent your paying recipes need, how much of your own profit is waiting on each one, how many you already hold -- and whether anyone is actually selling them.");
+	vReag:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -26, -50);
+
 	local vCraft = viewButton ("Atr_An_ViewCraft", "Crafting", "craft",
 		"What is worth crafting",
 		"Every recipe your professions have harvested, ranked by what one craft is worth at today's prices. The profession window's own profit sort, available where you are actually standing when you decide.");
-	vCraft:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -26, -50);
+	vCraft:SetPoint ("RIGHT", vReag, "LEFT", -4, 0);
 
-	local vTrades = viewButton ("Atr_An_ViewTrades", "My trades", "trades",
+	local vTrades = viewButton ("Atr_An_ViewTrades", "Trades", "trades",
 		"What you actually made",
 		"Your own buys and sales out of the ledger: paid, got, margin and sell-through, per item. The only numbers on this tab that are not estimates.");
 	vTrades:SetPoint ("RIGHT", vCraft, "LEFT", -4, 0);
@@ -2911,7 +3251,7 @@ if (SlashCmdList) then
 			An_AddWatchFromText (rest);		-- same path as the Add button's popup
 		elseif (cmd == "group" and rest ~= "") then
 			Atr_An_AddGroup (rest);
-		elseif (cmd == "trades" or cmd == "market" or cmd == "craft") then
+		elseif (cmd == "trades" or cmd == "market" or cmd == "craft" or cmd == "reagents") then
 			-- the toggle buttons do this; the command exists because a button on
 			-- this tab has been reported dead three times (item 22) and a second
 			-- way in costs two lines
@@ -2973,7 +3313,7 @@ if (SlashCmdList) then
 			end
 		else
 			if (zc and zc.msg_atr) then
-				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  craft  |  menu [item name]  |  diag"));
+				zc.msg_atr (AZT("usage: /atranalysis add <item name or shift-clicked link>  |  group <name>  |  market  |  trades  |  craft  |  reagents  |  menu [item name]  |  diag"));
 			end
 		end
 		Atr_An_Redisplay ();
