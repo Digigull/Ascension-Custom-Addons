@@ -643,23 +643,33 @@ local AN_PLAN_LANE = 24;	-- the crafting view's plan tick, at the START of a row
 -- Sold/day and Gold/day sort on the UPPER bound of their range for the reason
 -- the original ranking did: for anyone scanning slowly the lower bound is zero
 -- on almost every item, and a ranking where everything ties is no ranking.
+-- WIDTHS PAID FOR THE WEEK COLUMN (item 31 stage 3), the same way the Reagents
+-- view paid for Outlay: Item 184->176, Group 74->60, Sellers 48->44, Listings
+-- 54->48, Sold/day 80->74, Low 84->78, Gold/day 96->88.  Eight columns is 624 of
+-- minimum plus 28 of gap plus AN_LEAD and AN_DEL_LANE = 684, which clears the
+-- 702px row Blizzard's 768 auction house gives by 18.
 local AN_COLS = {
-	{ key = "item",		head = "Item",		w = 184, grow = 3,					text = true,
+	{ key = "item",		head = "Item",		w = 176, grow = 3,					text = true,
 	  val = function (r) return string.lower (r.name or ""); end },
-	{ key = "grp",		head = "Group",		w = 74,  grow = 1,					text = true,
+	{ key = "grp",		head = "Group",		w = 60,  grow = 1,					text = true,
 	  val = function (r) return (r.group and r.group ~= "") and string.lower (r.group) or nil; end },
-	{ key = "sellers",	head = "Sellers",	w = 48,  grow = 0, just = "CENTER",
+	{ key = "sellers",	head = "Sellers",	w = 44,  grow = 0, just = "CENTER",
 	  val = function (r) return r.st and r.st.scans > 0 and r.st.sellers or nil; end },
-	{ key = "listings",	head = "Listings",	w = 54,  grow = 0, just = "CENTER",
+	{ key = "listings",	head = "Listings",	w = 48,  grow = 0, just = "CENTER",
 	  val = function (r) return r.st and r.st.scans > 0 and r.st.listings or nil; end },
-	{ key = "rate",		head = "Sold/day",	w = 80,  grow = 2, just = "CENTER",
+	{ key = "rate",		head = "Sold/day",	w = 74,  grow = 2, just = "CENTER",
 	  tip = "An estimate. Counted from listings that disappeared between two scans, so it is a floor, not an exact count.",
 	  val = function (r) return r.st and r.st.perDay and r.st.perDayMax or nil; end },
-	{ key = "low",		head = "Low",		w = 84,  grow = 1, just = "RIGHT",
+	{ key = "low",		head = "Low",		w = 78,  grow = 1, just = "RIGHT",
 	  -- the scans guard matches the cell: an unscanned row prints "--" here, and
 	  -- what prints "--" sorts as unknown
 	  val = function (r) return r.st and r.st.scans > 0 and r.st.low or nil; end },
-	{ key = "farm",		head = "Gold/day",	w = 96,  grow = 4, just = "RIGHT",
+	{ key = "week",		head = "Week",		w = 56,  grow = 1, just = "RIGHT",
+	  tip = "How much dearer or cheaper this is than it was a week ago, from the recorded price history -- needs that history switched on (options > Scanning). A price on its own says nothing; a price that has tripled since last week is a farm worth doing. Until a week has been recorded it compares against the oldest reading there is and the hover says how far back that really was. Blank means not enough history yet.",
+	  -- the ratio, not the printed percent, so two rows rounding to the same
+	  -- whole number are still in a real order
+	  val = function (r) return r.wow and r.wow.pct or nil; end },
+	{ key = "farm",		head = "Gold/day",	w = 88,  grow = 3, just = "RIGHT",
 	  tip = "An estimate: Sold/day valued at the current lowest price. A rate, not a promise.",
 	  val = function (r) return r.st and r.st.farmMax or nil; end },
 };
@@ -1297,7 +1307,13 @@ local function An_Rows ()
 	for name, w in pairs (db.watch) do
 		if ((gAn_Group == nil or (w.group or "") == gAn_Group) and An_PassesFilter (name)) then
 			local st = Atr_An_Stats (name);
-			tinsert (out, { name = name, group = w.group, st = st, id = st and st.id });
+
+			-- Attached here, once per row per rebuild, for the reason `st` is:
+			-- the sort calls a column's `val` for every row and the draw calls it
+			-- again for every visible one, and this one decodes a string.
+			local wow = (type (Atr_Hist_Delta) == "function") and Atr_Hist_Delta (name) or nil;
+
+			tinsert (out, { name = name, group = w.group, st = st, wow = wow, id = st and st.id });
 		end
 	end
 
@@ -1309,6 +1325,47 @@ end
 -- A margin with its sign kept.  An_Money prints a grey dash for zero, which is
 -- right for "no price known" and wrong for "these came out exactly even", so a
 -- real zero is printed as a zero.
+-- How stale the newer end of a week-over-week reading may be before the figure
+-- is dimmed.  Three days: the comparison is a week, so a reading that has not
+-- been refreshed in half of one is describing a market you have stopped looking
+-- at.
+local ATR_AN_STALE_DAYS = 3;
+
+-- WEEK OVER WEEK IN ONE CELL (item 31 stage 3, and the figure BACKLOG item 8's
+-- group C was scoped around).  "Copper ore at 40s says nothing. Copper ore at
+-- 40s when it was 12s last week is a farm worth doing."
+--
+-- UP IS GREEN, which is the farmer's reading and therefore this view's: the
+-- column two along is Gold/day and the question this table answers is what is
+-- worth going and getting.  Whoever is buying rather than selling gets the same
+-- number with the opposite sign, and the hover spells it out either way.
+--
+-- A reading whose newer end is itself stale is DIMMED, not hidden: it is still
+-- the last thing the market did, and hiding it would say "no movement" about an
+-- item nobody has scanned lately -- which is a claim about the player.
+local function An_WeekDelta (r)
+
+	local d = r and r.wow;
+	if (d == nil) then return "|cff666666--|r"; end
+
+	local pct = d.pct * 100;
+
+	-- the cell is 56px: a 12s reagent that went to 40g is +33,000%, which is true
+	-- and unreadable, and past a certain point the digits stop being the point
+	local txt;
+	if (pct > 999)      then txt = ">999%";
+	elseif (pct < -99)  then txt = "-99%";
+	elseif (pct >= 0)   then txt = string.format ("+%d%%", math.floor (pct + 0.5));
+	else                     txt = string.format ("%d%%",  math.ceil  (pct - 0.5)); end
+
+	if ((d.age or 0) > ATR_AN_STALE_DAYS) then return "|cff888888"..txt.."|r"; end
+
+	if (pct >= 5)  then return "|cff40ff40"..txt.."|r"; end
+	if (pct <= -5) then return "|cffff6060"..txt.."|r"; end
+
+	return "|cffcccccc"..txt.."|r";			-- flat, and flat is an answer
+end
+
 local function An_Signed (v)
 
 	if (v == nil) then return "|cff666666--|r"; end
@@ -2672,6 +2729,7 @@ function Atr_An_Redisplay ()
 					line.listings:SetText ("|cff666666--|r");
 					line.rate:SetText ("|cff666666"..AZT("not scanned").."|r");
 					line.low:SetText ("|cff666666--|r");
+					line.week:SetText (An_WeekDelta (r));
 					line.farm:SetText ("|cff666666--|r");
 				else
 					-- one seller holding most of the supply is a different market
@@ -2689,6 +2747,8 @@ function Atr_An_Redisplay ()
 					end
 
 					line.low:SetText (An_Money (st.low));
+
+					line.week:SetText (An_WeekDelta (r));
 
 					if (st.farm == nil) then
 						line.farm:SetText ("|cff666666--|r");
@@ -3808,6 +3868,32 @@ function Atr_An_Init ()
 				-- that may never have been scanned, and a watch entry is a name
 				-- someone typed.  The name is what there is, and it beats nothing.
 				GameTooltip:SetText (rec.name or "", 1, 1, 1);
+			end
+
+			-- The week figure spelled out.  The cell has room for one number, and
+			-- what that number actually COMPARES is the thing it cannot say: until
+			-- a week has been recorded the span is shorter than a week, and the
+			-- newer end can itself be days old.  Both are stated rather than
+			-- rounded into a percentage that looks the same either way.
+			if (gAn_View == "market" and rec.wow) then
+
+				GameTooltip:AddLine (" ");
+				GameTooltip:AddDoubleLine (
+					string.format (AZT("%d days ago"), rec.wow.span or 0),
+					An_Money (rec.wow.from), 1, 1, 1, 0.8, 0.8, 0.8);
+
+				local newLabel = AZT("last scan, today");
+				if ((rec.wow.age or 0) == 1) then
+					newLabel = AZT("last scan, yesterday");
+				elseif ((rec.wow.age or 0) > 1) then
+					newLabel = string.format (AZT("last scan, %d days ago"), rec.wow.age);
+				end
+
+				GameTooltip:AddDoubleLine (newLabel, An_Money (rec.wow.to), 1, 1, 1, 1, 1, 1);
+
+				if ((rec.wow.span or 0) < 7) then
+					GameTooltip:AddLine (AZT("Less than a week of history so far, so this compares the whole of what there is."), 0.6, 0.6, 0.6, true);
+				end
 			end
 
 			GameTooltip:AddLine (" ");

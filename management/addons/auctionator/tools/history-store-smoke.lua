@@ -235,6 +235,60 @@ eq (st.names, 4, "four items recorded on this realm")
 check (st.samples >= 33, "... and their samples are counted -- got " .. tostring (st.samples))
 
 --------------------------------------------------------------------
+-- 13. THE READS (stage 2 and 3). Atr_Hist_Recent is on the price cascade's hot
+--     path; Atr_Hist_Delta picks which historical sample "a week ago" means, and
+--     picking the wrong one is an off-by-one nobody would ever see in game --
+--     the number would just be quietly wrong.
+--------------------------------------------------------------------
+
+local d
+for d = 6600, 6614 do
+	gNow = day (d)
+	Atr_Hist_Note ("Copper Ore Two", 1000 + (d - 6600) * 100)
+end
+
+gNow = day (6614)
+
+local p, age = Atr_Hist_Recent ("Copper Ore Two")
+eq (p, 2400,   "the cascade reads the newest price")
+eq (age, 0,    "... and how old it is")
+eq (Atr_Hist_Recent ("Never Heard Of It"), nil, "an unrecorded item prices at nothing, not zero")
+
+local w = Atr_Hist_Delta ("Copper Ore Two")
+check (w ~= nil, "a fortnight of history yields a week-over-week reading")
+eq (w and w.span, 7,    "... spanning exactly a week")
+eq (w and w.from, 1700, "... against the newest sample at or before seven days back")
+eq (w and w.to,   2400, "... and the newest sample")
+check (w and math.abs (w.pct - (700 / 1700)) < 0.0001,
+	"... with the percentage over the OLD price")
+
+-- the newer end going stale must not hide the reading, only mark it
+gNow = day (6620)
+w = Atr_Hist_Delta ("Copper Ore Two")
+eq (w and w.age, 6, "a stale newest reading still reads, and reports its age")
+
+--------------------------------------------------------------------
+-- 14. Before a week exists: compare what there is, and say how much that was.
+--------------------------------------------------------------------
+
+gNow = day (6700); Atr_Hist_Note ("Short Series", 1000)
+gNow = day (6701); Atr_Hist_Note ("Short Series", 1100)
+
+eq (Atr_Hist_Delta ("Short Series"), nil, "two readings a day apart is noise, not a trend")
+
+gNow = day (6703); Atr_Hist_Note ("Short Series", 2000)
+w = Atr_Hist_Delta ("Short Series")
+check (w ~= nil,      "three days apart is enough to say something")
+eq (w and w.span, 3,  "... and it reports the REAL span, not a week")
+eq (w and w.from, 1000, "... against the oldest reading there is")
+check (w and math.abs (w.pct - 1.0) < 0.0001, "... doubling reads as +100%")
+
+eq (Atr_Hist_Delta ("Never Heard Of It"), nil, "an unrecorded item has no trend")
+
+gNow = day (6704); Atr_Hist_Note ("One Day Only", 500)
+eq (Atr_Hist_Delta ("One Day Only"), nil, "one reading is not a comparison")
+
+--------------------------------------------------------------------
 
 print (string.format ("%d passed, %d failed", passed, failed))
 os.exit (failed == 0 and 0 or 1)

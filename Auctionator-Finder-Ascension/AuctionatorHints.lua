@@ -438,6 +438,25 @@ function Atr_GetAuctionPrice (item, variantKey)  -- itemName or itemID
 		if (p) then return p; end
 	end
 
+	-- THE MARKET SERIES, above your own postings (BACKLOG item 31, stage 2).
+	--
+	-- The rung below this one is Atr_GetMostRecentSale, which reads
+	-- AUCTIONATOR_PRICING_HISTORY -- and that is a record of WHAT YOU LISTED
+	-- THINGS AT, not what the market did.  So when the scan database has nothing,
+	-- this function's answer used to be your own last guess, priced back to you
+	-- as though it were evidence.  A recorded market reading is strictly better,
+	-- and it is bounded by the store's own month of retention where the posting
+	-- history has no age bound at all.
+	--
+	-- Name-keyed, so like every fallback under it this answers the name's default
+	-- rather than a variant -- the same limitation the mean database carries, and
+	-- for the same reason (item 12 part 3b).  Costs a table lookup and one string
+	-- match, and only on the path where the scan database already missed.
+	if (type (Atr_Hist_Recent) == "function") then
+		local hp = Atr_Hist_Recent (itemName);
+		if (hp and hp > 0) then return hp; end
+	end
+
 	local recent = Atr_GetMostRecentSale (itemName);
 	if (recent) then
 		return recent;

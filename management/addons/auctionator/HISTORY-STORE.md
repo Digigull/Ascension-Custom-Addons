@@ -359,11 +359,12 @@ follows. Ships dark: it records and nothing reads it. **That is deliberate** —
 play then produces real data, and stage 2's readers can be built against something instead of
 against an empty table.
 
-**Stage 2 — the cheapest, highest-value read: the cascade.**
+**Stage 2 — the cheapest, highest-value read: the cascade. — BUILT 2026-08-21, see §12.**
 `Atr_GetAuctionPrice` gains a history rung above `Atr_GetMostRecentSale`. One branch, and every
 price in the addon improves at once.
 
 **Stage 3 — the week-over-week column** (this *is* item 8 group C, and it closes it).
+**— BUILT 2026-08-21, see §12.**
 One column on the Analysis tab's Market view: `+240%`, no chart, nil when the comparison sample is
 too old to be honest.
 
@@ -468,6 +469,64 @@ split, and that an unreadable record is dropped rather than guessed at.
 **What is deliberately not here:** no reader. `Atr_Hist_Series` exists and nothing in the addon
 calls it. That is stage 2's seam, and leaving it dark is what lets a week of ordinary play produce
 real data for the readers to be built against.
+
+---
+
+## 12. Stages 2 and 3 as built, 2026-08-21
+
+Built back to back on the owner's call to keep moving rather than verify each step
+(*"assume it's going to work... continue as if nothing will go wrong for efficiency"*), which is
+the repo's own standing rule applied deliberately. Offline checks pass; **not seen in game**.
+
+### Stage 2 — the cascade rung
+
+`Atr_GetAuctionPrice` becomes: scan database → **`Atr_Hist_Recent`** → `Atr_GetMostRecentSale` →
+`Atr_GetAHVariantEstimate`.
+
+The rung it was inserted above is the point. `Atr_GetMostRecentSale` reads
+`AUCTIONATOR_PRICING_HISTORY`, which is **what you listed things at** — so when the scan database
+had nothing, this function's answer was *your own last guess, priced back to you as evidence*. That
+is not a small thing to fix: 29 call sites across 6 files go through this function, so every price
+the addon shows for an unscanned item improves at once.
+
+`Atr_Hist_Recent` reads only the tail of the packed string — a table lookup and one match — and it
+runs only on the path where the scan database already missed. **No age filter**, deliberately: the
+store's own month of retention *is* the filter, and the rung below it has no age bound at all, so a
+three-week-old market reading is strictly better than an unbounded guess. The age comes back as a
+second return for callers that want to say how old it is.
+
+### Stage 3 — the Week column, which closes item 8's group C
+
+One column on the Analysis tab's Market view reading `+240%`. **No chart** — group C settled that:
+the demand driver rotates weekly, so what is wanted is "vs seven days ago", not a curve.
+
+- **`Atr_Hist_Delta`** picks the **newest sample at or before seven days back** — "what it was a
+  week ago", not "the oldest thing I have". Until a week has been recorded that sample does not
+  exist, so it falls back to the oldest reading it does have **and returns the real span with it**,
+  and the hover says *"4 days ago"* rather than quietly calling four days a week. Under three days
+  it returns nothing: two readings a day apart is noise.
+- **Up is green**, which is this view's reading — the column two along is Gold/day and the question
+  the table answers is what is worth going and getting. The hover states both prices and both dates
+  so the buyer's half of the story is one glance away.
+- **A stale newer end is dimmed, not hidden.** It is still the last thing the market did, and
+  hiding it would say "no movement" about an item nobody has scanned lately — a claim about the
+  player, not the market.
+- **Widths paid for it the same way the Reagents view paid for Outlay**: Item 184→176, Group 74→60,
+  Sellers 48→44, Listings 54→48, Sold/day 80→74, Low 84→78, Gold/day 96→88. Eight columns is 684 of
+  the 702px row, clearing it by 18.
+- The delta is computed **once per row per rebuild** and cached on the record beside `st`, because
+  the sort calls a column's `val` for every row and the draw calls it again for every visible one —
+  and this one decodes a string.
+
+**A superseded decision, worth naming.** Group C's plan was to store the series as a capped daily
+`{ t, low }` **on each watched item's `obs` record**. Item 31 replaced that: the series is general,
+so the column reads the same store every other consumer does and the watchlist is no longer the
+unit of retention. One store, one shape — which is the whole of §10's argument arriving early.
+
+**Tested:** the smoke test grew to 66 assertions, covering which sample "a week ago" resolves to,
+the short-history fallback and its reported span, the three-day floor, the staleness age, and the
+cascade read. That off-by-one is the kind nothing in game would ever show you — the number would
+simply be wrong.
 
 ---
 

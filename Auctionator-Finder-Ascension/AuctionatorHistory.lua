@@ -396,6 +396,79 @@ function Atr_Hist_Series (name, now)
 	return s;
 end
 
+-- THE NEWEST READING, without decoding the rest of the series.  This is the one
+-- the price cascade calls (stage 2), so it is on a hot path: a table lookup and
+-- one match on the tail of a string.
+--
+-- No age filter, deliberately.  The store's own retention IS the filter -- what
+-- is in here is at most a month old -- and the rung this sits above is
+-- Atr_GetMostRecentSale, which returns YOUR OWN LAST POSTING PRICE with no age
+-- bound at all.  A three-week-old market reading beats an unbounded guess of
+-- your own; the age comes back as a second return so a caller that wants to say
+-- how old it is can.
+function Atr_Hist_Recent (name, now)
+
+	local db = Atr_Hist_DB ();
+	if (db == nil or type (name) ~= "string") then return nil; end
+
+	local packed = db.p[name];
+	if (type (packed) ~= "string") then return nil; end
+
+	local rec = Hist_LastRec (packed);
+	if (rec == nil or rec.p == nil or rec.p <= 0) then return nil; end
+
+	return rec.p, Hist_Day (now) - rec.d;
+end
+
+-- WEEK OVER WEEK (BACKLOG item 8, group C -- this is the figure that item was
+-- scoped around, and item 31 is what finally makes it computable).
+--
+-- "Copper ore at 40s says nothing. Copper ore at 40s WHEN IT WAS 12s LAST WEEK
+-- is a farm worth doing." A week, not a trend line, because the demand driver
+-- rotates weekly -- Call Board quests change every week, so one week the ore is
+-- scarce and dear and the next nobody wants it.
+--
+-- The comparison sample is the NEWEST reading at or before a week back, which is
+-- "what it was a week ago" and not "the oldest thing I have".  Until the store
+-- has a week in it that does not exist, so it falls back to the oldest reading
+-- it does have -- and returns the real `span` with it, so the caller says "vs 4
+-- days ago" rather than quietly calling four days a week.  Under ATR_HIST_MINSPAN
+-- it returns nothing at all: two readings a day apart is noise, not a trend.
+local ATR_HIST_WEEK    = 7;
+local ATR_HIST_MINSPAN = 3;
+
+function Atr_Hist_Delta (name, days, now)
+
+	local s = Atr_Hist_Series (name, now);
+	if (#s < 2) then return nil; end
+
+	days = tonumber (days) or ATR_HIST_WEEK;
+
+	local newest = s[#s];
+	local target = newest.d - days;
+
+	local pick;
+	local i;
+	for i = #s - 1, 1, -1 do
+		if (s[i].d <= target) then pick = s[i]; break; end
+	end
+
+	if (pick == nil) then
+		if ((newest.d - s[1].d) < ATR_HIST_MINSPAN) then return nil; end
+		pick = s[1];
+	end
+
+	if (pick.p == nil or pick.p <= 0) then return nil; end
+
+	return {
+		pct  = (newest.p - pick.p) / pick.p,
+		from = pick.p,
+		to   = newest.p,
+		span = newest.d - pick.d,		-- days actually compared, which may not be 7
+		age  = newest.age or 0,			-- how stale the NEWER end is
+	};
+end
+
 -- What the store holds, for the status line.
 function Atr_Hist_Stats ()
 
