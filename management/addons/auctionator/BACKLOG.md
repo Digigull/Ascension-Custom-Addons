@@ -14,7 +14,7 @@ written up as a diagnosis rather than a fix, because the write path it doubts tu
 
 **Built 2026-08-21: items 1, 2, 3, 5, 6 and 7**, in three branches; **item 6 reopened and finished
 2026-08-22** after the first in-game session, which is written up under it. **Item 4 needs a reading
-from the owner** rather than code — one `/atrpricedb status` says whether the Buy tab's feed is
+from the owner** rather than code — one bare `/atrprices` says whether the Buy tab's feed is
 switched off or arriving empty. **Item 8 is new, 2026-08-22, nothing built.**
 
 ---
@@ -277,9 +277,31 @@ deliberately, and a Buy search is exactly the path that always has a link.
 
 **So the first move is not a fix.** It is to establish which of three things is happening — the
 search never reaches `Finish`, the price is written where the reader is not looking, or it is
-written correctly and the *tooltip* is the stale half. `/atrpricedb` (`AuctionatorFinderPriceDB.lua:240`)
-already reports the table's state and is the cheapest instrument; a before/after on one item name
-answers it in one search. Only then is there a change to write.
+written correctly and the *tooltip* is the stale half. **`/atrprices`** — bare, with no argument — is that instrument
+(`Fdr_PriceDB_Report`, `AuctionatorFinderPriceDB.lua:231`). A before/after on one item name answers
+it in one search. Only then is there a change to write.
+
+**The command is `/atrprices` and it takes no verb for this** (recorded 2026-08-22, after the name
+`/atrpricedb status` was given to the owner from memory and turned out not to exist). The parser
+treats any word that is not `on`, `off` or `reset` as an **item name** and routes it to
+`Fdr_PriceDB_Inspect`, so `/atrprices status` looks up an item called "status" rather than printing
+the report. The four forms that exist:
+
+| Form | What it does |
+|---|---|
+| `/atrprices` | the report: feed ON/OFF, name counts for both databases, last write, quality floor |
+| `/atrprices <item>` | inspect one item — what is stored for it and why |
+| `/atrprices on` \| `off` | toggle the feed, then print the report |
+| `/atrprices reset <item>` \| `reset all` | recalibrate the median |
+
+**The reading to take:** `/atrprices` before a Buy-tab search, then search one item, then
+`/atrprices` again — if *last write* does not move, the feed is not firing on that path at all,
+which is a different bug from a stale tooltip. `/atrprices <that item>` afterwards settles whether
+the write landed under a key the reader is not looking at.
+
+**It prints to chat**, which this repo's own rule says a diagnostic should not do — but it is six
+short lines rather than forty numbers, so a screenshot carries it. If the answer turns out to need
+paging through more than that, it wants a copy box first.
 
 ---
 
