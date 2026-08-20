@@ -149,6 +149,25 @@ dance.
 > Only touch World 1 when the change is *to* an upstream tab — which, in the backlog, is item 1
 > and nothing else.
 
+### Outside both worlds — the farm window (item 34)
+
+`AuctionatorFarmList.lua` is the one piece of UI here that is in **neither** world: a window and a
+minimap button parented to `UIParent`/`Minimap`, with no `AuctionFrame` above them and no tab. The
+rule above does not cover it, and three things follow that no other file in this addon has to think
+about:
+
+- **It cannot initialise from `Atr_Init`.** That runs when `Blizzard_AuctionUI` loads — the first
+  auctioneer you speak to — so anything built there does not exist until the player has already
+  been to the auction house. The file owns a `PLAYER_LOGIN` frame of its own instead.
+- **Its strata is the `LOW` + frame level 100 case** in `management/docs/CLAUDE.md`'s table, not the
+  `MEDIUM` house default: it is a window parked on screen while you play, so it must sit under a
+  character sheet opened by keybind. The minimap button is the documented exception — `MEDIUM` +
+  level 8, which is what every minimap button in the game does.
+- **It writes nothing of its own.** It is a reader over `Atr_Advisor_FarmList()`, and its one
+  writer is `Atr_Advisor_SetFarmed(name, false)` — you ticking something off.
+
+Anything else that has to be usable away from the auction house belongs in this shape.
+
 The Analysis tab is the furthest this has been taken: **one panel, one table, four views** over
 different data (market estimates, the Ledger, the crafting ranking, and that ranking inverted into
 reagent demand), swapped by Show/Hide rather than rebuilt. §8 has the recipe.
@@ -178,7 +197,7 @@ that matter:
 | `AUCTIONATOR_LEDGER` | `{ ver, rows = { {t, src, who, name, link, id, qty, unit, …} } }` — what you bought and listed | `AuctionatorLedger` (BACKLOG item 7) |
 | `AUCTIONATOR_MARKET_HISTORY` | `{ ver, realms = { [realm_Faction] = { p = {[name] = "day:price[:scans];…"}, n } } }` — one packed string per item, the whole series in it | the four price feeds, via `Atr_Hist_Note` (off by default) — **companion file** |
 | `AUCTIONATOR_ANALYSIS` | `{ ver, watch = {[name]={group}}, groups, obs = {[name]={fp, sold, amb, secs, scans, listings, units, low, id, …}}, ids = {[name]=itemID}, plan = { batch, recipes = {[recipe name]=true} } }` — the watchlist, what scanning has learned about it, and the recipes you have ticked to make (BACKLOG item 29 stage 3) | `AuctionatorAnalysis` (BACKLOG item 8) |
-| `AUCTIONATOR_ADVISOR` | `{ ver, ignore = {[name]=when}, slow = {[name]=when}, farm = {[name]={id, t}} }` — **what you told the Advisor**, not what it worked out: stop suggesting this, this one sells slowly, put this on the farm list | `AuctionatorAdvisor` (BACKLOG item 30 stage 2) |
+| `AUCTIONATOR_ADVISOR` | `{ ver, ignore = {[name]=when}, slow = {[name]=when}, farm = {[name]={id, t, gold}}, ui = { mmAngle, mmHidden, win } }` — **what you told the Advisor**, not what it worked out: stop suggesting this, this one sells slowly, put this on the farm list. A farm entry keeps the gold-per-day rate **as it was when you ticked it**, because the window that reads it is opened where no auction house can recompute it. `ui` is the farm window's own placement, kept here rather than in a saved variable of its own — two numbers and a boolean do not earn a file | `AuctionatorAdvisor` (BACKLOG item 30 stage 2), `AuctionatorFarmList` (item 34) |
 
 `ids` is the odd one and worth knowing about: a **name → item ID** map, because a tooltip needs an
 ID and this tab is full of rows that only have a name (a watch entry, and every enchant recipe,
@@ -186,10 +205,10 @@ which is filed under the scroll it sells as). It is *gated* to names the tab can
 answers never reach it at all — see §6.
 
 **`AUCTIONATOR_ADVISOR` is a file of its own on purpose, and the reason is a dependency and not
-tidiness.** The farm list is going to be opened from a **minimap button** (BACKLOG item 34), away
-from the auction house and away from the Analysis tab entirely — making that reader load the
-watchlist database to find out what to farm would be the wrong way round, and it is cheaper to
-separate them now than to unpick it later. Note also what is *not* in it: **skip** state, which is
+tidiness.** The farm list is opened from a **minimap button** (BACKLOG item 34, built 2026-08-21),
+away from the auction house and away from the Analysis tab entirely — making that reader load the
+watchlist database to find out what to farm would have been the wrong way round. It paid off as
+written: `AuctionatorFarmList.lua` reads `Atr_Advisor_FarmList()` and touches nothing else. Note also what is *not* in it: **skip** state, which is
 session-only by design. "Move past this one" is a decision about today, and a `/reload` bringing it
 back is the correct amount of memory.
 
