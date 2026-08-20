@@ -3555,17 +3555,35 @@ Auctionator's companion files by mistake**. One of the names to avoid is `Auctio
 Whatever else this project does, the dump instructions must be rewritten **in the same commit that
 creates the folder**.
 
-**Open, and the owner's call** (the doc lists them in full):
+**Answered by the owner, 2026-08-21.** The sixth folder and the companion addon are **approved**.
+Measurement is not a gate — *"we can use the CPP addon for diagnosis, but the real test will be
+implementation of some sort"* — so stage 0 demotes from a phase to one `/cpp load` taken before the
+folder exists, which is the only moment that reading can be captured. And a direction, recorded as a
+direction: *"if this works out, we may make it core instead of toggleable — it may be more efficient
+and less cumbersome than the existing structure."* Left open: **what to call the folder** (it must
+not collide with stock Auctionator's `Auctionator_Pricing_History`, the file item 10 was lost to).
 
-1. **A sixth folder at the repo root — yes?** It is the only mechanism a second SavedVariables file
-   can exist through, and it changes `CLAUDE.md`'s "five independent addons" framing and the
-   "download one folder and drop it in" install story. The companion is a satellite, useless alone.
-2. **Default scope when switched on: watchlist (~15–25 KB) or every scanned name (~1.5–1.8 MB)?**
-   The doc recommends the watchlist and shows why the full version is nonetheless defensible.
-3. **Does it feed the price cascade, or only new columns?** The cascade is the highest-value read
-   and the one that changes numbers people already look at.
-4. **One `/cpp load` before anything is built?** It is the before-figure every later affordability
-   argument needs, and it costs one command.
+**That last sentence is worth more than it looks, and `HISTORY-STORE.md` §10 is what it turns into.**
+A dated series **subsumes both current price stores**: `AUCTIONATOR_PRICE_DATABASE` is the newest
+sample, and `AUCTIONATOR_MEAN_PRICE_DATABASE` is a *broken attempt at the same question* — it wants
+to say what an item is normally worth and cannot, having discarded the dates and thinned itself at
+random. So the end state is not three stores; it is one store, one shape, honest eviction, and a
+deletion of 5267 rows. At 30 days daily plus the condenser, history is plausibly **net-neutral or
+smaller on disk than what it replaces**. That is the real form of "more efficient", and it is a
+better argument for building this than "it unblocks three items".
+
+Two things follow, and the last open question answers itself: **core and watchlist-only are
+incoherent together** (every reader would need an "unless it is not watched" branch), so the default
+scope becomes every scanned name with retention doing the bounding; and **the cascade read stops
+being optional**, because a price store the price function does not read is a side-car.
+
+**The sequencing does not change, and it is the one push-back.** Stage 1 still ships toggleable and
+off by default — not as hedging, but because a core store means migrating live data on a real
+account through a cascade every price flows through, on a client that cannot be run here, whereas a
+toggle means stage 1 changes nothing for anyone who does not switch it on. **Removing a flag later
+is deleting a branch; adding one later is shipping a fix under pressure.** The core step is then a
+migration, a deletion and a default flip, taken against a month of real data — the same
+measure-then-decide shape as items 12 part 3b and 13.
 
 **What it unblocks.** Item 8 group C (the week-over-week `+240%` column — this *is* that item's
 missing input), item 28's weekly demand signal, item 30's "ore is up, go mine" card, an age-aware

@@ -361,16 +361,76 @@ database still earns its 5267 rows.
 
 ---
 
-## 9. Open questions — the owner's calls, not mine
+## 9. Answered by the owner, 2026-08-21
 
-1. **A sixth folder at the repo root: yes or no?** It is the only mechanism (§3), and it changes
-   the "five independent addons" framing and the install story.
-2. **Default scope when the feature is switched on — tier 1 or tier 3?** (§6.) Tier 1 is the
-   recommendation; tier 3 is the ask read literally and is defensible at shape C.
-3. **Companion folder name.** It must not collide with stock Auctionator's
-   `Auctionator_Pricing_History` — which is exactly the file item 10 was lost to. Suggested:
-   `Auctionator-Finder-Ascension-History`, ugly and unmistakable, sorting next to its parent.
-4. **Does the history feed the price cascade (stage 2), or only the new columns?** It is the
-   highest-value read and the one that changes numbers people already look at.
-5. **Stage 0 measurement now?** One `/cpp load` before anything is built is worth more than any
-   estimate in this document.
+1. **A sixth folder and a companion addon: yes**, both approved.
+2. **"If this works out we may make it core instead of toggleable — it may be more efficient and
+   less cumbersome than the existing structure."** Recorded as the *direction*, not as this
+   project's shape. §10 is what that sentence turns into once it is taken seriously.
+3. **On measurement: "we can use the CPP addon for diagnosis, but the real test will be
+   implementation of some sort."** Agreed, and it matches the repo's own standing rule — ship the
+   change, verify it later, tooling is a fallback and not a frontline. Stage 0 demotes from a phase
+   to a **ten-second habit**: take one `/cpp load` reading *before* the companion folder exists,
+   because that is the only moment the before-figure can be captured. Everything after that is
+   measured by having built it.
+
+**Still open, and both smaller than they were:**
+
+- **The companion folder's name.** It must not collide with stock Auctionator's
+  `Auctionator_Pricing_History`, which is exactly the file item 10 was lost to. Suggested:
+  `Auctionator-Finder-Ascension-History` — ugly, unmistakable, and sorts next to its parent.
+- **The default scope** (§6) — and §10 argues the "core" direction answers it by implication.
+
+---
+
+## 10. If it goes core — what that sentence is actually worth
+
+The owner's instinct is that this could be *less cumbersome than the existing structure*. Taken
+seriously, that is a stronger claim than it first sounds, and it is worth writing down before the
+writer's shape is chosen, because it changes what a good v1 looks like.
+
+**A dated series subsumes both of the current price stores.** Today two variables answer "what is
+this worth": `AUCTIONATOR_PRICE_DATABASE` (one current number per name) and
+`AUCTIONATOR_MEAN_PRICE_DATABASE` (up to 15 samples, price-sorted, evicted at random, undated). The
+second is a *broken attempt at exactly the question a history answers* — it wants to say "what is
+this normally worth" and cannot, because it discarded the dates and thins itself at random. Against
+a real series:
+
+- **current price** = the newest sample
+- **typical price** = the median of the last N days, which is what the mean database was reaching
+  for and cannot deliver
+- **"is this dear today"** = the thing neither store can express at all
+
+So the end state is not "three stores instead of two". It is **one store, one shape, honest
+eviction, and a deletion** — and the deletion is 5267 rows out of the current file. A history at 30
+days daily, condensed beyond, is plausibly **net-neutral or smaller on disk than what it replaces**.
+That is the real form of the owner's "more efficient", and it is a better argument for building this
+than "it unblocks three backlog items".
+
+**Two consequences for how to build it, and they point the same way:**
+
+- **Core and watchlist-only are incoherent together.** A feature that is always on but only
+  remembers the thirty items you happened to tick is a half-thing no reader can rely on — every
+  consumer would need an "unless it is not watched" branch. If the destination is core, the default
+  scope is **every name a scan has priced** (tier 3, ~1.5–1.8 MB at shape C) and retention does the
+  bounding rather than a watchlist filter. That settles §6 by implication.
+- **The cascade read (stage 2) stops being optional.** A price store the price function does not
+  read is a side-car, not a replacement — and reading it is one branch.
+
+**Where the sequencing should NOT change, and this is the one push-back in the document.** Build it
+toggleable and off by default anyway, exactly as staged. Not as hedging — as the thing that makes
+stage 1 shippable at all:
+
+- A core store means **migrating live data on a real account** (5267 rows, the mean database, and a
+  cascade every price in the addon flows through) on a client that cannot be run or tested here. A
+  toggle means stage 1 changes *nothing* for anyone who does not switch it on.
+- **Removing a flag later is deleting a branch. Adding one later is shipping a fix under pressure.**
+  The asymmetry is entirely one-sided, and the flag costs one boolean check per scan row.
+- The core step is then small and evidence-led: a migration, a deletion and a default flip, taken
+  **after** a month of real data has shown what the file actually weighs and whether a
+  median-over-N-days reads better than the mean database it would replace. Same shape as item 12
+  part 3b and item 13 — measure on the owner's own dump, then decide.
+
+**Verdict.** Right destination, and it is the strongest argument yet for building this at all.
+Wrong starting point. Ship it dark and switchable, let it fill, then take the core step with the
+file sitting in front of you.
