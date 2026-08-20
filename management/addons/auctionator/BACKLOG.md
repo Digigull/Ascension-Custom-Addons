@@ -829,7 +829,7 @@ into a defensible sales estimate, and it costs nothing because the field is alre
 | | Feature | Notes |
 |---|---|---|
 | B1 | **Farm score = estimated sales rate x unit price** | gold per unit time. **This is what "items to farm" actually means**, and A1–A3 are what make it computable |
-| B2 | **Recipe profit ranking** | already computed by `Atr_ProfSort_BuildOrder`; needs surfacing, not building |
+| B2 | **Recipe profit ranking** | see the correction below — the *ranking* is window-only, the *costing* is not |
 | B3 | **Reagent pressure** | which reagents your profitable recipes need, and whether those are liquid enough to buy |
 
 **C — Price trend (needs a dated series; see the note below)**
@@ -950,9 +950,31 @@ it reads `since <date>` rather than presenting a window as an all-time figure.
 25-assertion check of `Atr_Ledger_ItemTotals` against hand-built rows — the deposit-inside-`money`
 case, the hand-bought item with no `buy` row, the intent fallback and its `*`, the no-invoice
 sale, sold-vs-expired, outstanding stock valued at the last ask, and an empty ledger. All passed
-first run; not kept, per the repo's tooling rule. **Not verified in game.** The checks are: the
-toggle switches both the headers and the rows, the Rescan button and the add/group controls
-disappear on the Ledger view, and a known flip's margin matches what you remember making.
+first run; not kept, per the repo's tooling rule.
+
+**Confirmed working in game, 2026-08-20** (owner), on the first build. Nothing to chase.
+
+#### B2, corrected 2026-08-20 — what is reusable and what is not
+
+The candidate table above says B2 is "already computed by `Atr_ProfSort_BuildOrder`; needs
+surfacing, not building". **Half of that is wrong, and it is the half that decides the work.**
+
+`Atr_ProfSort_BuildOrder` (`AuctionatorFinderProfession.lua:874`) walks `GetNumTradeSkills()` and
+returns an order of **trade-skill indices**. Those indices exist only while the trade skill window
+is open, so nothing about that function can be surfaced on a tab you look at with the window
+closed — which is the only place a "what should I craft" list is any use.
+
+What *is* reusable is the layer under it: **`Atr_Craft_GetCraftCost(link, name)`
+(`:456`) costs a recipe entirely from the persisted `AUCTIONATOR_CRAFT_RECIPES` store and the
+shared price cascade** (`Atr_Craft_ReagentPrice`), with no window open and no scan of its own.
+The 2026-08-19 dump has 191 recipes in that store, 88 of them enchants, with `made` correct after
+item 14's fix. So B2 is: walk the store, cost each recipe, value the output at its auction price
+times `made`, rank by the difference — reusing one existing function per recipe rather than
+surfacing a list that cannot leave the trade skill window.
+
+It also inherits that function's honest failure mode: a recipe with one unpriceable reagent
+returns nil rather than a wrong number, and those belong at the bottom of the ranking marked
+unknown, the way the market view already sorts a never-scanned item.
 
 #### Still to come
 
