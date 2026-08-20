@@ -8,8 +8,9 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
 and deliberately declined. Six items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
-**item 10** closed without any code, and **items 28 and 30** are new, with nothing built yet.
-**Item 29 shipped in full** on 2026-08-20, all three stages.
+**item 10** closed without any code, and **items 28, 30 and 31** are new, with nothing built yet.
+**Item 29 shipped in full** on 2026-08-20, all three stages. **Item 31 is researched and not built**
+— its write-up is `HISTORY-STORE.md`, and it carries four questions only the owner can answer.
 Item 30 is item 8's original *Advisor* request returning once the data to support it existed. **"Suggested order" at the foot of the file is the live view
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
@@ -3486,10 +3487,99 @@ Supply counts units. Build those first and the cards are accurate on the day the
 
 ---
 
+## 31. NEW — a market price history, in a companion file, off by default
+
+**Asked (owner, 2026-08-21):** bring back the original addon's history SavedVariables *companion
+file*, make it a toggleable feature that populates from scan history, let the rest of the addon use
+the longer history where it helps, keep it **off by default**, and keep the **setting** in the main
+saved-variables file so turning it off never depends on the thing being turned off.
+
+**Researched 2026-08-21, nothing built. Full write-up: `HISTORY-STORE.md`** — the inventory of what
+history the addon has today, the four writers and the readers this touches, the storage arithmetic,
+the retention tiers, the risks and a five-stage plan. This row is the summary and the open
+questions; the doc is the record.
+
+**Why it is a new item and not a note on item 8 group C.** Group C ruled out keeping history for
+everything, and `FRAMEWORK.md` §5 repeats that conclusion. **The ask changes one of the four
+premises it rested on**, so the ruling is re-scored rather than cited:
+
+- **All-or-nothing corruption — fixed by the separate file, and this was the whole point.** Group C
+  called it "the real reason to scope": a truncated SavedVariables file is discarded *entire*, so a
+  fat history endangers the ledger, the vendor learning and the recipe book. In its own file it
+  endangers only itself — and the history is the one store in the addon that **regrows by scanning
+  again**. The blast radius goes from irreplaceable to self-healing. The owner's instinct is right,
+  and it is the strongest argument in the ask.
+- **Parse on load — not fixed, but made measurable and reversible.** A companion addon gets its own
+  `ADDON_LOADED`, and `!ClientPerfProbe`'s load profile turns consecutive marks into a per-addon
+  cost in ms and KB. So "turn it off if performance suffers" becomes a number, from a tool already
+  in this repo. (Also learned: Ascension locks `GetAddOnMemoryUsage` to zero, so `/atr clear`'s
+  memory line reports `0 KB` and is not a usable check.)
+- **Memory shape — unchanged, and it must be decided before the writer exists.** The doc picks one:
+  **one packed string per item name**, not a table and not a line per sample. It is the same call
+  item 13 made about the mean database's single-sample wrapper — the container costs more than the
+  contents — and it takes "every name, 30 days" from ~5–8 MB and 158,000 Lua tables to ~1.5–1.8 MB
+  and 5,267 strings.
+- **~99% waste — unchanged, and answered with scope rather than with the file.** The doc proposes
+  tiers (watchlist / traded / every scanned name) so "on" need not mean "everything".
+
+**The findings that shaped the plan.**
+
+- **The writer has exactly four sites and they are the four that already call `Atr_MeanAppend`** —
+  the Finder price feed, the single-item search, the dead getAll path and the Bazaar. Sitting inside
+  them, the history inherits the price feed's four correctness rules for free (never delete, skip
+  scaled gear, skip capped scans, no bid-only rows). Rules 3 and 4 matter *more* for a series than
+  for a current price: a bad current price is overwritten by the next scan, a bad sample is averaged
+  into every later reading forever.
+- **The cascade already falls back to history — the wrong one.** `Atr_GetAuctionPrice` is scan DB →
+  `Atr_GetMostRecentSale` → variant estimate, and that middle rung reads
+  `AUCTIONATOR_PRICING_HISTORY`, which is **your own postings**. When the scan database has nothing,
+  the addon prices an item at your own last guess. A market series is a strictly better second rung,
+  and it is one branch in a function 29 call sites across 6 files already flow through.
+- **`AUCTIONATOR_AH_VARIANT` is the model to copy**, not to re-invent: dated entries, a live count
+  so the cap check is free, a cap, a max age, an age-and-cap prune, a default-ON enable flag, and
+  the rule that *age is shown, never hidden*.
+- **The machinery for a dated series is already shipped and pointed at the wrong input**:
+  `Atr_AddHistoricalPrice`, `ToTightTime`/`FromTightTime`, and a working daily → monthly → yearly
+  compactor in `Atr_Condense_History`.
+- **`feedPriceDB` is the exact template for the toggle** — a field in `AUCTIONATOR_FINDER_SETTINGS`,
+  a row on the Scanning options panel, a slash fallback, and `Fdr_PriceDB_WhyText`'s habit of naming
+  the rule that swallowed a scan.
+- **There are three states, not two.** Setting off; setting on with the companion installed; and
+  **setting on with the companion missing**, which is what will actually happen when someone updates
+  one folder and not the other. That third state has to say so where the player will see it.
+
+**The risk with teeth, and it is a documentation risk.** Shipping a companion file makes this
+backlog's own bolded instruction — *"Take the file named after the addon folder, and no other"* —
+wrong, and that instruction exists because **item 10 was an entire item lost to dumping stock
+Auctionator's companion files by mistake**. One of the names to avoid is `Auctionator_Pricing_History`.
+Whatever else this project does, the dump instructions must be rewritten **in the same commit that
+creates the folder**.
+
+**Open, and the owner's call** (the doc lists them in full):
+
+1. **A sixth folder at the repo root — yes?** It is the only mechanism a second SavedVariables file
+   can exist through, and it changes `CLAUDE.md`'s "five independent addons" framing and the
+   "download one folder and drop it in" install story. The companion is a satellite, useless alone.
+2. **Default scope when switched on: watchlist (~15–25 KB) or every scanned name (~1.5–1.8 MB)?**
+   The doc recommends the watchlist and shows why the full version is nonetheless defensible.
+3. **Does it feed the price cascade, or only new columns?** The cascade is the highest-value read
+   and the one that changes numbers people already look at.
+4. **One `/cpp load` before anything is built?** It is the before-figure every later affordability
+   argument needs, and it costs one command.
+
+**What it unblocks.** Item 8 group C (the week-over-week `+240%` column — this *is* that item's
+missing input), item 28's weekly demand signal, item 30's "ore is up, go mine" card, an age-aware
+tooltip line, and a Sell tab that can say you are undercutting a rising market. Eventually it makes
+`AUCTIONATOR_MEAN_PRICE_DATABASE`'s random eviction redundant — **which is a separate item, after
+the history has proven itself on a real account, and not part of this one.**
+
+---
+
 ## Suggested order
 
 Items 1–9, 11–27 and 29 are **DONE** or deliberately parked, and item 10 closed without any code
-(2026-08-19). **Items 28 and 30 are unstarted** and **item 29 is done in full**, all added 2026-08-20. What is otherwise left is
+(2026-08-19). **Items 28, 30 and 31 are unstarted** and **item 29 is done in full** — items 28-30 added
+2026-08-20, item 31 on 2026-08-21 and researched the same day. What is otherwise left is
 follow-on work inside shipped items, two standing deferrals, and two questions that need no code at
 all.
 
@@ -3509,15 +3599,22 @@ short of a readout. In order:
    else on this list measures effects; this is the only candidate cause, so it is worth knowing
    before more effort goes into inferring what it would simply state. If it reads, it outranks C
    outright — a leading indicator beats a lagging one built from a series that does not exist yet.
-3. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
+3. **Item 31's stages 0 and 1** — one `/cpp load` for the before-figure, then the history store
+   itself: the companion folder, the toggle (off by default), and the writer beside the four
+   existing `Atr_MeanAppend` sites. It ships **dark** on purpose — nothing reads it yet — because a
+   week of ordinary play then leaves real data for the readers below to be built against instead of
+   an empty table. It ranks here rather than lower because **everything under it wants the same
+   input**: item 30's ore card, item 28's demand signal and item 8's group C are all one query into
+   a series that does not exist. Blocked on four owner decisions first (`HISTORY-STORE.md` §9).
+4. **Item 30 — the Advisor.** The payoff, and the reason the rest of this list is worth doing:
    five or six cards in plain sentences over figures four existing functions already return. No
    new capture and no new saved variable — it is a renderer, and its whole discipline is that it
    computes nothing. Wants entry 1 under it, because it reads those same figures.
-4. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
+5. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
    fallback driver (tick boxes on the Crafting view plus a batch size) turned out to be the cheap
    half, and item 30's Make card can hand the same plan in through `Atr_An_PlanMap()` when it
    exists. See item 29's second *Built* section.
-5. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
+6. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
    all of **D**, then **B2** (the Crafting view) and **B3** (the Reagents view — the same map
    inverted, which is what made it cheap, exactly as predicted here). Left: **A5/A6** (listing
    lifetime, undercut churn), which are arithmetic over data the addon already holds. **C** (price
@@ -3526,19 +3623,19 @@ short of a readout. In order:
    `{ t, low }` on each watched item's existing `obs` record, not a retrofit of the mean database,
    which sorts by price and evicts at random. The item carries the owner's worked example, the
    storage limits of keeping history for everything, and why the obvious shortcut fails.
-6. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
+7. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
-7. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
+8. **Item 4's verification** — one Finder search on the merged build and a fresh dump, which is
    all `statKeys` needs to become visible. Costs no code and clears the last shipped item whose
    data has never been seen.
-8. **Item 12's sizing question** — how many names on this server carry more than one variant.
+9. **Item 12's sizing question** — how many names on this server carry more than one variant.
    Parts 1–3 shipped without the answer and 3b was measured and declined, so this now decides
    only whether extending part 3 is worth it, not what shape it would take.
-9. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
+10. **Item 9** — stays parked, and correctly. The ledger already records both halves of every
    purchase without being asked, so the evidence accumulates for free; write the buy-to-delivery
    comparison against a real mismatched pair, never an imagined one.
-10. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
+11. **Item 3's remaining question** — whether ~34g50s for an `Essence of Earth` is a real market
    price. The craft cost reproduces exactly from real data, so this is an auction-house question
    rather than an addon one, and there may be no work here at all.
 

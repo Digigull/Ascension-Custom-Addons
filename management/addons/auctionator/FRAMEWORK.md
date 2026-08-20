@@ -220,6 +220,14 @@ mean database, whose random eviction and price sort are re-confirmed above. The 
 market mechanism that decided the weekly period, and the file-size, load-time and
 corruption limits that rule out storing history for all 5267 names.
 
+**Reopened 2026-08-21 — read `HISTORY-STORE.md` before citing the paragraph above.** The owner asked
+for a general history in a **companion SavedVariables file**, toggleable and off by default
+(`BACKLOG.md` item 31). That changes one of the four premises the ruling rested on: all-or-nothing
+corruption, which group C called "the real reason to scope", stops applying once the history is the
+only thing in the file — and the history is the one store here that regrows by scanning again. The
+other three limits stand. Nothing is built; the doc holds the storage arithmetic that makes the
+whole-market version defensible and the four questions still open.
+
 ---
 
 ## 6. The de-facto internal APIs
