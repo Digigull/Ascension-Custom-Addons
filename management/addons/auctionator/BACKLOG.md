@@ -12,7 +12,7 @@ and deliberately declined. Three items do not carry that label and are the ones 
 of what is left**; the per-item sections are the record of how each got there. Most "current
 behaviour" notes here are read from source, not observed — a shipped item's own section says what
 was and was not verified, and which of them have since been confirmed in game (items 2, 3, 11, 14,
-and 15 + 16 together).
+15 + 16 together, and the run of Analysis-tab work from item 8's B2 through 27).
 
 Anchors are `file:line` at the time of writing and will drift; the symbol names next to them
 are the durable part.
@@ -2864,9 +2864,28 @@ saved entry, an unknown name staying unknown, a ledger row with no ID teaching n
 recipe key both answering and being saved, a watched item likewise, an unrelated name answering but
 **not** being saved, and a non-numeric ID refused. All passed first run; not kept.
 
-**Not verified in game.** The checks are: Essence of Earth hoverable without touching it, on a fresh
-session; a Scroll of Enchant row hoverable after one lookup and still hoverable next session; and
-nothing new appearing in the saved variables beyond a few hundred `ids` entries.
+### Verified in game, 2026-08-20, and it settled the one open question with it
+
+The owner's report, on the merged build:
+
+> "So the Essence of Earth is fixed. The scrolls did not have tooltip, so I did a Finder Search for
+> all the scrolls and now 90% have tooltip... Did a /reload and the scroll tooltips still remain, so
+> they aren't getting dropped once seen before."
+
+All three mechanisms confirmed, each independently:
+
+- **the offline index works** — Essence of Earth is hoverable with no scan and no click, which is
+  the recipe-DB reagent map answering for a name the client could not resolve;
+- **learning from a scan works** — one Finder search taught the addon every scroll that search
+  returned;
+- **the saved map works** — the scroll tooltips survived a `/reload`, so one lookup is genuinely the
+  last one those items need.
+
+**The missing 10% are scrolls that are not listed on the auction house** (owner, same session), which
+is not a gap in the learning path but the shape of the problem: an item that has never been listed
+and is nobody's reagent has no ID in anything this addon or the client holds. Each will be picked up
+the first time it is listed, or the first time the player owns one and something reads a link for it.
+**There is nothing further to build here** — what is left is answered by data arriving, not by code.
 
 ---
 
@@ -2910,7 +2929,7 @@ most open questions and needs no code. The file is the **account-level** one —
 copy; `tools/README.md` explains why and how to take one cleanly (fully exit the client first,
 or the last session's learning is missing).
 
-> **Take the file named after the addon folder, and no other.** This fork declares all 35 of its
+> **Take the file named after the addon folder, and no other.** This fork declares all 38 of its
 > saved variables in one `.toc`, so **everything it owns is in `Auctionator-Finder-Ascension.lua`**
 > — there is no companion file. A `SavedVariables` folder that has been through a few installs
 > can also hold `Auctionator.lua`, `Auctionator_Price_Database.lua` and
