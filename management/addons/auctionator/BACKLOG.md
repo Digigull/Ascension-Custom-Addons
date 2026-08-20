@@ -2707,9 +2707,101 @@ beside the first, on whichever side has room.
 
 ---
 
+## 26. Analysis tab — a filter box on every view, and tooltips that are there on arrival — DONE
+
+**Asked 2026-08-20**, with item 25 running in game. Two things, plus a report worth keeping:
+
+> "It works, it didn't immediately show the tooltip, but once I did a left click most of them
+> updated, I think by just looking one of them up, the others also updated."
+
+### Why the tooltips were late, and what fixes it
+
+**The client only knows the items it has seen.** `GetItemInfo` is a cache lookup, not a question to
+the server, so on a fresh session a page of Analysis rows can have no tooltip behind any of them —
+and a single left click, which runs a search, warms the cache for everything that search returned.
+That is exactly the pattern the owner described, and it is the client's cache, not this addon's.
+
+Two changes, and they answer different halves of it:
+
+- **A watched item now remembers its item ID.** The watchlist is keyed by NAME — a name cannot draw
+  a tooltip, and this is why the market view was the worst of the three. `Atr_An_CollectListing`
+  already had the auction index in its hand, so it now reads the listing's link, and
+  `Atr_An_Observe` takes the ID off the first one that carries it and stores it on the observation
+  record. One number per watched item, in a saved variable, so it survives the session: from the
+  next scan onwards a watched item is hoverable before anything has been searched. Old records have
+  no ID and fill in on their next observation — pressing **Rescan** once does the lot.
+- **Rows ask the client for their item as they draw.** `An_WarmItem` puts the item on a hidden
+  tooltip, which is the standard way to make this client go and fetch one, so the data is in by the
+  time the cursor arrives a moment later. Once per item per session — an item that never answers is
+  not asked again, and the hover path asks for itself anyway, so nothing is lost if the fetch
+  failed. `An_RowLink` also falls back to a bare `item:<id>`, which `SetHyperlink` and `GetItemInfo`
+  both accept, so a row is hoverable even before the client can name it.
+
+An enchant keyed by its scroll name still has no ID and no link until something scans the scroll.
+That is the one case left, and the crafting tooltip beside it carries the useful half anyway.
+
+### The add box became a filter box, on every view
+
+**Adding an item is a once-per-item job; narrowing what is on screen is constant** — and neither
+the crafting view (a couple of hundred recipes) nor the ledger had any way to do it at all. So the
+box at the top left filters live as you type, and it is the same box on all three views: it is
+deliberately NOT in `gAn_MarketOnly`, and the filter survives a view switch because "show me the
+linen" is one question whichever table is up.
+
+- **Plain substring, case-insensitive, matched with `find`'s plain flag.** Item names here are full
+  of Lua pattern characters — `Mana Potion (Superior)` — and a filter box that threw a pattern
+  error on a bracket would be worse than no filter.
+- **The crafting view filters a COPY.** What is cached is every recipe; filtering the cache in place
+  would throw the rest of it away on the first keystroke.
+- **The summaries say when they are narrowed**: `3 of 191 recipes`, `3 of 40 watched`, `3 shown of
+  42 items`. A bare "3 watched" over a filtered table reads as three items watched in total. The
+  ledger's totals stay whole-ledger and the shown count is said separately, because they are
+  answers to different questions.
+- **Rescan follows the filter**, since it queues what `An_Rows` returns. That is the useful
+  behaviour — "rescan these" — but it is not guessable, so the button's tooltip says it.
+
+### Add is a popup now
+
+The Add button opens a `StaticPopup` with an edit box (`ATR_AN_ADD_WATCH`), which takes a typed name
+or a shift-clicked link and files it into the group being looked at — what the old box did.
+`/atranalysis add` now goes through the same function, so the two cannot drift.
+
+### Follow-up, same day: the control row is four controls, in reading order
+
+**Asked while the above was going in:** drop the *New group* edit box for an **Add Group** button
+with a popup, rename **Add** to **Add Item**, put the two buttons together, and order the row
+filter box → groups dropdown → the two buttons.
+
+Which is the same argument as the add box's, applied to the other box: naming a group is a
+once-per-group job, and a permanent edit box for it spent a third of the row on something used
+twice a month. Both adds are popups now (`ATR_AN_ADD_WATCH`, `ATR_AN_ADD_GROUP`), and the row reads
+left to right as the order you use it in — narrow, pick a group, add to it.
+
+**Add Group switches to the group it makes**, which is what the edit box did and is worth keeping:
+you make a group in order to put something in it, and the next thing you press is Add Item, which
+files into whatever group is being looked at.
+
+**The chain is anchored, not placed.** From the dropdown rightwards each control hangs off the one
+before it, because `UIDropDownMenu_SetWidth(dd, 110)` produces a frame **160** wide — 25px of dead
+art each side — and hard-coding where that ends is exactly how the previous layout ended up being
+retuned from a screenshot (item 23). The chain starts at x=176, just past the filter box's border
+art, and ends around x=492 on Blizzard's 768px window, clear of the view toggle at 526.
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each), item 24's sorter check re-run against
+the changed file (18/18), and a throwaway 13-assertion check of the filter driven straight out of
+the file: an empty filter passing everything, a match at the start and in the middle of a name,
+case-insensitivity both ways, surrounding space trimmed, `(Superior)` matched literally rather than
+as a pattern, a lone `%(` not erroring, and re-setting the same filter not redrawing. All passed
+first run; not kept. **Not verified in game.** The checks are: typing in the box narrows every view
+as you type; the box keeps its text across a view switch; the four controls sit in a row without
+touching; Add Item and Add Group each open a popup that does what it says; and a market row has a
+tooltip on the first hover of a fresh session once the watchlist has been rescanned once.
+
+---
+
 ## Suggested order
 
-Every numbered item has now shipped or closed: 1–9 and 11–25 are **DONE** or deliberately parked,
+Every numbered item has now shipped or closed: 1–9 and 11–26 are **DONE** or deliberately parked,
 and item 10 closed without any code (2026-08-19). Rewritten twice that day — once after the first
 real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is unstarted.** What
 is left is follow-on work inside shipped items, two standing deferrals, and two questions that
