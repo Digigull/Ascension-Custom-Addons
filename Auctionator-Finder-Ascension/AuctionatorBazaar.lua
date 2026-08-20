@@ -3342,6 +3342,17 @@ function Atr_Bz_FeedPriceDB (itemID, copper)
 		Atr_MeanAppend (gAtr_MeanDB, name, price);		-- item 13: one-sample shape
 	end
 
+	-- The dated series takes it too (BACKLOG item 31), and the reason is worth
+	-- stating because it is arguable: a Bazaar token price is administered, not a
+	-- market, so a purist series would leave it out.  It goes in because the
+	-- series has to be the history OF THE PRICE THIS ADDON REPORTS, and this write
+	-- sets that price -- and because stage 5 has to compare the series against the
+	-- mean database to decide whether that database still earns its rows, which it
+	-- cannot do if the two are fed from different populations.
+	if (type (Atr_Hist_Note) == "function") then
+		Atr_Hist_Note (name, price);
+	end
+
 	return true;
 end
 -- FINDER_TAB end: price database bridge

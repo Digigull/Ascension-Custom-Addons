@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: Auctionator |cff00c000Finder (Ascension)|r - Market History
+## Version: 2.9.9
+## Author: Zirco
+## Notes: Companion store for Auctionator Finder (Ascension): the market price series, kept in a file of its own so a crash can never take the ledger down with it. Safe to delete.
+## SavedVariables: AUCTIONATOR_MARKET_HISTORY
+
+History.lua

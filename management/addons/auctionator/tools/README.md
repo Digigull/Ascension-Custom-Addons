@@ -16,6 +16,14 @@ declared under `## SavedVariables` (not `...PerCharacter`) in the `.toc`, so it 
 in the account-level copy. The character file holds tooltip/UI prefs and nothing else; both
 scripts reject it with a clear error rather than producing an empty seed.
 
+**There is now a second file, and it is not this one.** Since 2026-08-21 (BACKLOG item 31) the
+market price history lives in `Auctionator-Finder-Ascension-History.lua`, written by a companion
+addon folder of the same name, and it holds `AUCTIONATOR_MARKET_HISTORY` and nothing else. The
+seed tools do not want it. **Do not confuse it with `Auctionator_Pricing_History.lua`**, which is
+stock Auctionator's *posting* history and is the kind of mistake that cost the backlog a whole
+item (10). The tell is the hyphens: this fork's files are hyphenated and begin
+`Auctionator-Finder-Ascension`; stock's begin `Auctionator_` or are `Auctionator.lua`.
+
 Fully exit the client (or `/reload`) before copying — WoW flushes SavedVariables at
 logout/reload, so a file copied mid-session is missing everything learned that session. Ignore
 the `.bak` sibling; it is the previous session's copy.
