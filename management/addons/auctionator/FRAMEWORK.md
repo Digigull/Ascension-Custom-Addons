@@ -149,9 +149,9 @@ dance.
 > Only touch World 1 when the change is *to* an upstream tab — which, in the backlog, is item 1
 > and nothing else.
 
-The Analysis tab is the furthest this has been taken: **one panel, one table, three views** over
-different data (market estimates, the Ledger, the crafting ranking), swapped by Show/Hide rather
-than rebuilt. §8 has the recipe.
+The Analysis tab is the furthest this has been taken: **one panel, one table, four views** over
+different data (market estimates, the Ledger, the crafting ranking, and that ranking inverted into
+reagent demand), swapped by Show/Hide rather than rebuilt. §8 has the recipe.
 
 ---
 
@@ -262,14 +262,22 @@ files already model.
 ### One function per view — how the Analysis tab reads everyone else's data
 
 The newest surface, and the cheapest one to copy. The Analysis tab owns **no data of its own**
-beyond its watchlist: each of its three views is one call into the subsystem that already holds
+beyond its watchlist: each of its four views is one call into the subsystem that already holds
 the answer.
 
 | View | Call | Lives in |
 |---|---|---|
-| My trades | `Atr_Ledger_ItemTotals()` | `AuctionatorLedger.lua` |
+| Trades | `Atr_Ledger_ItemTotals()` | `AuctionatorLedger.lua` |
 | Crafting | `Atr_Craft_ProfitRanking()` | `AuctionatorFinderProfession.lua` |
+| Reagents | `Atr_Craft_ReagentPressure(ranking)` | `AuctionatorFinderProfession.lua` |
 | Market | `Atr_An_Stats(name)` | its own file — the one thing it does own |
+
+Reagents is the one view built on **two** of those: the pressure map comes from the profession
+file and the "can I buy it" column from `Atr_An_Stats`, attached by the view. That split is
+deliberate — `AuctionatorFinderProfession.lua` has no business reading the watchlist — and it is
+the shape to copy for any view that mixes two subsystems. It also passes the cached ranking *in*
+rather than letting the function build its own, so showing the same recipes two ways prices them
+once.
 
 **The arithmetic lives with the data, not with the table that draws it.** That is what keeps the
 crafting view and the trade skill window's own profit sort from disagreeing: both go through
@@ -335,9 +343,9 @@ most recent census.
 
 ### Adding a view to an existing own-panel tab
 
-The Analysis tab carries three views over one table and the panel, scroll frame and rows are
+The Analysis tab carries four views over one table and the panel, scroll frame and rows are
 shared, because they are the expensive part. What differs per view is a **column table** and a
-**row builder**, and adding a fourth would be:
+**row builder**, and adding a fifth would be:
 
 1. A `AN_*COLS` table: one entry per column with `key` (unique across every view — each row
    Button carries every view's FontStrings and shows one set), `head`, a minimum width `w` and a
@@ -345,10 +353,17 @@ shared, because they are the expensive part. What differs per view is a **column
 2. `An_LayoutCols(YOUR_COLS, AN_ROW_W)` in `Atr_An_Init`, plus a `headerSet` call and the cell
    loop — all three already iterate a list of column tables.
 3. A `An_RedisplayYours()` and a branch in `Atr_An_Redisplay`.
-4. A view button, and the view's name added to `Atr_An_SetView`'s Show/Hide walk.
+4. A view button, and the view's name added to `Atr_An_SetView`'s Show/Hide walk (plus its
+   default sort in `gAn_Sort` and its column table in `gAn_ColsFor` / `gAn_Heads`).
 
 Nothing is re-anchored on a switch: every row already holds every view's cells. That is the whole
 trick, and it is why the switch is Show and Hide only.
+
+**The control row is the part that will bite.** The toggle is anchored to the panel's right edge
+and the group controls grow from the left, so the two chains meet in the middle: the fourth button
+(BACKLOG item 8's B3) cost every widget on that row a few pixels and turned "My trades" into
+"Trades". A fifth needs the arithmetic redone rather than a width guessed — it is written out at
+both call sites in `Atr_An_Init`.
 
 ### Adding a sub-tab (the Current / Ledger strip)
 
@@ -451,7 +466,7 @@ a namespace, or touching upstream files that no backlog item needs.
 
 **Snapshot, 2026-08-19, kept as the structural map rather than the status board.** Items 7 and 8
 have both shipped since — the Ledger and then the Analysis tab, the latter growing a crafting view
-(item 8's B2) and everything in items 24–27 on top. `BACKLOG.md`'s "Suggested order" is the live
+(item 8's B2), a reagent view (B3) and everything in items 24–27 on top. `BACKLOG.md`'s "Suggested order" is the live
 view of what is left; what this table is still good for is the *world* column and the file map.
 
 | # | Item | Files | World | Notes |

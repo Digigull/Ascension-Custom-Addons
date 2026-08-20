@@ -370,13 +370,18 @@ end
 -- through the shared cascade, so a learned NPC price beats whatever someone is
 -- relisting vellums for; the cold constant is only reached when none of the
 -- names can be priced at all.
+--
+-- Second return: the NAME it priced, or nil on the cold constant.  A caller that
+-- has to SHOW the vellum -- the reagent pressure map treats it as the reagent it
+-- is -- would otherwise have to walk the same candidate list a second time and
+-- could pick a different one from the price it is printing beside it.
 function Atr_Craft_VellumCost(kind)
     local names = ATR_ENCHANT_VELLUM_NAMES[kind or "armor"] or ATR_ENCHANT_VELLUM_NAMES.armor;
     for _, name in ipairs(names) do
         local p = Atr_Craft_ReagentPrice(Atr_Craft_IDForName(name), name);
-        if (p and p > 0) then return p; end
+        if (p and p > 0) then return p, name; end
     end
-    return ATR_ENCHANT_VELLUM_COLD;
+    return ATR_ENCHANT_VELLUM_COLD, nil;
 end
 
 -- Walk the currently-open trade skill and store every recipe we can read.
@@ -1005,6 +1010,185 @@ function Atr_Craft_ProfitRanking()
     end);
 
     stats.best = out[1] and out[1].perCraft or nil;
+
+    return out, stats;
+end
+
+-- REAGENT PRESSURE -----------------------------------------------------------
+--
+-- BACKLOG item 8, B3.  The ranking above answers "what is worth making".  This
+-- answers the question that comes straight after it, standing at the same
+-- mailbox: "then what do I have to buy, and can I actually get it".
+--
+-- It is the SAME map, inverted.  A recipe knows its reagents; nothing knew
+-- which recipes wanted a REAGENT, so the one number that decides a shopping
+-- trip -- how much of your own craft profit is waiting on this one stack of ore
+-- -- could not be read off anything the addon held.  No new capture and no new
+-- saved variable: it walks the ranking and turns it inside out.
+--
+-- WHAT "PRESSURE" IS COUNTED OVER, because a total is meaningless without it:
+-- one craft of each PROFITABLE recipe that needs the reagent.  Profitable means
+-- perCraft > 0 and nothing else -- a recipe that cannot be priced has not been
+-- shown to be worth making, and one that loses money is not a reason to buy
+-- anything.  So `need` is the units that basket costs you and `profit` is what
+-- it is worth; the two are over the same set of crafts, which is what makes
+-- them comparable per row.  Recipes that are merely known are still counted in
+-- `recipes`, so a row reads "3 of the 8 things I can make with this pay today".
+--
+-- The vellum is included and is not in any recipe's reagent list: an enchant is
+-- unsellable without one, so it is the one reagent every scroll needs and it
+-- would have been the largest omission on an enchanter's table.
+--
+-- WHAT THIS DELIBERATELY DOES NOT DECIDE: whether you can actually buy the
+-- stuff.  Vendor-sold is knowable here (a vendor never runs out and never moves
+-- its price, so it is the one supply answer needing no scan) and is returned;
+-- auction-house depth is the Analysis tab's own watchlist data and is attached
+-- by the view, not here, because this file has no business reading it.
+--
+-- Returns  list, stats  where each entry is
+--   { name, id, recipes, pays, need, have, short, unit, vendor, outlay, toBuy,
+--     profit, uses }
+-- with `unit` per item, `outlay` the whole basket at that price, `short`/`toBuy`
+-- the same after what you already hold, and `uses` the recipes that want it,
+-- best per craft first.  stats is { reagents, priced, vendor, recipes,
+-- profitable, outlay }.
+--
+-- `ranking` is optional: pass Atr_Craft_ProfitRanking's list when you already
+-- have one -- pricing every reagent of every recipe is the expensive half and
+-- there is no reason to do it twice for two views of the same table.
+-- Global, and guarded around every WoW API it touches, so it can be checked
+-- offline the way the ranking can.
+function Atr_Craft_ReagentPressure(ranking)
+
+    local rank = ranking;
+    if (type(rank) ~= "table") then rank = (Atr_Craft_ProfitRanking()); end
+
+    local stats = { reagents = 0, priced = 0, vendor = 0, recipes = 0, profitable = 0, outlay = 0 };
+    local byKey, out = {}, {};
+
+    -- IDs FIRST, and this is not a detail: the harvest keeps whatever the client
+    -- gave it per row, so the same reagent can arrive with an ID from one recipe
+    -- and name-only from another (Atr_Craft_Harvest says why).  Keyed naively
+    -- that is two rows for one reagent, each with half the demand.  So the map
+    -- is built once and every bucket keyed by NAME -- which also hands the
+    -- name-only copy an ID, and an ID is what an NPC price needs.
+    local idFor = {};
+    for _, r in ipairs(rank) do
+        for _, rg in ipairs(r.reagents or {}) do
+            if (rg.id and rg.name and rg.name ~= "" and idFor[rg.name] == nil) then
+                idFor[rg.name] = rg.id;
+            end
+        end
+    end
+
+    for _, r in ipairs(rank) do
+
+        stats.recipes = stats.recipes + 1;
+
+        local pays = (r.perCraft ~= nil and r.perCraft > 0);
+        if (pays) then stats.profitable = stats.profitable + 1; end
+
+        -- This recipe's reagents, with the vellum an enchant never lists added
+        -- as the reagent it is.  Priced by the same call the craft cost uses, so
+        -- the name shown here is the name that price came from.
+        local want = {};
+
+        for _, rg in ipairs(r.reagents or {}) do
+            local nm = rg.name;
+            if ((nm == nil or nm == "") and rg.id and type(GetItemInfo) == "function") then
+                nm = (GetItemInfo(rg.id));
+            end
+            table.insert(want, { id = rg.id, name = nm, count = tonumber(rg.count) or 1 });
+        end
+
+        if (r.vellum) then
+            local _, vname = Atr_Craft_VellumCost(r.vellum);
+            if (vname) then
+                table.insert(want, { id = Atr_Craft_IDForName(vname), name = vname, count = 1 });
+            end
+        end
+
+        for _, rg in ipairs(want) do
+
+            local key = rg.name or rg.id;
+            if (key) then
+
+                local e = byKey[key];
+                if (e == nil) then
+                    e = { name = rg.name, id = rg.id or (rg.name and idFor[rg.name]), recipes = 0, uses = {} };
+                    byKey[key] = e;
+                    table.insert(out, e);
+                end
+                if (e.id == nil) then e.id = rg.id or (rg.name and idFor[rg.name]); end
+
+                e.recipes = e.recipes + 1;
+                table.insert(e.uses, { name = r.name, count = rg.count, perCraft = r.perCraft, made = r.made });
+
+                if (pays) then
+                    e.pays   = (e.pays or 0) + 1;
+                    e.need   = (e.need or 0) + rg.count;
+                    e.profit = (e.profit or 0) + r.perCraft;
+                end
+            end
+        end
+    end
+
+    for _, e in ipairs(out) do
+
+        stats.reagents = stats.reagents + 1;
+
+        e.unit = Atr_Craft_ReagentPrice(e.id, e.name);
+        if (e.unit) then stats.priced = stats.priced + 1; end
+
+        -- Vendor-sold: the one supply answer that needs no scanning at all.
+        local npc = (e.id and Atr_GetNPCPrice) and tonumber(Atr_GetNPCPrice(e.id)) or nil;
+        if (npc and npc > 0) then
+            e.vendor    = npc;
+            stats.vendor = stats.vendor + 1;
+        end
+
+        -- What you already hold, across every character and bank this account
+        -- has opened (AuctionatorFinderItemCount.lua).  You do not buy what is
+        -- already in the bank, and on a bulk reagent that is most of the answer.
+        if (e.id and type(Atr_ItemCount_Query) == "function") then
+            e.have = tonumber((Atr_ItemCount_Query(e.id))) or 0;   -- extra parens: returns 3 values
+        end
+
+        if (e.need) then
+            local short = e.need - (e.have or 0);
+            if (short < 0) then short = 0; end
+            e.short = short;
+            if (e.unit) then
+                e.outlay = e.unit * e.need;
+                e.toBuy  = e.unit * short;
+                stats.outlay = stats.outlay + e.outlay;
+            end
+        end
+
+        table.sort(e.uses, function(a, b)
+            if (a.perCraft and b.perCraft) then
+                if (a.perCraft ~= b.perCraft) then return a.perCraft > b.perCraft; end
+                return (a.name or "") < (b.name or "");
+            end
+            if (a.perCraft) then return true; end
+            if (b.perCraft) then return false; end
+            return (a.name or "") < (b.name or "");
+        end);
+    end
+
+    -- Most profit riding on it first, and a reagent no profitable recipe wants
+    -- sinks below every one that does rather than sorting as a zero: "nothing
+    -- you can make with this pays today" is a statement about today's prices and
+    -- about what you have scanned, not about the reagent.
+    table.sort(out, function(a, b)
+        if (a.profit and b.profit) then
+            if (a.profit ~= b.profit) then return a.profit > b.profit; end
+            return (a.name or "") < (b.name or "");
+        end
+        if (a.profit) then return true; end
+        if (b.profit) then return false; end
+        return (a.name or "") < (b.name or "");
+    end);
 
     return out, stats;
 end
