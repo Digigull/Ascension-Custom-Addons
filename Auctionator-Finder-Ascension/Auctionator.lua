@@ -920,9 +920,31 @@ function Atr_LSW_itemPriceGetAuctionBuyout(link)
 -- edge is not the window's, which is the bug the Analysis tab, the Ledger and
 -- the Bazaar each had to fix for themselves.
 --
--- (-28, -46) is the Ledger's Clear button's line, so the two land on the same
--- rule: clear of the 32px close button above, and stopping short of the
--- headings bar below.
+-- REPARENTED TO THE WINDOW TOO, and that is what makes them appear on ALL EIGHT
+-- tabs rather than three (owner, 2026-08-22: "I only see them on the original 3
+-- tabs still").  They are built as children of Atr_Main_Panel, the shared
+-- upstream panel -- and Atr_AuctionFrameTab_OnClick HIDES that panel to show a
+-- Finder / Bazaar / Ledger / Analysis / Advisor panel in its place, so the
+-- buttons left with it.  Nothing was wrong with the placement; they were simply
+-- inside the thing that gets hidden.  As children of AuctionFrame they outlive
+-- the switch, and Atr_Sell_SyncTopRightButtons below drives their visibility.
+--
+-- THE FRAME LEVEL IS NOT OPTIONAL.  The World 2 panels are also children of
+-- AuctionFrame and are created AFTER this pair, so at equal level they would
+-- draw over the buttons and eat the clicks -- which is BACKLOG item 22 from the
+-- old queue, where the Buy tab's buttons were dead for three rounds over exactly
+-- this.  +20 is the same margin that fixed them.
+--
+-- WHY THE LINE ABOVE THE ONE ITEM 6 FIRST USED.  (-28, -46) is clear on Buy,
+-- Sell and My Auctions, and taken on four of the five newer tabs: the Ledger's
+-- Clear (-16, -46), the Advisor's Ignored (-20, -46), the Analysis view strip
+-- (-26, -50) and the Finder's Search (-18, -49) all sit on it.  One shared pair
+-- cannot own a line four tabs already use, so it takes the one above -- between
+-- the close button and that row, level with the centred title, which is empty on
+-- every tab out to the right edge.
+local ATR_TOPRIGHT_X = -40;		-- clears Blizzard's 32px close button
+local ATR_TOPRIGHT_Y = -20;		-- 18px tall, so it ends at -38: 8 clear of the -46 row
+
 function Atr_Sell_PlaceTopRightButtons ()
 
 	if (AuctionFrame == nil) then return; end
@@ -930,17 +952,49 @@ function Atr_Sell_PlaceTopRightButtons ()
 	local opts = _G["Auctionator1Button"];
 	local full = _G["Atr_FullScanButton"];
 
+	local lvl = (AuctionFrame.GetFrameLevel and AuctionFrame:GetFrameLevel() or 1) + 20;
+
 	if (opts and opts.ClearAllPoints) then
+		if (opts.SetParent) then opts:SetParent (AuctionFrame); end
+		if (opts.SetFrameLevel) then opts:SetFrameLevel (lvl); end
 		opts:ClearAllPoints();
-		opts:SetPoint ("TOPRIGHT", AuctionFrame, "TOPRIGHT", -28, -46);
+		opts:SetPoint ("TOPRIGHT", AuctionFrame, "TOPRIGHT", ATR_TOPRIGHT_X, ATR_TOPRIGHT_Y);
 	end
 
 	-- Full Scan keeps its XML anchor to Options' left and follows it across; it
 	-- is the wider of the two once AuctionatorFinderFullScan.lua retitles it
 	-- "Scan Categories...", so it takes the inboard slot where there is room.
 	if (full and full.ClearAllPoints and opts) then
+		if (full.SetParent) then full:SetParent (AuctionFrame); end
+		if (full.SetFrameLevel) then full:SetFrameLevel (lvl); end
 		full:ClearAllPoints();
 		full:SetPoint ("RIGHT", opts, "LEFT", -4, 0);
+	end
+
+	-- The Finder's relabel, now that the button it renames exists.  See
+	-- Fdr_FS_RelabelButton for why this cannot stay where it was.
+	if (type (Fdr_FS_RelabelButton) == "function") then Fdr_FS_RelabelButton (); end
+
+	-- Hidden until a tab says otherwise.  As AuctionFrame's children they would
+	-- otherwise show over Blizzard's own Browse / Bid / Auctions tabs, where an
+	-- Auctionator button has no business being.
+	Atr_Sell_SyncTopRightButtons (nil);
+end
+
+-- Shown on Auctionator's tabs, hidden on Blizzard's.  Every path that changes
+-- tab runs through Atr_AuctionFrameTab_OnClick -- including Atr_SelectPane and
+-- the hooked original -- so this one call site covers opening the window,
+-- clicking a tab, and the saved default tab alike.
+function Atr_Sell_SyncTopRightButtons (index)
+
+	local show = (index ~= nil) and Atr_IsAuctionatorTab (index) or false;
+
+	local n;
+	for n = 1, 2 do
+		local b = _G[(n == 1) and "Auctionator1Button" or "Atr_FullScanButton"];
+		if (b) then
+			if (show) then b:Show(); else b:Hide(); end
+		end
 	end
 end
 
@@ -1401,6 +1455,10 @@ function Atr_AuctionFrameTab_OnClick (self, index, down)
 	if (Atr_Ledger_OnTabClick) then Atr_Ledger_OnTabClick (index); end		-- LEDGER_TAB
 	if (Atr_An_OnTabClick) then Atr_An_OnTabClick (index); end		-- ANALYSIS_TAB
 	if (Atr_Advisor_OnTabClick) then Atr_Advisor_OnTabClick (index); end		-- ADVISOR_TAB
+
+	-- BACKLOG item 6 follow-up: the two top-right buttons are AuctionFrame's
+	-- children now, so nothing hides them for us.
+	if (Atr_Sell_SyncTopRightButtons) then Atr_Sell_SyncTopRightButtons (index); end
 
 	gBuyState = ATR_BUY_NULL;			-- just in case
 	gItemPostingInProgress = false;		-- just in case

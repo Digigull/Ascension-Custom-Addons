@@ -12,9 +12,10 @@ the durable part.
 are layout and wiring. Item 4 is the only one that may be a bug rather than a request, and it is
 written up as a diagnosis rather than a fix, because the write path it doubts turns out to exist.
 
-**Built 2026-08-21: items 1, 2, 3, 5, 6 and 7**, in three branches. **Item 4 is the one left**, and
-it is not blocked on code — it needs one `/atrpricedb status` reading from the owner to say whether
-the Buy tab's feed is switched off or arriving empty. None of the six has been seen in game.
+**Built 2026-08-21: items 1, 2, 3, 5, 6 and 7**, in three branches; **item 6 reopened and finished
+2026-08-22** after the first in-game session, which is written up under it. **Item 4 needs a reading
+from the owner** rather than code — one `/atrpricedb status` says whether the Buy tab's feed is
+switched off or arriving empty. **Item 8 is new, 2026-08-22, nothing built.**
 
 ---
 
@@ -178,6 +179,30 @@ this server makes long.
 not-laid-out-yet `GetWidth` falls back to 768. Row field names are unchanged, so
 `Atr_Ledger_Redisplay` needed no edit at all. **Not verified in game.**
 
+### Also 2026-08-22 — a filter box, where the Analysis tab keeps its own
+
+**Asked (owner):** *"On the ledger tab can you add a filter box, top left area (same position as
+Analysis tab)."*
+
+`Atr_Ledger_FilterBox` at the Analysis box's exact coordinates — label `(72, -40)`, box `(76, -52)`,
+90x20 — which transfer without adjustment because the two panels are laid out identically. The x of
+72 rather than the 24 that looks like the left margin is inherited rather than rediscovered: at 24
+both the label and the box run under the auction house's character portrait, which is drawn over
+them, and the Analysis tab's comment records that.
+
+Matching on item name, lowercased plain `find` like `An_PassesFilter`, filtering as you type. A row
+with only a link is matched on the name inside the brackets — filtering the raw link would match on
+colour codes and item ids.
+
+**The trap, and it was worth the separate function.** The filter is `Ldg_VisibleRows()`, deliberately
+NOT folded into `Ldg_Rows()`: the Clear button's confirmation counts rows with `#Ldg_Rows()`, and
+Clear deletes the whole ledger regardless of what is filtered. A filtered `Ldg_Rows` would have made
+the popup ask *"Delete all 3 ledger rows?"* while deleting 412.
+
+**The totals follow the filter and say so.** Money summed over the rows on screen is the number a
+filter is typed to ask for — "what did I spend on Saronite" — but "412 rows, out 900g" printed under
+three visible rows reads as the whole ledger's, so the count names both: **"3 of 412 rows"**.
+
 ---
 
 ## 3. The Ledger's Clear button: confirm it, and move it under the X — DONE
@@ -258,7 +283,7 @@ answers it in one search. Only then is there a change to write.
 
 ---
 
-## 5. Bazaar: "Price these" becomes "Rescan", bottom-right
+## 5. Bazaar: "Price these" becomes "Rescan", bottom-right — DONE
 
 **Asked (owner, 2026-08-21):** *"On the Bazaar tab I want to change the text of the button 'Price
 these' to 'Rescan' move the button to the bottom right corner and make it about the same size and
@@ -278,6 +303,44 @@ view rather than under the item detail. The comment at `:428` explains why it wa
 bar in the first place — returning from an item left the cursor over it and a second click
 re-scanned — so **the move should keep it away from wherever the Back button leaves the cursor**,
 and that comment needs updating in the same edit rather than left arguing for the old position.
+
+### Built 2026-08-21
+
+*(Recorded 2026-08-22: this section was written when the code shipped and lost before the file was
+saved — the commit went out, the record did not. Reconstructed here.)*
+
+`BZ_BTN_W/H` are **76x22** and the button is anchored `("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -22,
+30)` — the same numbers as `Atr_An_RefreshButton`, not numbers that look like them.
+
+**The Bazaar panel had to learn its real width first, and that is the part worth knowing.** It was
+`SetSize (738, 447)` — Blizzard's 768px window minus insets — and *nothing inside the Bazaar had
+ever noticed*, because its table pane anchors its own BOTTOMRIGHT to `AuctionFrame` directly and so
+already filled the wider Ascension window. The moment a button anchors to the **panel's** right
+edge, that stale width stops being invisible: -22 from a 738-wide panel is a button floating in the
+middle of the backdrop. So the panel now measures `AuctionFrame:GetWidth()` the same way the
+Analysis tab and the Ledger do. Three tabs, one arithmetic.
+
+**The oversized font came off.** It was `GameFontNormalLarge`, which suited a 130px button on the
+bottom bar and clips "Rescan" at 76px.
+
+**Both of the named hazards are handled.** The toggle still swaps to `BZT("Cancel")` while a scan
+runs, and the cursor-over-the-button trap is gone by construction: Back is on the filter row, Rescan
+is now in the opposite corner, so returning from an item cannot leave the pointer on it. The `:428`
+comment that argued for the bottom bar is rewritten rather than left standing, and the per-frame
+reposition that measured the button onto the bottom bar off `Atr_Buy1_Button` is deleted — an anchor
+to the panel's corner does not move.
+
+**Verified:** `luac5.1 -p` clean, the four Auctionator suites pass. **Not verified in game.**
+
+### Also 2026-08-22 — the category summary line came off
+
+**Asked (owner):** *"removed the text on the bazaar tab under the drop down 'x tradeable of y...'
+that whole line of text."*
+
+`Atr_Bz_CatSummary` and the block that filled it are gone. It took with it the only caller of
+**both** `Atr_Bz_CategoryCounts` and `Atr_Bz_PricedCount`; they are left in place — global, cheap,
+each answering a question the tab may want asked again — with a comment saying they are now
+unreferenced, which is worth knowing before editing either expecting something to depend on it.
 
 ---
 
@@ -335,6 +398,51 @@ of Blizzard's 32px close button above, short of the headings bar below. The visi
 **Verified:** `luac5.1 -p` and `ET.parse` clean, the four Auctionator suites still pass. **Not
 verified in game** — whether `(-28, -46)` clears the money frame on the Buy tab is the thing to look
 at first.
+
+### Reopened and finished 2026-08-22 — "each tab" meant ALL of them
+
+**Owner, in game:** *"Are the options and full scan small buttons supposed to be in yet? Because I
+only see them on the original 3 tabs still."*
+
+**The request was read too narrowly and the build above is half the item.** "Squeeze those buttons
+in the upper right section of each tab **also**" means all eight Auctionator tabs; what shipped
+moved them within the three they were already on. The owner's own diagnosis was right: *"something
+about the old tabs and new not functioning the same with ui elements"* — `Atr_AuctionFrameTab_OnClick`
+calls `Atr_Main_Panel:Hide()` and shows a World 2 panel in its place, and both buttons are children
+of that shared panel, so they leave with it. Nothing was wrong with the placement; they were inside
+the thing that gets hidden.
+
+**Reparented to `AuctionFrame`, and shown by tab.** `Atr_Sell_SyncTopRightButtons(index)` shows them
+when `Atr_IsAuctionatorTab(index)` and hides them otherwise — every path that changes tab, including
+`Atr_SelectPane` and the hooked original, runs through that one function, so opening the window, a
+tab click and the saved default tab are all covered. Without the hide they would appear over
+Blizzard's own Browse / Bid / Auctions.
+
+**The frame level is load-bearing.** The World 2 panels are also `AuctionFrame`'s children and are
+created *after* this pair, so at equal level they draw over the buttons and eat the clicks. That is
+the old queue's item 22 — the Buy tab's buttons dead for three rounds over exactly this — and +20 is
+the margin that fixed them.
+
+**They moved up one line, because the line item 6 chose is already taken on four of the five newer
+tabs**: the Ledger's Clear `(-16, -46)`, the Advisor's Ignored `(-20, -46)`, the Analysis view strip
+`(-26, -50)` and the Finder's Search `(-18, -49)`. One shared pair cannot own a line four tabs
+already use, so it sits at `(-40, -20)` — between the close button and that row, level with the
+centred title, which is empty out to the right edge on every tab.
+
+**A separate bug, found while moving them, and the owner's own wording is the evidence.**
+`AuctionatorFinderFullScan.lua`'s relabel to "Scan Categories..." was a bare `if` at **file scope**,
+and at file scope `Atr_FullScanButton` does not exist — the button is created with `Atr_Main_Panel`
+inside `Atr_Init`, which does not run until `Blizzard_AuctionUI` loads, long after that file is
+parsed. The guard was always false, so the button has read "Full Scan..." all along, which is what
+the owner called it when asking for this item. It is now `Fdr_FS_RelabelButton()`, called once the
+button exists. **The claim in the Built section above that the visible label is "Scan Categories..."
+was wrong.**
+
+**Known rough edge, not fixed:** `Atr_UpdateUI_SellPane` disables both buttons while a Sell search is
+processing and re-enables when it finishes. Switch tabs mid-scan and they stay greyed on every tab
+until it completes. Transient and self-correcting, so it is recorded rather than worked around.
+
+**Verified:** `luac5.1 -p` and `ET.parse` clean, the four suites pass. **Not verified in game.**
 
 ---
 
@@ -418,3 +526,48 @@ the new path — the entry appears for a craftable item and not otherwise, it is
 named after the item, it holds the three reagents rather than the item, and a second click neither
 duplicates the list nor doubles its contents (39 passed). The four shipped suites still pass and
 `luac5.1 -p` is clean. **Not verified in game.**
+
+---
+
+## 8. NEW — a "Ledger" sub-tab beside Current and History, per item
+
+**Asked (owner, 2026-08-22):** *"add new tab next to 'Current' and 'History' called Ledger on the
+original 3 tabs, to reference any ledger data about the item."*
+
+**The name is free because it was given up for exactly this.** `Atr_ListTabs`
+(`Auctionator.xml:988`) held *Current* and *Ledger* until the Ledger main tab was built, and tab 2
+was renamed to **History** then — it showed the scanned item's price history and was the odd one
+out. `AuctionatorLedger.lua`'s own header records the swap: *"the label was the odd one out.
+Renamed to History, which frees the name for the thing that is actually a ledger."* This item
+reclaims it for that thing.
+
+**Tab 3 already exists and is hidden, not deleted** (`Auctionator.xml:1002`). The XML comment there
+says why: `Atr_UpdateUI` still has an `else` branch calling `PanelTemplates_SetTab(Atr_ListTabs, 3)`
+and `Atr_ShowWhichRB(3)` must still resolve, so the frame was left in place. So the third tab is a
+`hidden="true"` to remove and a `PanelTemplates_SetNumTabs(Atr_ListTabs, 2)` (`:1014`) to make 3 —
+**but it is currently wired to `Atr_ShowHints`**, the dead hint system whose sources (Wowecon,
+GoingPrice, `gAtr_ScanDB`) are not installed. Reusing slot 3 means deciding whether the hints
+branch goes or moves; leaving it and adding a fourth is the alternative.
+
+**What it would show.** `AUCTIONATOR_LEDGER.rows` filtered to this item — the same records the
+Ledger main tab draws, narrowed to `gCurrentPane.activeScan.itemName`. Every piece exists:
+`Atr_Ledger_DB()`, the `LDG_SRC` kind/colour table, and `Atr_Ledger_ItemTotals()`, which the Advisor
+already calls for realised margin per item. **The reader should be one function in
+`AuctionatorLedger.lua`**, the way item 1 put `Atr_Hist_PaneRows` in `AuctionatorHistory.lua`: the
+pane should not learn the ledger's row shape.
+
+**Three things to settle before building:**
+
+1. **Rows, or a summary, or both?** The ledger for one item is often two or three rows, and the
+   number worth reading is the one `Atr_Ledger_ItemTotals` already computes — bought N at X, sold M
+   at Y, realised Z. A list of three rows under four columns built for a market history may read as
+   emptier than a sentence would.
+2. **The tab strip is driven by `IsScanEmpty`** (`Auctionator.lua`, `Atr_UpdateUI`) — it hides
+   whenever there is no scan. Ledger data exists for items you are *not* currently scanning, but
+   this strip is per-scanned-item by construction, so the tab inherits that and should not fight it.
+3. **The empty state matters more here than on the other two**, because it is the common one: most
+   items you look up have never been traded. It should say "you have not bought or sold this"
+   rather than draw nothing — the same lesson item 1 recorded about three states.
+
+**Related, already shipped:** item 1 made the History sub-tab read the market series and left your
+own postings unread there; this is where the "what did *I* do with this item" question goes.

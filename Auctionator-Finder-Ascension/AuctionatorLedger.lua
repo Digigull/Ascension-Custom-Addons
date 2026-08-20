@@ -808,11 +808,83 @@ local function Ldg_Rows ()
 	return db.rows or {};
 end
 
+-- THE FILTER (owner, 2026-08-22: a filter box, top left, where the Analysis tab
+-- keeps its own).  Item name only, matched the way An_PassesFilter matches --
+-- lowercased, plain `find`, no patterns -- so the two boxes behave identically
+-- and a bracket typed into either is a bracket rather than a pattern error.
+local gLdg_Filter = "";
+
+-- The ROW's own name, not its link: a link is "|cff...|Hitem:...|h[Copper Ore]|h|r"
+-- and filtering that would match on colour codes and item ids.  Where a row has
+-- only a link, the name inside the brackets is what somebody would have typed.
+local function Ldg_RowName (r)
+
+	if (type (r) ~= "table") then return nil; end
+	if (type (r.name) == "string" and r.name ~= "") then return r.name; end
+
+	if (type (r.link) == "string") then return r.link:match ("%[(.-)%]"); end
+
+	return nil;
+end
+
+local function Ldg_PassesFilter (r)
+
+	if (gLdg_Filter == "") then return true; end
+
+	local name = Ldg_RowName (r);
+	if (name == nil) then return false; end
+
+	return (string.find (string.lower (name), gLdg_Filter, 1, true) ~= nil);
+end
+
+-- What the table DRAWS, which is not what the ledger HOLDS.
+--
+-- Deliberately not folded into Ldg_Rows, and this is the trap worth naming: the
+-- Clear button's confirmation counts rows with #Ldg_Rows(), and Clear deletes
+-- the whole ledger regardless of what is filtered.  A filtered Ldg_Rows would
+-- have made the popup ask "Delete all 3 ledger rows?" while deleting 412.
+local function Ldg_VisibleRows ()
+
+	if (gLdg_Filter == "") then return Ldg_Rows (); end
+
+	local out = {};
+	local src = Ldg_Rows ();
+
+	local i;
+	for i = 1, #src do
+		if (Ldg_PassesFilter (src[i])) then table.insert (out, src[i]); end
+	end
+
+	return out;
+end
+
+local function Ldg_SetFilter (text)
+
+	local f = tostring (text or "");
+	f = f:gsub ("^%s+", ""):gsub ("%s+$", "");
+	f = string.lower (f);
+
+	if (f == gLdg_Filter) then return; end
+
+	gLdg_Filter = f;
+
+	-- a narrower list under an old scroll offset draws as a page of nothing --
+	-- the same reason An_SetFilter scrolls to the top
+	if (FauxScrollFrame_SetOffset and Atr_Ledger_ScrollFrame) then
+		FauxScrollFrame_SetOffset (Atr_Ledger_ScrollFrame, 0);
+	end
+	if (Atr_Ledger_ScrollFrameScrollBar and Atr_Ledger_ScrollFrameScrollBar.SetValue) then
+		Atr_Ledger_ScrollFrameScrollBar:SetValue (0);
+	end
+
+	Atr_Ledger_Redisplay ();
+end
+
 function Atr_Ledger_Redisplay ()
 
 	if (not Atr_Ledger_Panel or not Atr_Ledger_Panel:IsShown()) then return; end
 
-	local rows = Ldg_Rows ();
+	local rows = Ldg_VisibleRows ();
 	local n    = #rows;
 
 	if (FauxScrollFrame_Update) then
@@ -872,9 +944,22 @@ function Atr_Ledger_Redisplay ()
 	end
 
 	if (Atr_Ledger_Totals) then
+
+		-- THE TOTALS FOLLOW THE FILTER, and say so.  Money summed over the rows
+		-- on screen is the useful number -- "what did I spend on Saronite" is the
+		-- question a filter is typed to ask -- but "412 rows, out 900g" printed
+		-- under three visible rows would be read as the whole ledger's, so the
+		-- count names both.
+		local count;
+		if (gLdg_Filter == "") then
+			count = string.format (LZT("%d rows"), n);
+		else
+			count = string.format (LZT("%d of %d rows"), n, #Ldg_Rows ());
+		end
+
 		Atr_Ledger_Totals:SetText (string.format (
-			LZT("%d rows   |   auction house: out %s, in %s, deposits %s"),
-			n, Ldg_Money (spent), Ldg_Money (back), Ldg_Money (deposits)));
+			LZT("%s   |   auction house: out %s, in %s, deposits %s"),
+			count, Ldg_Money (spent), Ldg_Money (back), Ldg_Money (deposits)));
 	end
 end
 
@@ -931,6 +1016,54 @@ function Atr_Ledger_Init ()
 	local note = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
 	note:SetPoint ("TOP", title, "BOTTOM", 0, -4);
 	note:SetText (LZT("Auction house activity. Vendor sales are not recorded yet."));
+
+	-- THE FILTER BOX (owner, 2026-08-22: "add a filter box, top left area (same
+	-- position as Analysis tab)").  The same coordinates as Atr_An_FilterBox, and
+	-- they transfer exactly because the two panels are laid out identically --
+	-- both TOPLEFT (10, 0), both with their dark backdrop starting at -70.
+	--
+	-- x=72/76 rather than the 24 that looks like the left margin: at 24 both the
+	-- label and the box run under the auction house's character portrait, which
+	-- is drawn over them.  The Analysis tab's own comment records that; this is
+	-- the second tab to inherit the answer rather than rediscover it.
+	local filtLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+	filtLabel:SetPoint ("TOPLEFT", 72, -40);
+	filtLabel:SetText (LZT("Filter"));
+
+	local filtBox = CreateFrame ("EditBox", "Atr_Ledger_FilterBox", panel, "InputBoxTemplate");
+	filtBox:SetSize (90, 20);
+	filtBox:SetPoint ("TOPLEFT", 76, -52);
+	filtBox:SetAutoFocus (false);
+	filtBox:SetMaxBytes (96);
+
+	-- OnTextChanged rather than OnEnterPressed: a filter you have to confirm is
+	-- a search box.  The Analysis box works this way and so does this one.
+	local rewriting = false;
+
+	filtBox:SetScript ("OnTextChanged", function (self)
+
+		if (rewriting) then return; end
+
+		local txt = self:GetText() or "";
+
+		-- a shift-clicked link arrives whole; filter on the name anybody would
+		-- have typed.  The rewrite re-enters this script, hence the flag.
+		local name = txt:match ("%[(.-)%]");
+		if (name) then
+			rewriting = true;
+			self:SetText (name);
+			rewriting = false;
+			txt = name;
+		end
+
+		Ldg_SetFilter (txt);
+	end);
+
+	filtBox:SetScript ("OnEnterPressed", function (self) self:ClearFocus(); end);
+	filtBox:SetScript ("OnEscapePressed", function (self)
+		self:SetText ("");			-- OnTextChanged clears the filter with it
+		self:ClearFocus();
+	end);
 
 	-- Column headings, from the same table the row cells come from.  They used to
 	-- be five hand-counted numbers that had to be kept in step with five more on

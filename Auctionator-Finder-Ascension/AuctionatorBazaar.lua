@@ -749,19 +749,12 @@ function Atr_Bz_RebuildDisplay ()
 		end
 	end
 
-	local counts	= Atr_Bz_CategoryCounts();
-	local c			= counts[gBz_Cat];
-
-	if (Atr_Bz_CatSummary) then
-		if (c) then
-			local priced = Atr_Bz_PricedCount (gBz_Rows);
-			Atr_Bz_CatSummary:SetText (string.format (BZT("%d tradeable of %d, %d priced"),
-					c.tradeable, c.total, priced));
-		else
-			Atr_Bz_CatSummary:SetText ("");
-		end
-	end
-
+	-- The "%d tradeable of %d, %d priced" line under the category dropdown is
+	-- gone (owner, 2026-08-22), and with it the only caller of BOTH
+	-- Atr_Bz_CategoryCounts and Atr_Bz_PricedCount.  They are left in place --
+	-- global, cheap, and each answers a question the tab may want asked again --
+	-- but they are unreferenced as of this change, which is worth knowing before
+	-- editing either of them expecting something to depend on it.
 	table.sort (gBz_Rows, Bz_Comparator);
 
 	Atr_Bz_RefreshNav();
@@ -1403,11 +1396,6 @@ function Atr_Bz_Init ()
 		UIDropDownMenu_JustifyText (dd, "LEFT");
 		UIDropDownMenu_SetSelectedValue (dd, gBz_Cat);
 	end
-
-	local summary = panel:CreateFontString ("Atr_Bz_CatSummary", "ARTWORK", "GameFontDisableSmall");
-	summary:SetPoint ("TOPLEFT", BZ_LEFT_X + 2, -(BZ_NAV_TOP - 16));
-	summary:SetWidth (BZ_LEFT_W);
-	summary:SetJustifyH ("LEFT");
 
 	-- item navigator
 	local navScroll = CreateFrame ("ScrollFrame", "Atr_Bz_NavScroll", panel, "FauxScrollFrameTemplate");
