@@ -2560,9 +2560,79 @@ lane clears the last one. Gold/day at a ~830px window is 128px against a ~118px 
 
 ---
 
+## 24. Analysis tab — sortable columns, the way the Finder does it — DONE
+
+**Asked 2026-08-20**, with the Crafting view running in game: make the columns sortable, and the
+Finder tab already does sorting like this.
+
+**It does, and that is the whole design.** `Fdr_MakeHeader` / `Fdr_HeaderClick`
+(`AuctionatorFinder.lua`) have worked this way since the Finder was written: each header is a
+`Button` the width of its column with a barely-there white wash (alpha 0.06) that brightens under
+the cursor (0.15), a `^` / `v` arrow in `|cff88ccff` on the sorted one, and a second click on the
+same header reverses it. All of that is reproduced rather than reinvented, so the two tabs behave
+identically — this is the same request the Finder answered, on a different table.
+
+Every column in **all three views** sorts, including the two that had never been clickable at all.
+
+### The headers stopped being FontStrings
+
+They were FontStrings, with an invisible hit frame laid over the two columns that had a tooltip to
+show. A `FontString` cannot take scripts, which is why that hit frame existed — and it had to be
+kept in step with a position and width defined somewhere else. One `Button` per column now does
+both jobs, so **every** column gets a tooltip as well as a sort, and there is no second frame to
+drift. It sits at -82 and is 18 tall: the label still lands at -84 where it always did, and the
+button stops exactly where the scroll frame starts (-102), because a header that overhung it would
+eat the first row's clicks.
+
+### The arrow is appended to the header's text
+
+Not a second FontString beside it. A header spans its whole column and is justified like the cells
+under it, so an arrow anchored to the label's right edge lands in the *next* column on everything
+right-aligned — which is four of the seven market columns and three of the six craft ones.
+Appended, it sits with the word whatever the justification. The cost is that the sorted column's
+header shifts by a glyph's width, and that is the column you are looking at.
+
+### Three judgements worth having here
+
+- **A cell with nothing in it sorts LAST in both directions.** "not scanned", a blank group, a
+  `--` — none of them are zeros. Sorting ascending by Sold/day would otherwise open on a page of
+  items nobody has ever scanned, which is a statement about the watchlist rather than about the
+  market. Each row builder already hand-rolled this rule for its own default order (the market
+  view's "never scanned sorts last", the ledger's "listed-only sorts under traded"); it now lives
+  in one place, as a column's `val` returning nil, and the rule reads as: **a cell that prints
+  `--` sorts as unknown.**
+- **Each view keeps its own sort.** They share a table and nothing else, and each default *is* that
+  view's point — gold per day, what you actually made, what one craft is worth. Carrying a key
+  across a view switch would land on a column the next view does not have, so each view returns to
+  its own. Nothing is saved: a reload restores the three defaults, exactly as the Finder's sort
+  does.
+- **The tie-break is always the item name, ascending.** `table.sort` is not stable, so without one,
+  two rows carrying the same number can swap places on every redraw — and a list that reshuffles
+  under the cursor reads as a bug rather than as a tie.
+
+Two smaller ones: a numeric column opens **descending** (the question is "which is biggest") and a
+text column ascending; and a click **scrolls back to the top**, because re-sorting under a scrolled
+offset leaves you looking at the middle of a list you just reordered.
+
+The Crafting view sorts its **cached** ranking rather than re-pricing it — a header click reorders
+the list without touching a price — and `stats.best` is taken when the list is built, so the
+summary keeps naming the best craft however the table is currently ordered.
+
+**Verified** by `luac5.1 -p`, `analysis-feed-smoke` (27/27, it loads the changed file), and a
+throwaway 18-assertion check of the comparator driven straight out of the file's own column tables:
+the default order in each of the three views, unknowns staying last when the direction is reversed,
+a text column opening A–Z and a numeric one opening biggest-first, an ungrouped row sorting last,
+the ledger's listed-only row sorting last in both directions, the craft margin column ordering on
+the ratio rather than on the printed whole percent, and a tie landing in the same order twice
+running. All passed first run; not kept, per the repo's tooling rule. **Not verified in game.** The
+checks are: the arrow moves to the header you clicked, a second click flips it, the blank rows stay
+at the bottom either way, and each view remembers its own column when you switch back to it.
+
+---
+
 ## Suggested order
 
-Every numbered item has now shipped or closed: 1–9 and 11–23 are **DONE** or deliberately parked,
+Every numbered item has now shipped or closed: 1–9 and 11–24 are **DONE** or deliberately parked,
 and item 10 closed without any code (2026-08-19). Rewritten twice that day — once after the first
 real dump, again once items 7, 12 and 13 all landed. **Nothing on this list is unstarted.** What
 is left is follow-on work inside shipped items, two standing deferrals, and two questions that
