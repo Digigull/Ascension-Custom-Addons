@@ -2028,7 +2028,12 @@ function Atr_SB_Build()
     -- no known AH price, so profit is unknown (returned as nil) and they are never
     -- swept into "Not Profitable" -- a scan has to fill their price first.
     local function Atr_SB_BestMethod(link, name)
-        local ah = (name and Atr_GetAuctionPrice) and Atr_GetAuctionPrice(name) or nil;
+        -- Variant-keyed (BACKLOG item 4, the read half): a name-only read answers
+        -- the ATR_PV_ANY slot, which only a full scan writes, so a Sell or Buy
+        -- search could not change which method this recommends.  The link is the
+        -- bag item's own, so it keys the variant the player is about to sell.
+        local vkey = (Atr_VariantKey) and Atr_VariantKey(link) or nil;
+        local ah = (name and Atr_GetAuctionPrice) and Atr_GetAuctionPrice(name, vkey) or nil;
         ah = tonumber(ah) or 0;
         if (ah <= 0) then return M_UNPRICED, nil; end   -- not scanned / no listings yet
 
@@ -2420,7 +2425,9 @@ function Atr_SB_FailsMarginFilter (link, name, profit)
     if (gSB_CraftMarginOn) then
         local craftCost = Atr_Craft_GetCraftCost and Atr_Craft_GetCraftCost(link, name) or nil;
         if (craftCost) then
-            local ah = (name and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name)) or nil;
+            -- Variant-keyed, as Atr_SB_BestMethod is (BACKLOG item 4, the read half).
+            local vkey = (Atr_VariantKey) and Atr_VariantKey(link) or nil;
+            local ah = (name and Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name, vkey)) or nil;
             if (ah and ah > 0 and (ah - craftCost) < gSB_CraftMargin) then
                 return true;
             end

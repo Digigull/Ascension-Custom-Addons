@@ -359,8 +359,34 @@ function Fdr_PriceDB_Inspect (query)
 	say (string.format ("Price DB inspect: |cffffd100%s|r", name));
 
 	local auc = (type (Atr_PriceValue) == "function") and Atr_PriceValue (gAtr_ScanDB[name]) or gAtr_ScanDB[name];
-	say (string.format ("  auction (gAtr_ScanDB): %s",
+	say (string.format ("  auction (gAtr_ScanDB), name-only: %s",
 			auc and Fdr_MoneyString (auc) or "|cff888888(not stored)|r"));
+
+	-- THE VARIANT SLOTS, spelled out (BACKLOG item 4, the read half).
+	--
+	-- This command is invoked by NAME, so it has no link and cannot ask for a
+	-- variant the way a tooltip does.  Printing only the name-only answer is how
+	-- this instrument misled the first investigation: a Buy search files its
+	-- price under the listing's variant key and leaves the name-level slot ("?",
+	-- written by full scans only) untouched, so the two numbers can differ by a
+	-- lot and the report showed just the one the search never wrote.  List every
+	-- slot instead and the divergence is visible at a glance.
+	local row = gAtr_ScanDB[name];
+	if (type (row) == "table") then
+		local parts, k, v = {}, nil, nil;
+		for k, v in pairs (row) do
+			if (k ~= "dflt" and type (v) == "number") then
+				local label = (k == "?") and "name-level" or k;
+				table.insert (parts, string.format ("|cffffffff%s|r %s", label, Fdr_MoneyString (v)));
+			end
+		end
+		table.sort (parts);
+		if (#parts > 0) then
+			say (string.format ("  variant slots: |cffffffff%d|r", #parts));
+			say ("    "..table.concat (parts, "|cff555555,|r "));
+			say ("    |cff888888a tooltip asks by variant; this line is what it would find|r");
+		end
+	end
 
 	local m = (type (gAtr_MeanDB) == "table") and gAtr_MeanDB[name] or nil;
 	if (type (m) == "number") then m = { m }; end		-- item 13: the one-sample shape
@@ -384,10 +410,13 @@ function Fdr_PriceDB_Inspect (query)
 	end
 
 	-- What the tooltip renders can differ from the raw store (recent-sale or
-	-- suffix-variant fallbacks in Atr_GetAuctionPrice), so show both.
+	-- suffix-variant fallbacks in Atr_GetAuctionPrice), so show both.  Name-only,
+	-- necessarily -- see the variant-slot note above: with no link there is no
+	-- key to ask with, so this is the answer for an item whose variant the
+	-- database has never seen, and the slot list is the answer for one it has.
 	local tipAuc = (Atr_GetAuctionPrice) and Atr_GetAuctionPrice (name) or nil;
 	local tipMed = (Atr_GetMeanPrice) and Atr_GetMeanPrice (name) or nil;
-	say (string.format ("  tooltip shows -> auction %s   median %s",
+	say (string.format ("  name-only lookup -> auction %s   median %s",
 			tipAuc and Fdr_MoneyString (tipAuc) or "|cff888888--|r",
 			tipMed and Fdr_MoneyString (tipMed) or "|cff888888--|r"));
 end

@@ -2290,7 +2290,11 @@ function Atr_AddCraftProfitToTip (tip, link, itemName, num, showStackPrices, xst
 	-- The produced item's own auction price -- needed only for the profit line,
 	-- NOT for the cost line.  Craft cost is worth showing on its own (it tells
 	-- you what a craft ties up), so we no longer bail when this is missing.
-	local sellPrice = (itemName and Atr_GetAuctionPrice) and tonumber (Atr_GetAuctionPrice (itemName)) or nil;
+	-- Variant-keyed, like the Auction line above it (BACKLOG item 4, the read
+	-- half).  These two numbers are drawn on the SAME tooltip, so a name-only
+	-- read here would have this line quoting the last full scan's price while
+	-- the Auction line quotes the search you just ran.
+	local sellPrice = (itemName and Atr_GetAuctionPrice) and tonumber (Atr_GetAuctionPrice (itemName, Atr_VariantKey (link))) or nil;
 
 	-- Match the stack scaling the rest of the tooltip used (see the Auction line).
 	if (num and showStackPrices) then
@@ -2465,7 +2469,30 @@ local function ShowTipWithPricing (tip, link, num, skillIndex)
 	scaleMismatch, tipIlvl, tipReq = Atr_Finder_TipApplyOverride (tip, scaleMismatch, tipIlvl, tipReq);		-- FINDER_TAB
 
 	if (AUCTIONATOR_V_TIPS == 1) then vendorPrice	= itemVendorPrice; end;
-	if (AUCTIONATOR_A_TIPS == 1) then auctionPrice	= Atr_GetAuctionPrice (itemName); end;
+
+	-- ASK FOR THE VARIANT IN FRONT OF US (BACKLOG item 4, the read half).
+	--
+	-- This asked by NAME alone, and a name-only lookup answers the ATR_PV_ANY
+	-- slot -- the one written by the FULL SCAN and the Finder feed and nothing
+	-- else.  A Buy or Sell search always has a listing link, so Atr_PriceStore
+	-- files its price under that variant's key and leaves ATR_PV_ANY alone,
+	-- deliberately (see the note there: a stale cheap variant must not be able to
+	-- pin a name below market).  Both halves are correct on their own and the
+	-- pair had a hole in it: searching an item the database ALREADY KNEW never
+	-- moved its tooltip, because the fresh number was sitting one slot away and
+	-- nobody asked for it.  An item the database had never seen looked fine,
+	-- which is why this survived a "does the search write?" investigation --
+	-- the write was never the problem.
+	--
+	-- Confirmed against the store rather than reasoned: a row left as
+	-- { ["?"] = 17000, ["1206:0"] = 9500 } answers 17000 by name and 9500 by key.
+	--
+	-- The link is already in hand here, so ask with it.  This cannot lose a
+	-- value -- Atr_PriceValue falls back to the name's default whenever the
+	-- variant slot is empty, which is every row written before variants existed.
+	if (AUCTIONATOR_A_TIPS == 1) then
+		auctionPrice = Atr_GetAuctionPrice (itemName, Atr_VariantKey (link));
+	end;
     local auctionMedianDays, auctionMedianSrc;
     if (AUCTIONATOR_A_TIPS == 1) then
         auctionMedianPrice, auctionMedianDays, auctionMedianSrc = Atr_GetMeanPrice (itemName);
