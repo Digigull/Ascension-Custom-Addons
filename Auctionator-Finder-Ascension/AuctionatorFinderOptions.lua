@@ -115,7 +115,7 @@ function Fdr_Options_Ensure ()
 	gFdr_OptRows.history = row ("Atr_Finder_Opt_History_CB", -212,
 		FT("Remember what prices used to be"),
 		FT("Market price history"),
-		{ FT("Records one price a day per item, from the same scans that already feed the price database, so the addon can tell you what something was worth last week and not just today. Nothing reads it yet -- this fills the record first."),
+		{ FT("Records one price a day per item, from the same scans that already feed the price database, so the addon can tell you what something was worth last week and not just today. The History tab on Buy, Sell and My Auctions reads it, and so do the tooltip and the Analysis tab's Week column."),
 		  FT("It is kept in a SavedVariables file of its own, so a client crash can never take your trade ledger or your learned vendor prices down with a big history. Deleting that file loses only the history, and scanning grows it back."),
 		  FT("Needs the Auctionator-Finder-Ascension-History folder installed beside this addon. In game use /atrhistory.") });
 

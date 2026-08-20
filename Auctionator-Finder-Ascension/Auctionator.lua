@@ -3334,6 +3334,7 @@ end
 function Atr_OnSearchComplete ()
 
 	gCurrentPane.sortedHist = nil;
+	gCurrentPane.marketHist = nil;
 
 	Atr_Clear_Owner_Item_Indices();
 
@@ -3694,6 +3695,41 @@ end
 
 -----------------------------------------
 
+-- THE HISTORY SUB-TAB'S DATA (BACKLOG item 1, 2026-08-21).
+--
+-- The market series, for the item this pane has scanned.  A separate list from
+-- sortedHist and NOT a replacement for it, which is the thing to understand
+-- before editing either:
+--
+--   sortedHist  is your own postings, and it is NOT display-only.  Its return
+--               value above is your most recent posting price, which
+--               AtrScan:ProcessBatch feeds into a scan as "__atrLast"
+--               (AuctionatorScan.lua:580), and AuctionatorShop.lua calls it too.
+--               Repointing that function at the market series would have changed
+--               all three silently.
+--   marketHist  is what the History sub-tab now SHOWS, and what it prices from
+--               when you click a row.
+--
+-- So "the market series replaces your postings" (owner, 2026-08-21) is true of
+-- the tab and false of the store: nothing stops being recorded, and the Ledger
+-- is where your own trades are read.
+function Atr_Process_MarketHistory ()
+
+	gCurrentPane.marketHist = {};
+
+	if (gCurrentPane:IsScanEmpty()) then
+		return;
+	end
+
+	if (type (Atr_Hist_PaneRows) ~= "function") then
+		return;			-- the history subsystem is not loaded at all
+	end
+
+	gCurrentPane.marketHist = Atr_Hist_PaneRows (gCurrentPane.activeScan.itemName);
+end
+
+-----------------------------------------
+
 function Atr_GetMostRecentSale (itemName)
 
 	local recentPrice;
@@ -3800,10 +3836,18 @@ function Atr_UpdateRecommendation (updatePrices)
 		
 	elseif (Atr_ShowingHistory()) then
 	
-		basedata = zc.GetArrayElemOrFirst (gCurrentPane.sortedHist, gCurrentPane.histIndex);
+		-- marketHist, not sortedHist: histIndex indexes the list on SCREEN, and
+		-- since BACKLOG item 1 that is the market series.  Left pointing at the
+		-- postings, row 3 of what you clicked would have priced from row 3 of a
+		-- list you cannot see.
+		basedata = zc.GetArrayElemOrFirst (gCurrentPane.marketHist, gCurrentPane.histIndex);
 		
 		if (basedata == nil) then
-			Atr_SetMessage (ZT("Auctionator has yet to record any auctions for this item"));
+			-- Says WHICH of the three states it is in -- not installed, off, or
+			-- on and empty for this item.  Atr_UpdateUI puts the same sentence up
+			-- on the tabs that never reach this function.
+			local msg = (type (Atr_Hist_PaneMessage) == "function") and Atr_Hist_PaneMessage (false) or nil;
+			Atr_SetMessage (msg or ZT("Auctionator has yet to record any auctions for this item"));
 			return;
 		end
 	
@@ -4475,6 +4519,23 @@ function Atr_UpdateUI ()
 		end
 
 		Atr_SetMessage ("");
+
+		-- AFTER the clear above, not inside Atr_ShowHistory, and that ordering is
+		-- the whole reason this is here: Atr_SetMessage ("") runs after the
+		-- Show* call, so a message set while drawing would be wiped a line later.
+		--
+		-- BUY and MY AUCTIONS never reach Atr_UpdateRecommendation -- it is
+		-- create-auction mode only -- so without this an empty History tab is a
+		-- blank list on two tabs out of three, which is exactly the "looks
+		-- broken" case the three states exist to answer (BACKLOG item 1).
+		if (Atr_ShowingHistory() and not gCurrentPane:IsScanEmpty()
+			and type (Atr_Hist_PaneMessage) == "function") then
+
+			local haveRows = (gCurrentPane.marketHist and #gCurrentPane.marketHist > 0);
+			local msg      = Atr_Hist_PaneMessage (haveRows);
+
+			if (msg) then Atr_SetMessage (msg); end
+		end
 		local scn = gCurrentPane.activeScan;
 		
 		if (Atr_IsModeCreateAuction()) then
@@ -4827,6 +4888,7 @@ function Atr_HEntryOnClick(self)
 	local cacheHit = gCurrentPane:DoSearch (itemName, true, 20);
 
 	Atr_Process_Historydata ();
+	Atr_Process_MarketHistory ();		-- BACKLOG item 1: what the History sub-tab shows
 	Atr_FindBestHistoricalAuction ();
 
 	Atr_DisplayHlist();	 -- for the highlight
@@ -4879,6 +4941,33 @@ end
 -----------------------------------------
 
 function Atr_BuildHistItemText(data)
+
+	-- A MARKET ROW (BACKLOG item 1).  A daily close has no stack size, no
+	-- posted/sold/expired and is nobody's auction, so none of the branches below
+	-- describes it.
+	--
+	-- A THIN DAY SAYS SO rather than being hidden.  Two listings is what the
+	-- market offered that day, and it is still the answer to "what was this
+	-- worth" -- but a reader who is not told reads it as a price like any other.
+	-- The store already marks them; this is the first thing to show it.
+	if (data.market) then
+
+		local whentime = date ("*t", data.when);
+
+		local txt;
+		if ((data.span or 1) > 1) then
+			-- a folded week: one row standing for several days (Atr_Hist_Decode)
+			txt = string.format (ZT("%d days to"), data.span).." "..monthDay (whentime);
+		else
+			txt = monthDay (whentime);
+		end
+
+		if (data.thin) then
+			txt = txt.."   |cff888888"..string.format (ZT("(only %d listed)"), data.thin).."|r";
+		end
+
+		return txt;
+	end
 
 	local stacktext = "";
 --	if (data.stackSize > 1) then
@@ -5221,8 +5310,8 @@ end
 
 function Atr_ShowHistory ()
 
-	if (gCurrentPane.sortedHist == nil) then
-		Atr_Process_Historydata ();
+	if (gCurrentPane.marketHist == nil) then
+		Atr_Process_MarketHistory ();
 		Atr_FindBestHistoricalAuction ();
 	end
 		
@@ -5230,11 +5319,13 @@ function Atr_ShowHistory ()
 	Atr_Col3_Heading:Hide();
 	Atr_Col4_Heading:Hide();
 
-	Atr_Col3_Heading:SetText (ZT("History"));
+	-- "Price history" rather than "History": the list under it is the market's
+	-- daily closes now, not the log of your own postings it used to be.
+	Atr_Col3_Heading:SetText (ZT("Price history"));
 
-	local numrows = gCurrentPane.sortedHist and #gCurrentPane.sortedHist or 0;
+	local numrows = gCurrentPane.marketHist and #gCurrentPane.marketHist or 0;
 
---zc.msg ("gCurrentPane.sortedHist: "..numrows,1,0,0);
+--zc.msg ("gCurrentPane.marketHist: "..numrows,1,0,0);
 
 	if (numrows > 0) then
 		Atr_Col1_Heading:Show();
@@ -5264,9 +5355,9 @@ function Atr_ShowHistory ()
 
 		lineEntry:SetID(dataOffset);
 
-		if (dataOffset <= numrows and gCurrentPane.sortedHist[dataOffset]) then
+		if (dataOffset <= numrows and gCurrentPane.marketHist[dataOffset]) then
 
-			local data = gCurrentPane.sortedHist[dataOffset];
+			local data = gCurrentPane.marketHist[dataOffset];
 
 			local lineEntry_item_tag = "AuctionatorEntry"..line.."_PerItem_Price";
 
@@ -5327,7 +5418,10 @@ function Atr_FindBestHistoricalAuction()
 
 	gCurrentPane.histIndex = nil;
 
-	if (gCurrentPane.sortedHist and #gCurrentPane.sortedHist > 0) then
+	-- Row 1 is the NEWEST market reading (Atr_Hist_PaneRows returns newest
+	-- first), so the default selection is what the item is worth now rather than
+	-- the oldest thing on record.
+	if (gCurrentPane.marketHist and #gCurrentPane.marketHist > 0) then
 		gCurrentPane.histIndex = 1;
 	end
 end

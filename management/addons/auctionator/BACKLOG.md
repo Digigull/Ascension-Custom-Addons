@@ -15,7 +15,7 @@ turns out to exist.
 
 ---
 
-## 1. The History sub-tab should show the MARKET's price history, not your own postings
+## 1. The History sub-tab shows the MARKET's price history, not your own postings — DONE
 
 **Asked (owner, 2026-08-21):** *"I want the History tabs on the Buy, Sell, and My Auctions tabs to
 use the new companion savedvariables history data (if not enabled in settings than have it say
@@ -63,6 +63,63 @@ trades** — but this is the owner's call and the build should not start until i
 Second: the rows carry `stackSize`, `when`, `yours` and `type`, and a market series has none of
 those. Either the row shape gains a "market" kind that renders date + price only, or the series is
 rendered into the existing columns with the ones it cannot fill left blank.
+
+### Built 2026-08-21
+
+**The owner's call: replace.** The History sub-tab shows the market series only; your own postings
+are read on the Ledger, which holds the trades that actually happened rather than the ones you
+asked for.
+
+**"Replace" is true of the tab and false of the store, and that distinction is the whole of why
+this was not a one-line change.** `Atr_Process_Historydata` looked like a display builder and is
+not: its return value is your most recent posting price, which `AtrScan:ProcessBatch` feeds into
+every scan as `__atrLast` (`AuctionatorScan.lua:580`), and `AuctionatorShop.lua:232` calls it too.
+Repointing it at the market series would have changed all three silently. So the series went into a
+**parallel list** — `gCurrentPane.marketHist`, beside the untouched `sortedHist` — and only the tab
+moved.
+
+**The tab was never a passive display, which is the second thing the request did not say.** Clicking
+a history row sets `histIndex`, and `Atr_UpdateRecommendation` prices your auction from
+`sortedHist[histIndex]`. Rendering one list while pricing from another would have made row 3 of what
+you clicked price from row 3 of a list you cannot see — so the recommendation reads `marketHist`
+too. The rows deliberately **do not** set `yours`, which is the field whose absence does something:
+the recommendation undercuts anything not yours, and a daily close is the market's price, so
+clicking one undercuts it exactly as clicking a Current row does.
+
+**Three states, not the one the request named** — `Atr_Hist_PaneMessage`, tested in that order so
+"off" cannot swallow "not installed":
+
+| State | What it says |
+|---|---|
+| Companion folder missing | names the folder; `Atr_Hist_Enabled()` is false here too, so this must be tested first |
+| Installed, switch off | names the setting **and** `/atrhistory on` |
+| On, empty for this item | says the record fills in by scanning — the ordinary state for the first few days |
+
+The message is raised in **`Atr_UpdateUI`, after its own `Atr_SetMessage ("")`**, not inside
+`Atr_ShowHistory`: the clear runs after the draw, so a message set while drawing is wiped a line
+later. It also has to be there because `Atr_UpdateRecommendation` is create-auction mode only —
+without it, Buy and My Auctions would show a blank list rather than a reason.
+
+**Two things found and fixed on the way.** A day number renders through `date()` in **local** time,
+so the midnight that starts day N is the previous calendar day for anyone west of UTC and every row
+would have been labelled a day early — the row's timestamp is **midday**. And the option's own
+tooltip still said *"Nothing reads it yet"*, which this change makes false; it now names its
+readers.
+
+**Where it lives:** `Atr_Hist_PaneRows` / `Atr_Hist_PaneMessage` in `AuctionatorHistory.lua` (the
+store shapes its own rows — `FRAMEWORK.md` §6), `Atr_Process_MarketHistory` and the render/price
+sites in `Auctionator.lua`, one field in `AuctionatorPane.lua`.
+
+**Verified:** `luac5.1 -p` clean; the four Auctionator suites still pass (114 + 31 + 27 + 25); and
+the new reader was exercised offline against a seeded series — newest-first ordering, thin days and
+folded weeks carried through, `yours` unset, midday timestamps, and all three message states
+resolving in the right order. **Not verified in game:** the row text in the real list, the message
+in `AuctionatorMessage2Frame`, and what clicking a row does to the sell recommendation.
+
+**One consequence to watch in testing:** with the companion off, the History tab is now a sentence
+instead of a list, and on the SELL tab that removes a pricing basis you could previously click. That
+is the replace decision working as asked, not a bug — but it is the thing most likely to feel like
+one.
 
 ---
 

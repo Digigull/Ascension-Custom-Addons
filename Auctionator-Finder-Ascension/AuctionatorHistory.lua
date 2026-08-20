@@ -16,10 +16,14 @@
 -- unbuilt item in the backlog turns out to need (8 group C, 28, 30) -- is not
 -- computable from anything stored.  This is the store that makes it computable.
 --
--- IT SHIPS DARK AND OFF.  Nothing reads it yet, on purpose: a week of ordinary
--- play then leaves real data for the readers to be built against instead of an
--- empty table.  The switch is off by default, so an install that does not ask
--- for this pays one boolean check per scanned name and nothing else.
+-- IT SHIPPED DARK AND OFF, so that a week of ordinary play left real data for
+-- the readers to be built against instead of an empty table.  It is read now --
+-- the price cascade, the Week column, and since BACKLOG item 1 (2026-08-21) the
+-- History sub-tab on Buy, Sell and My Auctions, which is the first place the
+-- series is the WHOLE of what a view shows.  The switch is still off by default,
+-- so an install that does not ask for this pays one boolean check per scanned
+-- name and nothing else; what changes when it is off is that those readers say
+-- so rather than drawing blank.
 --
 -- WHY A SEPARATE FILE, WHICH IS THE WHOLE SHAPE OF THIS FEATURE.  All 19
 -- account-wide variables share one SavedVariables file today.  A file truncated
@@ -628,6 +632,96 @@ function Atr_Hist_Series (name, now)
 	for i = 1, #s do s[i].age = today - s[i].d; end
 
 	return s;
+end
+
+-- THE HISTORY SUB-TAB'S ROWS (BACKLOG item 1, 2026-08-21) ------------------
+--
+-- The Current / History strip over the Buy, Sell and My Auctions results list
+-- answered a different question from the one its name asks: it was built out of
+-- AUCTIONATOR_PRICING_HISTORY, which is YOUR OWN POSTINGS.  The owner asked for
+-- what the MARKET has been doing, and decided (2026-08-21) that it REPLACES the
+-- postings rather than sitting beside them -- the Ledger tab reads your own
+-- trades now, and it holds the ones that actually happened rather than the ones
+-- you asked for.
+--
+-- Shaped here rather than in Auctionator.lua because the pane has no business
+-- knowing how a day number is stored (FRAMEWORK.md section 6: the arithmetic
+-- lives with the data).  What comes back is already the row shape that file
+-- renders and prices from.
+--
+-- NEWEST FIRST, which is the opposite of the store's own order.  The series is
+-- kept oldest-first because that is how it is appended and folded; a list you
+-- read starts with what is true now.
+--
+-- `yours` IS DELIBERATELY NOT SET, and it is the one field whose absence does
+-- something.  Atr_UpdateRecommendation prices at "undercut this" unless the row
+-- is yours, and these rows are the market's -- so clicking one on the SELL tab
+-- undercuts it, exactly as clicking a row on the Current tab does.  The old
+-- rows set yours = true because undercutting your own past posting is a race
+-- against yourself.
+function Atr_Hist_PaneRows (name, now)
+
+	local out = {};
+
+	local s = Atr_Hist_Series (name, now);
+
+	local i;
+	for i = #s, 1, -1 do
+
+		local e = s[i];
+
+		tinsert (out, {
+			itemPrice	= e.p,
+			buyoutPrice	= e.p,			-- one unit: a daily close is a per-item price
+			stackSize	= 1,
+			-- MIDDAY, not midnight, and it is not cosmetic.  A day number is
+			-- bucketed off the epoch in whole days, and date() renders in LOCAL
+			-- time -- so the midnight that starts day N renders as the previous
+			-- calendar day for anyone west of UTC, and every row would be
+			-- labelled a day early.  Noon is inside the right day for any offset
+			-- this side of +/-12h, which is all of them.
+			when		= ATR_HIST_DAY0 + (e.d * 86400) + 43200,
+			market		= true,			-- what Atr_BuildHistItemText switches on
+			thin		= e.thin,
+			span		= e.span,
+			age			= e.age,
+		});
+	end
+
+	return out;
+end
+
+-- WHY THIS HAS THREE STATES AND THE REQUEST NAMED ONE.
+--
+-- The owner asked for "if not enabled in settings then have it say enable the
+-- setting to see history".  That covers installed-but-off.  The other two are
+-- the ones that would actually read as a broken tab:
+--
+--   * THE COMPANION IS NOT INSTALLED.  Telling somebody to tick a setting they
+--     cannot reach is worse than saying nothing, so this case names the folder.
+--     Atr_Hist_Enabled() returns false here too, which is why the order of the
+--     tests below matters -- "off" would swallow it.
+--   * ON, AND EMPTY FOR THIS ITEM.  The ordinary state for days after switching
+--     it on, and the one most likely to be mistaken for a bug.  It says the
+--     record fills in by scanning rather than leaving a blank list.
+--
+-- Takes the row count rather than the name so the series is decoded once per
+-- draw: the caller has the rows already.
+function Atr_Hist_PaneMessage (haveRows)
+
+	if (not Atr_Hist_Available ()) then
+		return HT("Market price history needs the Auctionator-Finder-Ascension-History folder, installed beside this addon. It is not loaded, so there is nothing to show here.");
+	end
+
+	if (not Atr_Hist_Enabled ()) then
+		return HT("Market price history is off.\n\nTurn on \"Market price history\" in the Finder's Scanning options, or type /atrhistory on, and this fills in as you scan.");
+	end
+
+	if (not haveRows) then
+		return HT("No price history recorded for this item yet.\n\nOne reading a day is kept, from the scans you already run -- search for it and it starts.");
+	end
+
+	return nil;
 end
 
 -- THE NEWEST READING, without decoding the rest of the series.  This is the one
