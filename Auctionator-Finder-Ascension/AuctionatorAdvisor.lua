@@ -162,14 +162,16 @@ end
 --   slow    a recipe you have flagged as a slow mover.  Saved, because it is a
 --           fact about the market that does not stop being true at logout.
 --   farm    the farm list.  Saved, and read out by Atr_Advisor_FarmList() --
---           which exists so the minimap window this is heading for can be a
---           reader over it rather than a second copy of it.
+--           which exists so the minimap window over it is a reader rather than a
+--           second copy.  That window is now built: AuctionatorFarmList.lua
+--           (item 34).  The entry also keeps the gold-per-day rate AS IT WAS
+--           when you ticked it -- see Atr_Advisor_SetFarmed for why.
 --
 -- ITS OWN SAVED VARIABLE, not a corner of AUCTIONATOR_ANALYSIS.  The farm list
--- is going to be opened from a minimap button, away from the auction house and
--- away from the Analysis tab entirely; making that reader load the watchlist
--- database to find out what to farm would be the wrong dependency, and it is
--- cheaper to say so now than to unpick it later.
+-- is opened from a minimap button, away from the auction house and away from the
+-- Analysis tab entirely; making that reader load the watchlist database to find
+-- out what to farm would have been the wrong dependency.  It paid off exactly as
+-- written: AuctionatorFarmList.lua reads Atr_Advisor_FarmList() and nothing else.
 --
 -- KEYED BY NAME, like everything else on this page.  The ID is stored beside it
 -- where one is known, because the farm list wants an icon and a link, but it is
@@ -241,16 +243,32 @@ function Atr_Advisor_IsFarmed (name)
 	return (name ~= nil) and (Atr_Advisor_DB ().farm[name] ~= nil);
 end
 
-function Atr_Advisor_SetFarmed (name, on, id)
+-- `gold` IS THE RATE AS IT WAS WHEN YOU TICKED IT, and storing it is the whole
+-- of item 34's one honest limit.  What made something worth farming was a
+-- gold-per-day figure at the auction house's prices, and the window that reads
+-- this list is opened in a zone with no auction house in it -- so the figure
+-- cannot be recomputed there, and a live-LOOKING number that is three days old
+-- is worse than an obviously old one.  It is stamped with `t` and the window
+-- prints the two together.
+--
+-- Re-ticking an item that is already on the list leaves the original stamp
+-- alone: the entry says when you decided, and deciding twice is still once.
+function Atr_Advisor_SetFarmed (name, on, id, gold)
 	if (name == nil or name == "") then return; end
 	local db = Atr_Advisor_DB ();
 	if (on) then
 		local e = db.farm[name];
 		if (e == nil) then e = { t = Adv_Now () }; db.farm[name] = e; end
 		if (id and e.id == nil) then e.id = id; end
+		if (gold and e.gold == nil) then e.gold = gold; end
 	else
 		db.farm[name] = nil;
 	end
+
+	-- The window and the minimap count are readers of this table, and a reader
+	-- that has to be told to look again is a reader that will be forgotten.  It
+	-- may not be loaded yet -- ticking works with or without it.
+	if (type (Atr_Farm_Refresh) == "function") then Atr_Farm_Refresh (); end
 end
 
 -- THE FARM LIST AS A LIST, sorted by name, which is what a window renders.
@@ -262,7 +280,7 @@ function Atr_Advisor_FarmList ()
 	local out = {};
 	local name, e;
 	for name, e in pairs (Atr_Advisor_DB ().farm) do
-		table.insert (out, { name = name, id = e.id, t = e.t });
+		table.insert (out, { name = name, id = e.id, t = e.t, gold = e.gold });
 	end
 
 	table.sort (out, function (a, b) return a.name < b.name; end);
@@ -833,7 +851,7 @@ local gAdv_Cards = {};
 -- into the row you clicked.
 local ADV_CTLS = {
 	{ key = "farm",  kind = "check",  label = "Farm list",
-	  tip = "Put this on your farm list. The list is saved account-wide and is what the minimap window will read." },
+	  tip = "Put this on your farm list. The list is saved account-wide and the minimap button opens it, so it is readable out in the field where you need it." },
 	{ key = "plan",  kind = "check",  label = "Plan",
 	  tip = "Tick this recipe into the crafting plan at your current batch size. Same tick as the one on the Crafting view -- it is the same plan." },
 	{ key = "slow",  kind = "check",  label = "Slow mover",
@@ -846,7 +864,11 @@ local ADV_CTLS = {
 	  tip = "Move past this one and show the next recommendation instead. Forgotten at logout -- this is a decision about today, not about the item." },
 };
 
-local function Adv_IconFor (name, id)
+-- GLOBAL, because the farm window (AuctionatorFarmList.lua, item 34) renders the
+-- same items away from the auction house and needs the same cascade.  One copy:
+-- an icon lookup that disagreed with itself between two windows showing the same
+-- list would be the same class of bug as two pricing cascades.
+function Atr_Advisor_IconFor (name, id)
 
 	if (id == nil and name and type (Atr_An_IdForName) == "function") then
 		id = Atr_An_IdForName (name);
@@ -913,7 +935,7 @@ local function Adv_DoControl (row, key)
 	if (name == nil) then return; end
 
 	if (key == "farm") then
-		Atr_Advisor_SetFarmed (name, not Atr_Advisor_IsFarmed (name), row.itemId);
+		Atr_Advisor_SetFarmed (name, not Atr_Advisor_IsFarmed (name), row.itemId, row.itemGold);
 
 	elseif (key == "slow") then
 		Atr_Advisor_SetSlow (name, not Atr_Advisor_IsSlow (name));
@@ -1098,8 +1120,9 @@ local function Adv_DrawRow (row, item)
 	row.itemName = item.name;
 	row.itemView = item.view;
 
-	local tex, id = Adv_IconFor (item.name, item.id);
+	local tex, id = Atr_Advisor_IconFor (item.name, item.id);
 	row.itemId = id;
+	row.itemGold = item.gold;		-- the rate the farm list keeps, if this row is ticked onto it
 	row.icon:SetTexture (tex);
 
 	row.link = nil;

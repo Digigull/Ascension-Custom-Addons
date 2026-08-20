@@ -6,7 +6,7 @@ doc. When an item is built, its findings go in a proper per-topic doc (the way
 `VENDOR-PRICE-RESEARCH.md` did) and the row here shrinks to a link.
 
 A heading marked **DONE** has shipped in full — item 12's three parts included, with 3b measured
-and deliberately declined. Five items do not carry that label and are the ones to know about:
+and deliberately declined. Four items do not carry that label and are the ones to know about:
 **item 8** shipped a v1 with features still unbuilt, **item 9** is parked with nothing built,
 **item 10** closed without any code, and **item 32** is new, with nothing built yet.
 **Item 28's stages 0 and 1 shipped** on 2026-08-20: the reconnaissance answered — all four routes
@@ -17,8 +17,10 @@ full** on 2026-08-21: a main tab, `AuctionatorAdvisor.lua`, six cards over figur
 subsystems already returned, and it is the payoff the whole run of work was heading for. **Its
 stage 2 shipped the same day**, after the owner's first session with it — icon rows with per-item
 controls, an ignore list, slow-mover flags and a farm list — which turned it from a page you read
-into a page you answer. **Item 34** is what stage 2 deliberately left undone: a minimap window over
-the farm list it now fills.
+into a page you answer. **Item 34 — what stage 2 deliberately left undone — shipped
+on 2026-08-21**: `AuctionatorFarmList.lua`, a hand-rolled minimap button and a window that reads
+the farm list stage 2 fills. It is the first UI in this addon that lives outside the auction house,
+and `FRAMEWORK.md` §4 now carries what that costs.
 **Item 31 shipped in full** on 2026-08-21 —
 the store, the price-cascade rung, the Week column (which closes **item 8's group C**), the readers
 and the condenser; its write-up is `HISTORY-STORE.md`. What is left is elapsed time and one
@@ -4276,7 +4278,7 @@ which covers the feed rather than the cells.
 
 ---
 
-## 34. NEW — the farm list, on a minimap button
+## 34. The farm list, on a minimap button — DONE
 
 **Asked (owner, 2026-08-21), and explicitly deferred by them in the same breath:** *"Then we could
 have a farm list later on, attached to a mini map button."*
@@ -4315,14 +4317,72 @@ does not cover it, because it is not in either world.
   `management/docs/CLAUDE.md`'s table, not the `MEDIUM` default — this is the meter case, not the
   dialog case. And nothing here calls `SetToplevel(true)`, ever (`DRAG-FREEZE.md`).
 
+### Built 2026-08-21 — `AuctionatorFarmList.lua`
+
+One new file, one `.toc` line, and five small edits to `AuctionatorAdvisor.lua`. It came in at the
+size the item predicted, and for the reason it predicted: **the list and its reader already
+existed**, so this is a window over `Atr_Advisor_FarmList()` and nothing else.
+
+**The minimap button, hand-rolled.** ~60 lines, no library, as the item called. 31px, the stock
+`MiniMap-TrackingBorder` ring, an angle around an 80px radius saved in `AUCTIONATOR_ADVISOR.ui`.
+Drag reads the angle off the cursor each frame — `GetCursorPosition` is in screen pixels and the
+minimap's centre is in its own scale, so the conversion by `GetEffectiveScale` is what stops the
+button trailing the cursor on any UI scale but 1. Left-click opens, and **the button carries the
+count**, which is the one thing worth knowing without opening anything; an empty list shows nothing
+rather than a `0` you learn to ignore.
+
+**The right-click "menu" is one action: hide the button.** That is a deliberate narrowing of the
+convention the item listed, and item 21 is the whole argument — `UIDropDownMenu` is driven by four
+globals every other addon writes, it fails by silently drawing nothing, and no offline check in
+this repo can reach any of it. Three client round trips bought that lesson once. A menu whose only
+real entry is *hide* is not worth re-entering it. The chat line names `/atrfarm minimap` as the way
+back, because a button that vanishes with no route back is the actual trap.
+
+**`PLAYER_LOGIN`, not `Atr_Init` — and this is the bit that would have been a silent bug.**
+`Atr_Init` runs when `Blizzard_AuctionUI` loads, which on a fresh login is the first auctioneer you
+speak to. A minimap button built there would not appear until after the trip it exists to save you.
+The file owns its own event frame, the way the merchant and profession harvesters own theirs.
+
+**The rate is stored, not recomputed**, which is the item's own honest limit and the one change
+that reaches back into the Advisor: `Atr_Advisor_SetFarmed` now takes a `gold` argument and stamps
+it beside the existing `t`, so the window prints *"12g/day, 3d ago"* — the figure as it was, with
+its age, always. Re-ticking something already on the list leaves the original stamp alone: the
+entry records when you decided, and deciding twice is still once.
+
+**What it does NOT do**, each on purpose:
+
+- **No jump to the Analysis tab from a row.** Every other item row in this addon has one; here the
+  auction house is shut, so it would do nothing at all. Hover still gives the real item tooltip.
+- **No second store.** The only write is `Atr_Advisor_SetFarmed(name, false)` — the tick-off. Two
+  lists of what to farm that could disagree would be worse than no window.
+- **No saved open/closed state.** A window that reappeared on its own every login would be the
+  addon deciding it is important; that decision belongs to the button.
+- **No scroll frame.** 14 rows and an "...and N more" foot, the same shape as the Advisor's Ignored
+  box and for the same reason: a list you tick off from the top shortens as you use it.
+
+**One shared helper rather than two copies:** `Adv_IconFor` became `Atr_Advisor_IconFor`. Two
+windows over the same list disagreeing about an item's icon would be the same class of bug as two
+pricing cascades.
+
+`/atrfarm` opens the window, `/atrfarm minimap` brings the button back, `/atrfarm reset` puts both
+placements back to default — that last one for the case you cannot click your way out of, a window
+dragged off the edge of the screen.
+
+**Verified** by `luac5.1 -p`, by loading `AuctionatorAdvisor.lua` + `AuctionatorFarmList.lua`
+together under bare `lua5.1` and exercising `Atr_Farm_Lines()` over a seeded farm table (rate and
+age wording, the no-rate entry, tick-off, and the no-restamp rule), and by the four existing
+Auctionator suites, which still pass (27 + 31 + 114 + 25). **Not verified in game** — the button's
+placement on the ring, the drag, and the window's layout are all reasoned.
+
 ---
 
 ## Suggested order
 
-Items 1–9, 11–27, 29, 30, 31 and 33 are **DONE** or deliberately parked, and item 10 closed without
-any code (2026-08-19). **Items 32 and 34 are unstarted** and **item 28 is two stages in, waiting on elapsed
-time** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day, item 30 built
-the day after that, and item 32 recorded the same day as the follow-on item 31 promised. What is
+Items 1–9, 11–27, 29, 30, 31, 33 and 34 are **DONE** or deliberately parked, and item 10 closed
+without any code (2026-08-19). **Item 32 is unstarted** and **item 28 is two stages in, waiting on
+elapsed time** — items 28-30 added 2026-08-20, item 31 on 2026-08-21 and built the same day, item 30
+built the day after that, item 32 recorded the same day as the follow-on item 31 promised, and item
+34 built on 2026-08-21. What is
 otherwise left is follow-on work inside shipped items, two standing deferrals, and two questions
 that need no code at all.
 
@@ -4370,11 +4430,14 @@ short of a readout. In order:
    the "computes nothing" rule: *your decisions are an input.* **What is left is one in-game
    sitting** — the tab strip at eleven tabs, and now the icon rows: alignment, whether the packed
    controls fit the row width, and the scrollbar.
-5. **Item 34 — the farm list on a minimap button.** The one piece stage 2 deliberately left
-   undone, and the owner deferred it themselves. The list and its reader already exist
-   (`Atr_Advisor_FarmList()`), so this is a window and a minimap button and nothing else — but it
-   is the first UI in this addon that lives *outside* the auction house, which is why it is its own
-   item rather than a third stage.
+5. ~~**Item 34 — the farm list on a minimap button**~~ — **BUILT 2026-08-21**, and it cost what the
+   item predicted: the list and its reader already existed, so it is a window over
+   `Atr_Advisor_FarmList()` plus ~60 lines of hand-rolled minimap button. The two things that were
+   not obvious from the outside are both recorded in the item's *Built* section — it cannot
+   initialise from `Atr_Init` (which does not run until you visit an auctioneer), and the
+   right-click menu is deliberately one action, on item 21's evidence. **What is left is one
+   in-game sitting**: the button's place on the ring, the drag, and the window's row layout are
+   reasoned, not seen.
 6. ~~**Item 29's stage 3**~~ — **BUILT 2026-08-20**, ahead of item 30 rather than after it: the
    fallback driver (tick boxes on the Crafting view plus a batch size) turned out to be the cheap
    half, and item 30's Make card can hand the same plan in through `Atr_An_PlanMap()` when it
