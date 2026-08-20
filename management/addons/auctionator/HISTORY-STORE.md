@@ -752,6 +752,18 @@ quote a single day's close then decline:
 The suffix costs 2–3 bytes and only on the minority of days that carry it, so a well-stocked book is
 unchanged at nine characters.
 
+### The one assumption in here that is not verified
+
+**That `UnitName("player")` matches the scan's `owner` field.** If this server decorates owner names
+in any way — a realm suffix, different casing — the filter silently does not match and your own
+listings stay in the sample. There is no error and nothing in `/atrhistory show` reveals it; the
+number is just unchanged.
+
+It is recorded rather than guarded because guarding it would mean guessing at a format nobody has
+seen. The check, if it is ever wanted, is one deliberate experiment: list something at a distinctive
+price on a **thin** item, scan it, and see whether that price becomes the day's close. If it does,
+the match is not working and it is a one-line fix.
+
 ### What was deliberately left alone
 
 **The mean database still gets the uncleaned sample.** Changing it would be a behaviour change to a
