@@ -423,15 +423,21 @@ local BZ_PANE_TOP	= 104;		-- pane y: puts the headers on the light art band
 -- it is just enough to keep the last row clear of the pane edge.
 local BZ_TABLE_BOT	= 5;
 local BZ_SB_GUTTER	= 24;		-- room reserved for a scrollbar
-local BZ_BACK_Y		= 14;		-- fallback only; normally measured off the bottom bar
+local BZ_BACK_Y		= 14;		-- the Back button's own resting height on the filter row
 
--- Back lives up on the filter row and Price these stays on the bottom bar, so
--- the two are nowhere near each other.  They used to share one slot, which
--- meant returning from an item left the cursor over "Price these" and a second
--- click started a scan nobody asked for.  Both are always present; only their
--- enabled state changes with the view.
-local BZ_BTN_W		= 130;		-- Price these, on the bottom bar
-local BZ_BTN_H		= 24;
+-- Back lives up on the filter row and Rescan sits in the panel's bottom-right
+-- corner, so the two are nowhere near each other.  They used to share one slot,
+-- which meant returning from an item left the cursor over the scan button and a
+-- second click started a scan nobody asked for.  Both are always present; only
+-- their enabled state changes with the view.
+--
+-- RESCAN IS THE ANALYSIS TAB'S BUTTON, to the pixel (BACKLOG item 5, owner
+-- 2026-08-21): 76x22 at its panel's BOTTOMRIGHT (-22, 30), which is where
+-- Atr_An_RefreshButton sits and where the Ledger keeps Clear.  It was 130x24 in
+-- GameFontNormalLarge, centred on the window's bottom bar, and it was the only
+-- tab-level action button in the addon that did not look like the others.
+local BZ_BTN_W		= 76;		-- Rescan, matching Atr_An_RefreshButton
+local BZ_BTN_H		= 22;
 local BZ_BACK_W		= 88;		-- Back, on the filter row
 local BZ_BACK_H		= 18;
 
@@ -1335,25 +1341,10 @@ function Atr_Bz_Relayout ()
 		Atr_Bz_TableScroll:SetHeight (gBz_TableRows * BZ_ROW_H);
 	end
 
-	-- Put Back on the frame's own bottom bar by measuring where Auctionator's
-	-- Buy button sits, rather than guessing a pixel offset: that button is
-	-- already on the bar, and the Finder anchors its own Back to it.
-	if (Atr_Bz_ScanButton and Atr_Bz_ScanButton.SetPoint) then
-
-		local y = BZ_BACK_Y;
-
-		if (Atr_Buy1_Button and Atr_Buy1_Button.GetBottom
-			and AuctionFrame and AuctionFrame.GetBottom) then
-			local bb = Atr_Buy1_Button:GetBottom();
-			local fb = AuctionFrame:GetBottom();
-			if (bb and fb) then y = bb - fb; end
-		end
-
-		if (Atr_Bz_ScanButton and Atr_Bz_ScanButton.ClearAllPoints) then
-			Atr_Bz_ScanButton:ClearAllPoints();
-			Atr_Bz_ScanButton:SetPoint ("BOTTOM", AuctionFrame, "BOTTOM", 0, y);
-		end
-	end
+	-- Rescan needs no repositioning here any more.  It used to be measured onto
+	-- the window's bottom bar off Auctionator's Buy button every time this ran;
+	-- it is now anchored once to the panel's own bottom-right corner, which does
+	-- not move (BACKLOG item 5).
 
 	Atr_Bz_ApplyColumns();
 
@@ -1379,8 +1370,19 @@ function Atr_Bz_Init ()
 
 	Atr_Bz_InitRates();
 
+	-- MEASURED, not 738 (BACKLOG item 5, and the same fix the Analysis tab made
+	-- for itself and the Ledger took after it).  738 is Blizzard's 768px auction
+	-- house minus its insets; Ascension's window is wider, so anything anchored to
+	-- this panel's RIGHT edge stopped short of the window with a band of dead
+	-- backdrop beyond it.  Nothing inside the Bazaar noticed before now, because
+	-- its table pane anchors its own BOTTOMRIGHT to AuctionFrame directly -- but
+	-- Rescan is anchored to the panel, and a stale width parks it mid-window.
+	local frameW = 768;
+	if (AuctionFrame and AuctionFrame.GetWidth) then frameW = AuctionFrame:GetWidth() or 768; end
+	if (frameW < 600) then frameW = 768; end		-- not laid out yet: fall back
+
 	local panel = CreateFrame ("Frame", "Atr_Bz_Panel", AuctionFrame);
-	panel:SetSize (738, 447);
+	panel:SetSize (math.floor (frameW) - 22, 447);
 	panel:SetPoint ("TOPLEFT", 10, 0);
 	panel:Hide();
 
@@ -1664,16 +1666,18 @@ function Atr_Bz_Init ()
 		if (GameTooltip) then GameTooltip:Hide(); end
 	end);
 
-	-- Back and the bulk-pricing button occupy the same spot on the bottom bar:
-	-- only one of them is ever meaningful at a time.
+	-- RESCAN, in the corner every other tab keeps its action button in.  Anchored
+	-- to the PANEL rather than to the window, which is why the panel above had to
+	-- learn its real width: -22 from a 738-wide panel on a wider window is not the
+	-- corner, it is a button floating in the middle of the backdrop.
+	--
+	-- Stock button font, deliberately.  The old one was set to
+	-- GameFontNormalLarge because it was a 130px button on the bottom bar; the
+	-- same font in 76px clips "Rescan".
 	local scan = CreateFrame ("Button", "Atr_Bz_ScanButton", panel, "UIPanelButtonTemplate");
 	scan:SetSize (BZ_BTN_W, BZ_BTN_H);
-	scan:SetPoint ("BOTTOM", AuctionFrame, "BOTTOM", 0, BZ_BACK_Y);
-	scan:SetText (BZT("Price these"));
-	if (scan.SetNormalFontObject and GameFontNormalLarge) then
-		scan:SetNormalFontObject (GameFontNormalLarge);
-		if (scan.SetHighlightFontObject) then scan:SetHighlightFontObject (GameFontNormalLarge); end
-	end
+	scan:SetPoint ("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -22, 30);
+	scan:SetText (BZT("Rescan"));
 	scan:SetScript ("OnClick", function ()
 		if (Atr_Bz_StartCategoryScan) then Atr_Bz_StartCategoryScan(); end
 	end);
@@ -3481,6 +3485,8 @@ function Atr_Bz_UpdateScanButton ()
 	if (Atr_Bz_CategoryScanRunning()) then
 		Atr_Bz_ScanButton:SetText (BZT("Cancel"));
 	else
-		Atr_Bz_ScanButton:SetText (BZT("Price these"));
+		-- "Rescan" idle, "Cancel" while running -- the Analysis tab's Rescan says
+		-- "Stop" in the same place for the same reason: a long job needs a way out.
+		Atr_Bz_ScanButton:SetText (BZT("Rescan"));
 	end
 end
