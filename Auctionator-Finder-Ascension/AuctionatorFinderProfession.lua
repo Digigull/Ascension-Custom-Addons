@@ -899,6 +899,116 @@ function Atr_ProfSort_BuildOrder()
     return order, profitByIndex, madeByIndex;
 end
 
+-- THE SAME RANKING, AWAY FROM THE PROFESSION WINDOW ---------------------------
+--
+-- BACKLOG item 8, B2.  Atr_ProfSort_BuildOrder above answers "what is worth
+-- crafting" only while a trade skill window is OPEN -- every figure in it comes
+-- from GetTradeSkill*, and those are dead at the auction house.  But the
+-- auction house is exactly where the question is asked: you are standing at the
+-- mailbox with gold and a bag of reagents, deciding what to make.
+--
+-- So this ranks the HARVESTED recipes instead -- AUCTIONATOR_CRAFT_RECIPES,
+-- which every profession window the player has opened has already filled in.
+-- The arithmetic is deliberately the same as BuildOrder's, and for the same
+-- reasons:
+--
+--   * profit is PER CRAFT, (sale price - per-item reagent cost) x the yield,
+--     because one craft is what one press of Create costs and earns;
+--   * reagent cost goes through Atr_Craft_GetCraftCost, so this and the Sell
+--     tab's Crafted Goods Margin filter can never disagree about the same item;
+--   * a recipe that cannot be fully priced sinks below every priced one rather
+--     than being dropped, since "we have not scanned its reagents" is a
+--     statement about the player's scanning and not about the recipe.
+--
+-- Two differences from the live ranking are forced by the source and are worth
+-- knowing rather than discovering:
+--
+--   * A HARVESTED RECORD IS NOT PROOF THE PLAYER CAN MAKE IT.  Records keyed by
+--     the profession window are recipes they have learned; records keyed by a
+--     recipe ITEM's tooltip (rec.byTooltip) are plans they merely hovered, and
+--     those also carry an ASSUMED yield of 1 because a recipe tooltip never
+--     prints one.  Both are flagged on the row rather than filtered out.
+--   * An item whose NAME the client has not cached cannot be priced at all --
+--     the price database is name-keyed -- and a row with no name is a row you
+--     cannot read either, so those are counted and left out.
+--
+-- Returns  list, stats  where each list entry is
+--   { id, name, made, cost, sell, profit, perCraft, assumed, vellum, reagents }
+-- with cost/sell/profit PER ITEM, perCraft the ranked figure, and cost or sell
+-- nil when that half could not be priced.  stats is
+--   { total, priced, unnamed, best }.
+-- Global, and free of any WoW API it does not guard, so the maths can be
+-- checked offline.
+function Atr_Craft_ProfitRanking()
+    local db = AUCTIONATOR_CRAFT_RECIPES;
+    local out, stats = {}, { total = 0, priced = 0, unnamed = 0 };
+
+    if (type(db) ~= "table") then return out, stats; end
+
+    for key, rec in pairs(db) do
+        if (type(rec) == "table" and type(rec.reagents) == "table") then
+
+            stats.total = stats.total + 1;
+
+            -- A numeric key is the produced item's ID (window harvest); a string
+            -- key is already the name it sells under -- the scroll's name for an
+            -- enchant, the created item's for a tooltip harvest.
+            local id, name;
+            if (type(key) == "number") then
+                id   = key;
+                name = (type(GetItemInfo) == "function") and (GetItemInfo(key)) or nil;
+            else
+                name = key;
+            end
+
+            if (name == nil or name == "") then
+                stats.unnamed = stats.unnamed + 1;
+            else
+                local cost, made = Atr_Craft_GetCraftCost(id, name);
+                made = made or rec.made or 1;
+                if (made < 1) then made = 1; end
+
+                local sell = (Atr_GetAuctionPrice) and tonumber(Atr_GetAuctionPrice(name)) or nil;
+                if (sell ~= nil and sell <= 0) then sell = nil; end
+
+                local profit, perCraft;
+                if (cost and sell) then
+                    profit   = sell - cost;
+                    perCraft = profit * made;
+                    stats.priced = stats.priced + 1;
+                end
+
+                table.insert(out, {
+                    id       = id,
+                    name     = name,
+                    made     = made,
+                    cost     = cost,
+                    sell     = sell,
+                    profit   = profit,
+                    perCraft = perCraft,
+                    assumed  = rec.byTooltip and true or nil,   -- yield guessed, recipe possibly unknown
+                    vellum   = rec.vellum,
+                    reagents = rec.reagents,
+                });
+            end
+        end
+    end
+
+    table.sort(out, function(a, b)
+        if (a.perCraft and b.perCraft) then
+            if (a.perCraft ~= b.perCraft) then return a.perCraft > b.perCraft; end
+            return a.name < b.name;
+        end
+        if (a.perCraft) then return true; end    -- unpriceable sinks below anything priced
+        if (b.perCraft) then return false; end
+        return a.name < b.name;
+    end);
+
+    stats.best = out[1] and out[1].perCraft or nil;
+
+    return out, stats;
+end
+
 -- Compact signed copper -> short coloured string ("+12g" / "-3s" / "+40c").
 -- Only the largest non-zero denomination is shown so the row stays short.
 local function Atr_ProfSort_MoneyShort(c)

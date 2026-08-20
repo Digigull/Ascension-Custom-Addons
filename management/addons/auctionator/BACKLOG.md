@@ -829,7 +829,7 @@ into a defensible sales estimate, and it costs nothing because the field is alre
 | | Feature | Notes |
 |---|---|---|
 | B1 | **Farm score = estimated sales rate x unit price** | gold per unit time. **This is what "items to farm" actually means**, and A1–A3 are what make it computable |
-| B2 | **Recipe profit ranking** | already computed by `Atr_ProfSort_BuildOrder`; needs surfacing, not building |
+| B2 | **Recipe profit ranking** | already computed by `Atr_ProfSort_BuildOrder`; needs surfacing, not building — **shipped 2026-08-20**, and that second clause was half wrong: see "B2 shipped" below |
 | B3 | **Reagent pressure** | which reagents your profitable recipes need, and whether those are liquid enough to buy |
 
 **C — Price trend (needs a dated series; see the note below)**
@@ -956,8 +956,83 @@ disappear on the Ledger view, and a known flip's margin matches what you remembe
 
 #### Still to come
 
-B2/B3 (recipe ranking, reagent pressure), C (price trend — needs the dated series), A5/A6
-(listing lifetime, undercut churn).
+B3 (reagent pressure), C (price trend — needs the dated series), A5/A6 (listing lifetime,
+undercut churn).
+
+### B2 shipped 2026-08-20 — "Crafting", the third view
+
+A third view on the same tab, reached by the same toggle, now **Market / My trades / Crafting**.
+`Atr_Craft_ProfitRanking` in `AuctionatorFinderProfession.lua` is behind it. **No new saved
+variable and no new capture** — it reads `AUCTIONATOR_CRAFT_RECIPES`, which every profession
+window the account has opened has been filling in since item 2. Columns: Item, Makes, Cost,
+Price, Profit/craft, Margin.
+
+**The row above is half wrong and the half matters.** "Already computed by
+`Atr_ProfSort_BuildOrder`; needs surfacing, not building" is true of the *arithmetic* and false of
+the *rows*: every figure `BuildOrder` produces comes out of `GetTradeSkillInfo` /
+`GetTradeSkillNumReagents` / `GetTradeSkillNumMade`, and those are dead unless a profession window
+is open — which it never is at an auction house. Surfacing it there would have shown an empty
+list. So the arithmetic is genuinely reused (`Atr_Craft_GetCraftCost` and, under it, the one
+reagent-price cascade the Sell tab's Crafted Goods Margin filter uses, so the three can never
+disagree about an item) while the row source is the harvested database instead of the open window.
+
+**Why the auction house is the right place for it.** The profession window already ranks recipes —
+that is the "Sort by Profit" checkbox — but it answers the question where you cannot act on it.
+The decision "what should I make" is taken standing at the mailbox with gold and a bag, and until
+now the only way to ask it there was to remember.
+
+Five judgements are in the code and worth having here:
+
+- **Profit is per CRAFT, cost and price are per ITEM**, exactly as the trade skill window's own
+  column does it: one craft is what one press of Create costs and earns, and a recipe making 3 at
+  12g beats one making 1 at 20g. `Makes` sits between them so the two scales are never a guess.
+- **Margin is profit over the SALE PRICE, not markup on cost.** Markup is the flattering number
+  and it explodes — a 5c reagent making a 40g item is 80,000%, which says nothing the Profit
+  column has not already said. A share of the price is bounded by 100% and answers the question
+  that decides a craft: how far can this be undercut before it stops paying.
+- **A recipe that cannot be fully priced sinks; it is never dropped.** "We have not scanned its
+  reagents" is a statement about the player's scanning, not about the recipe, and a row with a
+  blank Cost is the one that tells you what to go and scan. Which reagent it is waiting on is on
+  the row's tooltip, priced line by line.
+- **A tooltip-harvested recipe is flagged with a `?`.** Those records (`rec.byTooltip`) come from
+  hovering a plan on the auction house rather than from a profession window: the yield is *assumed*
+  to be 1 because a recipe tooltip never prints one, and the player may not have learned it at all.
+  Both facts are on the row rather than filtered out — a plan you can buy and the profit it would
+  make is a legitimate thing to want ranked.
+- **An item the client cannot name is counted apart, not shown.** The price database is name-keyed,
+  so an unnameable item can never be priced, and a row you cannot read is not a row. The summary
+  says how many there are rather than quietly losing them.
+
+**One click on a row opens the item menu** — the same one the Buy tab's two buttons open (item 18)
+— so a recipe worth making can be filed to a shopping list or watched on the Market view without
+retyping its name. That pairing is the point: a fat margin on something nobody buys is a trap, and
+the Market view is the half of this tab that can say whether anybody buys it.
+
+**The ranking is cached and dropped on the way in.** Pricing every reagent of every recipe means a
+few hundred `Atr_GetAuctionPrice` calls, and that is not a table lookup — it falls through to a
+recent-sale check and then to a median over an item's variants. Doing it once per visit is fine;
+doing it on every scroll tick, which is what `Atr_An_Redisplay` is called for, is not. Nothing can
+stale the cache while it is on screen (no search control on this view, and the panel hides the
+moment another tab is clicked), so it is invalidated exactly where those journeys come back:
+entering the view, and re-entering the tab.
+
+**Layout.** Three toggle buttons where there were two: 62px apiece rather than 72, and the group
+dropdown and new-group box moved left by ~46px, which is what keeps the row clear on Blizzard's
+768px window (the panel is 746 there, the button row runs 526–720, and the group controls now end
+around 508). The craft columns go through the same `An_LayoutCols` weighting as the other two, so
+all three views' right edges land in the same place.
+
+**Verified** by `luac5.1 -p`, both smoke tests (27/27 each — `analysis-feed-smoke` loads the
+changed file), a standalone run of `An_LayoutCols` over all three column sets at 768/830/1024
+(each ends exactly on the delete lane), and a throwaway 28-assertion check of
+`Atr_Craft_ProfitRanking` against a hand-built recipe database: per-item cost against per-craft
+profit on a yield-3 recipe, the vellum added to an enchant keyed by its scroll name, the cold
+vellum fallback when no vellum can be priced, an unpriceable reagent, a product never scanned, an
+un-nameable ID counted apart, the tooltip-harvested flag, the ranking order and unpriced rows
+sinking to the bottom in name order. All passed; not kept, per the repo's tooling rule.
+**Not verified in game.** The checks are: the toggle switches headers, rows and controls three
+ways; the top of the list is a recipe you would recognise as profitable; a `?` row is one you
+hovered rather than learned; and a row's tooltip names the reagent a blank Cost is waiting on.
 
 ### Original v1 suggestion, for the record
 
@@ -2494,12 +2569,13 @@ is left is follow-on work inside shipped items, two standing deferrals, and two 
 need no code at all. In order:
 
 1. **Item 8's unbuilt half** — the Analysis tab shipped A1–A4, B1, E1, E2 and, on 2026-08-20,
-   all of **D**. Left: **A5/A6** (listing lifetime, undercut churn) and **B2/B3** (recipe ranking,
-   reagent pressure), which are arithmetic over data the scan already produces — B2 in particular
-   is `Atr_ProfSort_BuildOrder` surfaced rather than built. **C** (price trend) ranks last of the
-   three — it needs a dated series that does not exist, so it is a writer plus a retention rule,
-   and it must be watchlist-scoped: the naive all-names version is several megabytes, immediately
-   after item 13 clawed back 384 KB.
+   all of **D** and then **B2** (the Crafting view). Left: **A5/A6** (listing lifetime, undercut
+   churn) and **B3** (reagent pressure), which are arithmetic over data the addon already holds —
+   B3 in particular is now cheap, since the Crafting view already prices every reagent of every
+   harvested recipe and only has to invert that map. **C** (price trend) ranks last of the three —
+   it needs a dated series that does not exist, so it is a writer plus a retention rule, and it
+   must be watchlist-scoped: the naive all-names version is several megabytes, immediately after
+   item 13 clawed back 384 KB.
 2. **Item 7's v2 scope** — vendor and mail activity beyond the auction house, the half the owner
    deferred. The `src` tag already exists to carry it, so this is new capture points rather than
    a redesign. Stage 2's between-sweeps mail gap belongs in the same pass.
