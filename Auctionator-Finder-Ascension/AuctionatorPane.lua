@@ -19,6 +19,7 @@ function AtrPane.create ()
 	
 	pane.activeSearch	= nil;
 	pane.sortedHist		= nil;
+	pane.marketHist		= nil;		-- the market series for this item (BACKLOG item 1)
 	pane.hints			= nil;
 	
 	pane.hlistScrollOffset	= 0;
@@ -38,6 +39,7 @@ function AtrPane:DoSearch (searchText, exact, rescanThreshold, callback)
 	self.hintsIndex			= nil;
 	
 	self.sortedHist			= nil;
+	self.marketHist			= nil;
 	self.hints				= nil;
 	
 	self.SS_hilite_itemName	= searchText;		-- by name for search summary
