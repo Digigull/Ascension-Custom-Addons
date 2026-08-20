@@ -769,8 +769,31 @@ local function An_SetFilter (text)
 	Atr_An_Redisplay ();
 end
 
--- Add an item to the watchlist from typed text, from the popup the Add button
--- opens or from a shift-clicked link pasted into it.
+-- Make a group, from the popup the Add Group button opens.
+--
+-- It also SWITCHES to the new group, which is what the edit box it replaced did:
+-- you make a group in order to put something in it, and the next thing you press
+-- is Add Item, which files into whatever group is being looked at.
+local function An_AddGroupFromText (txt)
+
+	if (type (txt) ~= "string") then return false; end
+
+	local g = txt:gsub ("^%s+", ""):gsub ("%s+$", "");
+	if (g == "") then return false; end
+
+	Atr_An_AddGroup (g);
+
+	gAn_Group = g;
+	if (Atr_An_GroupDD and UIDropDownMenu_SetText) then
+		UIDropDownMenu_SetText (Atr_An_GroupDD, g);
+	end
+
+	Atr_An_Redisplay ();
+	return true;
+end
+
+-- Add an item to the watchlist from typed text, from the popup the Add Item
+-- button opens or from a shift-clicked link pasted into it.
 local function An_AddWatchFromText (txt)
 
 	if (type (txt) ~= "string" or txt == "") then return false; end
@@ -1949,6 +1972,21 @@ if (StaticPopupDialogs) then
 		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
 	};
 
+	StaticPopupDialogs["ATR_AN_ADD_GROUP"] = {
+		text			= AZT("Name for the new Analysis group"),
+		button1			= ACCEPT,
+		button2			= CANCEL,
+		hasEditBox		= 1,
+		maxLetters		= 32,
+		OnAccept		= function (self) An_AddGroupFromText (self.editBox:GetText()); end,
+		EditBoxOnEnterPressed = function (self)
+			An_AddGroupFromText (self:GetParent().editBox:GetText());
+			self:GetParent():Hide();
+		end,
+		OnShow			= function (self) self.editBox:SetText(""); self.editBox:SetFocus(); end,
+		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1
+	};
+
 	StaticPopupDialogs["ATR_AN_ADD_WATCH"] = {
 		text			= AZT("Item to watch -- type a name or shift-click a link"),
 		button1			= ACCEPT,
@@ -2291,58 +2329,67 @@ function Atr_An_Init ()
 		self:ClearFocus();
 	end);
 
-	-- Add is now a popup (owner's request): typing a name is rare enough that it
-	-- does not deserve the permanent box, and the box it used to share is doing
-	-- something you want on every view.
-	local addBtn = CreateFrame ("Button", "Atr_An_AddButton", panel, "UIPanelButtonTemplate");
-	addBtn:SetSize (46, 22);
-	addBtn:SetPoint ("LEFT", filtBox, "RIGHT", 6, 0);
-	addBtn:SetText (AZT("Add"));
-	addBtn:SetScript ("OnClick", function ()
-		if (StaticPopup_Show) then StaticPopup_Show ("ATR_AN_ADD_WATCH"); end
-	end);
-	addBtn:SetScript ("OnEnter", function (self)
-		if (GameTooltip) then
-			GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
-			GameTooltip:SetText (AZT("Watch an item"), 1, 1, 1);
-			GameTooltip:AddLine (AZT("Type a name, or shift-click an item link into the box. It joins the group you are looking at."), 0.8, 0.8, 0.8, true);
-			GameTooltip:Show();
-		end
-	end);
-	addBtn:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+	-- THE REST OF THE CONTROL ROW, left to right: the group dropdown, then Add
+	-- Item, then Add Group (owner's layout, 2026-08-20).  Both adds are popups
+	-- now -- typing a name is a once-per-item and once-per-group job, and a
+	-- permanent edit box for each was two boxes' worth of row spent on it.
+	--
+	-- Anchored to each other rather than at fixed x from the dropdown onwards:
+	-- UIDropDownMenu_SetWidth(110) makes a frame 160 wide (25 of dead art each
+	-- side), and hard-coding where that ends is how the last layout ended up
+	-- being retuned from a screenshot.  The chain starts at x=176, which is just
+	-- past the filter box's own border art, and ends around x=492 on Blizzard's
+	-- 768px window -- clear of the view toggle, which starts at 526 there.
+	local grpDD;
 
-	-- group filter
 	if (UIDropDownMenu_Initialize) then
-		-- 244, not 290: the view toggle at the right of this row is three buttons
-		-- wide now rather than two, and on Blizzard's 768px window (a 746 panel)
-		-- its left edge lands at x=526. The group controls used to run to ~558.
-		local dd = CreateFrame ("Frame", "Atr_An_GroupDD", panel, "UIDropDownMenuTemplate");
-		dd:SetPoint ("TOPLEFT", 244, -48);
-		UIDropDownMenu_SetWidth (dd, 110);
-		UIDropDownMenu_Initialize (dd, An_GroupDD_Init);
-		UIDropDownMenu_SetText (dd, AZT("All groups"));
+		grpDD = CreateFrame ("Frame", "Atr_An_GroupDD", panel, "UIDropDownMenuTemplate");
+		grpDD:SetPoint ("TOPLEFT", 176, -48);
+		UIDropDownMenu_SetWidth (grpDD, 110);
+		UIDropDownMenu_Initialize (grpDD, An_GroupDD_Init);
+		UIDropDownMenu_SetText (grpDD, AZT("All groups"));
 	end
 
-	local newGrp = CreateFrame ("EditBox", "Atr_An_GroupBox", panel, "InputBoxTemplate");
-	newGrp:SetSize (110, 20);
-	newGrp:SetPoint ("TOPLEFT", 390, -52);
-	newGrp:SetAutoFocus (false);
-	newGrp:SetMaxBytes (32);
-	newGrp:SetScript ("OnEnterPressed", function (self)
-		local g = self:GetText();
-		if (g and g ~= "") then
-			Atr_An_AddGroup (g);
-			gAn_Group = g;
-			if (Atr_An_GroupDD) then UIDropDownMenu_SetText (Atr_An_GroupDD, g); end
-		end
-		self:SetText (""); self:ClearFocus();
-		Atr_An_Redisplay ();
-	end);
-	newGrp:SetScript ("OnEscapePressed", function (self) self:SetText (""); self:ClearFocus(); end);
+	local function rowButton (name, w, label, popup, tipTitle, tipBody)
 
-	local grpLabel = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-	grpLabel:SetPoint ("TOPLEFT", 386, -40);
-	grpLabel:SetText (AZT("New group"));
+		local b = CreateFrame ("Button", name, panel, "UIPanelButtonTemplate");
+		b:SetSize (w, 22);
+		b:SetText (AZT (label));
+		b:SetNormalFontObject ("GameFontNormalSmall");
+		b:SetHighlightFontObject ("GameFontHighlightSmall");
+		b:SetScript ("OnClick", function ()
+			if (StaticPopup_Show) then StaticPopup_Show (popup); end
+		end);
+		b:SetScript ("OnEnter", function (self)
+			if (GameTooltip) then
+				GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+				GameTooltip:SetText (AZT (tipTitle), 1, 1, 1);
+				GameTooltip:AddLine (AZT (tipBody), 0.8, 0.8, 0.8, true);
+				GameTooltip:Show();
+			end
+		end);
+		b:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+		return b;
+	end
+
+	local addBtn = rowButton ("Atr_An_AddButton", 76, "Add Item", "ATR_AN_ADD_WATCH",
+		"Watch an item",
+		"Type a name, or shift-click an item link into the box. It joins the group you are looking at.");
+
+	local grpBtn = rowButton ("Atr_An_AddGroupButton", 82, "Add Group", "ATR_AN_ADD_GROUP",
+		"Make a group",
+		"Groups are your own labels for watched items -- ore, flasks, whatever you actually farm. The new one becomes the one you are looking at, so the next item you add lands in it.");
+
+	if (grpDD) then
+		-- +2 vertically: the dropdown's frame is taller than a button and hangs
+		-- below its own anchor, so its RIGHT is not where its box looks to be
+		addBtn:SetPoint ("LEFT", grpDD, "RIGHT", 0, 2);
+	else
+		addBtn:SetPoint ("LEFT", filtBox, "RIGHT", 6, 0);		-- no dropdown to hang off
+	end
+
+	grpBtn:SetPoint ("LEFT", addBtn, "RIGHT", 4, 0);
 
 	-- Headers: same x, width and justification as the cells beneath them.  The
 	-- text sits at -84, not -74: the group dropdown's frame art hangs well below
@@ -2616,7 +2663,7 @@ function Atr_An_Init ()
 	-- has nothing to add an item to, no groups to filter by and nothing to
 	-- rescan, so these go away wholesale rather than sitting there inert.
 	-- The filter box and its label are NOT here: they are on every view now.
-	gAn_MarketOnly = { addBtn, grpLabel, newGrp, refresh, progress, _G["Atr_An_GroupDD"] };
+	gAn_MarketOnly = { addBtn, grpBtn, refresh, progress, _G["Atr_An_GroupDD"] };
 
 	Atr_An_SetView ("market");
 

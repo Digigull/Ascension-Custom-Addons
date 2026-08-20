@@ -2766,15 +2766,36 @@ The Add button opens a `StaticPopup` with an edit box (`ATR_AN_ADD_WATCH`), whic
 or a shift-clicked link and files it into the group being looked at — what the old box did.
 `/atranalysis add` now goes through the same function, so the two cannot drift.
 
+### Follow-up, same day: the control row is four controls, in reading order
+
+**Asked while the above was going in:** drop the *New group* edit box for an **Add Group** button
+with a popup, rename **Add** to **Add Item**, put the two buttons together, and order the row
+filter box → groups dropdown → the two buttons.
+
+Which is the same argument as the add box's, applied to the other box: naming a group is a
+once-per-group job, and a permanent edit box for it spent a third of the row on something used
+twice a month. Both adds are popups now (`ATR_AN_ADD_WATCH`, `ATR_AN_ADD_GROUP`), and the row reads
+left to right as the order you use it in — narrow, pick a group, add to it.
+
+**Add Group switches to the group it makes**, which is what the edit box did and is worth keeping:
+you make a group in order to put something in it, and the next thing you press is Add Item, which
+files into whatever group is being looked at.
+
+**The chain is anchored, not placed.** From the dropdown rightwards each control hangs off the one
+before it, because `UIDropDownMenu_SetWidth(dd, 110)` produces a frame **160** wide — 25px of dead
+art each side — and hard-coding where that ends is exactly how the previous layout ended up being
+retuned from a screenshot (item 23). The chain starts at x=176, just past the filter box's border
+art, and ends around x=492 on Blizzard's 768px window, clear of the view toggle at 526.
+
 **Verified** by `luac5.1 -p`, both smoke tests (27/27 each), item 24's sorter check re-run against
 the changed file (18/18), and a throwaway 13-assertion check of the filter driven straight out of
 the file: an empty filter passing everything, a match at the start and in the middle of a name,
 case-insensitivity both ways, surrounding space trimmed, `(Superior)` matched literally rather than
 as a pattern, a lone `%(` not erroring, and re-setting the same filter not redrawing. All passed
 first run; not kept. **Not verified in game.** The checks are: typing in the box narrows every view
-as you type; the box keeps its text across a view switch; Add opens a popup that files an item; and
-a market row has a tooltip on the first hover of a fresh session once the watchlist has been
-rescanned once.
+as you type; the box keeps its text across a view switch; the four controls sit in a row without
+touching; Add Item and Add Group each open a popup that does what it says; and a market row has a
+tooltip on the first hover of a fresh session once the watchlist has been rescanned once.
 
 ---
 
