@@ -168,7 +168,7 @@ that matter:
 | Variable | Shape | Written by |
 |---|---|---|
 | `AUCTIONATOR_PRICE_DATABASE` | `[realm_Faction][name] = lowest per-unit buyout` | Finder scans (`FinderPriceDB`) |
-| `AUCTIONATOR_MEAN_PRICE_DATABASE` | `[realm_Faction][name] = { up to 15 sorted samples }` | same |
+| `AUCTIONATOR_MEAN_PRICE_DATABASE` | `[realm_Faction][name] = { up to 15 sorted samples }` — **superseded** where the history has three days (item 31 stage 5), and no longer reported at all below three samples | same |
 | `AUCTIONATOR_PRICING_HISTORY` | `[name][timetag] = "price:stacksize"` | **your own postings only** |
 | `AUCTIONATOR_CRAFT_RECIPES` | `[itemID or name] = { made, reagents }` | profession windows + recipe tooltips |
 | `AUCTIONATOR_NPC_PRICES` | vendor prices | merchant scan |
@@ -245,8 +245,8 @@ Four global functions answer "what is this worth":
 
 | Function | Answers | Defined in |
 |---|---|---|
-| `Atr_GetAuctionPrice(nameOrID)` | lowest scanned AH price | `AuctionatorHints.lua:273` |
-| `Atr_GetMeanPrice(nameOrID)` | median of the sample array | `AuctionatorHints.lua:318` |
+| `Atr_GetAuctionPrice(nameOrID)` | lowest scanned AH price, then the recorded market series, then your own last posting | `AuctionatorHints.lua:273` |
+| `Atr_GetMeanPrice(nameOrID)` | median of the dated series, else of the sample array once it holds 3+ | `AuctionatorHints.lua:318` |
 | `Atr_GetNPCPrice(itemID)` | fixed vendor *buy* price | `AuctionatorFinderMerchant.lua:58` |
 | `Atr_GetSellValue(item)` | vendor *sell* value floor | `AuctionatorAPI.lua:24` |
 
@@ -260,6 +260,15 @@ trade skill window's profit column would disagree about the same item.
 while building backlog item 2. Every craft-cost path now goes through it. Enchanting adds one
 more term on top — a vellum — which is applied by the callers, not the cascade; see the
 ENCHANTING block in the same file.
+
+**`Atr_GetAuctionPrice`'s own fallback chain gained a rung on 2026-08-21** (BACKLOG item 31,
+stage 2) and it is worth knowing which, because the old one was self-referential: scan database →
+**`Atr_Hist_Recent`** → `Atr_GetMostRecentSale` → `Atr_GetAHVariantEstimate`. That third rung reads
+`AUCTIONATOR_PRICING_HISTORY`, which records **what you listed things at** — so when the scan
+database had nothing, this function's answer was your own last guess handed back as evidence. The
+market series sits above it, bounded by its own month of retention where the posting history has no
+age bound at all. Everything from the second rung down is name-keyed and answers the name's default
+rather than a variant, which is the same limitation the mean database carries (item 12 part 3b).
 
 Note also that `AuctionatorAPI.lua` is the *outward* API — it re-exports Tekkub's
 `GetSellValue`/`GetAuctionBuyout` for other addons. It is not the internal one.

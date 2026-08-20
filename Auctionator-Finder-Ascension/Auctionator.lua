@@ -3993,6 +3993,31 @@ function Atr_ShowRecTooltip ()
 
 		GameTooltip:SetOwner(owner, "ANCHOR_RIGHT");
 		GameTooltip:SetHyperlink (link, num);
+
+		-- WHAT THE MARKET HAS DONE LATELY, on the tab where you are about to put
+		-- a price on something (BACKLOG item 31, stage 4).  SetHyperlink above
+		-- already draws the addon's own money lines including "Auction Nd ago";
+		-- this is the one sentence that is about SELLING, so it is here and not
+		-- in the shared tooltip hook.
+		--
+		-- SELL only: the same hover serves the BUY tab, where "undercutting it
+		-- prices you into that" is not what you are doing.
+		--
+		-- Atr_Idle re-runs this every frame while the tooltip is up, which is why
+		-- Atr_Hist_Delta memoises per name per day rather than decoding here.
+		if (Atr_IsTabSelected and Atr_IsTabSelected (SELL_TAB) and Atr_Hist_SellNote) then
+
+			local nm = gCurrentPane.activeScan.itemName or gJustPosted_ItemName;
+			local note, r, g, b = nil, nil, nil, nil;
+			if (nm) then note, r, g, b = Atr_Hist_SellNote (nm); end
+
+			if (note) then
+				GameTooltip:AddLine (" ");
+				GameTooltip:AddLine (note, r, g, b, true);
+				GameTooltip:Show();			-- the tooltip was already sized by SetHyperlink
+			end
+		end
+
 		gCurrentPane.tooltipvisible = true;
 	end
 

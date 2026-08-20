@@ -155,7 +155,11 @@ eq (Atr_Hist_Note (nil, 100), false,           "nor is no name at all")
 eq (packed ("Copper Ore"), before,             "... and none of them touched the series")
 
 --------------------------------------------------------------------
--- 8.  Retention: 30 days of dailies, oldest dropped, newest always kept.
+-- 8.  Retention (item 31, stage 5): 30 days of DAILIES, then folded weeks
+--     behind them, and only past all of that is anything actually destroyed.
+--     Retention is the one decision that cannot be deferred -- a reader can be
+--     added next month, a dropped month cannot be recovered -- so what this
+--     pins is that old data is CONDENSED rather than thrown away.
 --------------------------------------------------------------------
 
 local i
@@ -165,16 +169,51 @@ for i = 6604, 6700 do
 end
 
 s = Atr_Hist_Series ("Thorium Ore")
-check (#s <= 40,  "the series is capped -- got " .. #s)
-check (#s >= 30,  "... and keeps the retention window -- got " .. #s)
+
+check (#s <= 64, "the series is capped -- got " .. #s)
 eq (s[#s].d, 6700,       "the newest day survives trimming")
 eq (s[#s].p, 100 + 6700, "... with its price")
-check (s[1].d > 6604,    "the oldest days were dropped")
-check (s[1].d >= 6700 - 40, "... and nothing older than the cap survived")
+
+check (s[1].d >= 6700 - 114, "nothing past the whole retention window survives -- got age "
+	.. (6700 - s[1].d))
+check (6700 - s[1].d > 30,   "... but the series reaches back FURTHER than the daily window: "
+	.. "old data is condensed, not dropped -- got " .. (6700 - s[1].d) .. " days")
+
+-- days stay strictly in order, folded or not, because every read depends on it
+local ordered, folded, dailies = true, 0, 0
+for i = 1, #s do
+	if (i > 1 and s[i].d <= s[i-1].d) then ordered = false end
+	if ((s[i].span or 1) > 1) then folded = folded + 1 else dailies = dailies + 1 end
+end
+check (ordered, "the series stays in day order after folding")
+check (folded > 0,  "whole weeks past the daily window are folded -- got " .. folded)
+check (dailies >= 30, "... and the daily window is still daily -- got " .. dailies)
+
+-- a folded record must say how many days it stands for, or a reader cannot tell
+-- one week's median from one day's close
+for i = 1, #s do
+	if ((s[i].span or 1) > 1) then
+		check (s[i].span <= 7, "a folded record covers at most a week -- got " .. s[i].span)
+		break
+	end
+end
 
 -- the invariant that makes trimming affordable: it must not run on every write
-check (#packed ("Thorium Ore") <= 620 + 20,
+check (#packed ("Thorium Ore") <= 620 + 40,
 	"a trimmed string stays near the trim threshold -- got " .. #packed ("Thorium Ore"))
+
+-- FOLDING IS IDEMPOTENT. A week is folded once, from whole days, and never from
+-- a previous fold's output -- otherwise the number drifts a little every trim.
+local before8 = packed ("Thorium Ore")
+gNow = day (6700)
+Atr_Hist_Note ("Thorium Ore", 100 + 6700)		-- same day, same price: a re-close
+local after8 = Atr_Hist_Series ("Thorium Ore")
+local same = true
+local b8 = Atr_Hist_Decode (before8)
+for i = 1, math.min (#b8, #after8) do
+	if (b8[i].d ~= after8[i].d or b8[i].p ~= after8[i].p) then same = false end
+end
+check (same, "re-running the trim does not move any already-folded price")
 
 --------------------------------------------------------------------
 -- 9.  A record we cannot read is dropped, never guessed at.
@@ -233,6 +272,161 @@ local st = Atr_Hist_Stats ()
 check (st ~= nil, "stats are available")
 eq (st.names, 4, "four items recorded on this realm")
 check (st.samples >= 33, "... and their samples are counted -- got " .. tostring (st.samples))
+
+--------------------------------------------------------------------
+-- 13. THE READS (stage 2 and 3). Atr_Hist_Recent is on the price cascade's hot
+--     path; Atr_Hist_Delta picks which historical sample "a week ago" means, and
+--     picking the wrong one is an off-by-one nobody would ever see in game --
+--     the number would just be quietly wrong.
+--------------------------------------------------------------------
+
+local d
+for d = 6600, 6614 do
+	gNow = day (d)
+	Atr_Hist_Note ("Copper Ore Two", 1000 + (d - 6600) * 100)
+end
+
+gNow = day (6614)
+
+local p, age = Atr_Hist_Recent ("Copper Ore Two")
+eq (p, 2400,   "the cascade reads the newest price")
+eq (age, 0,    "... and how old it is")
+eq (Atr_Hist_Recent ("Never Heard Of It"), nil, "an unrecorded item prices at nothing, not zero")
+
+local w = Atr_Hist_Delta ("Copper Ore Two")
+check (w ~= nil, "a fortnight of history yields a week-over-week reading")
+eq (w and w.span, 7,    "... spanning exactly a week")
+eq (w and w.from, 1700, "... against the newest sample at or before seven days back")
+eq (w and w.to,   2400, "... and the newest sample")
+check (w and math.abs (w.pct - (700 / 1700)) < 0.0001,
+	"... with the percentage over the OLD price")
+
+-- the newer end going stale must not hide the reading, only mark it
+gNow = day (6620)
+w = Atr_Hist_Delta ("Copper Ore Two")
+eq (w and w.age, 6, "a stale newest reading still reads, and reports its age")
+
+--------------------------------------------------------------------
+-- 14. Before a week exists: compare what there is, and say how much that was.
+--------------------------------------------------------------------
+
+gNow = day (6700); Atr_Hist_Note ("Short Series", 1000)
+gNow = day (6701); Atr_Hist_Note ("Short Series", 1100)
+
+eq (Atr_Hist_Delta ("Short Series"), nil, "two readings a day apart is noise, not a trend")
+
+gNow = day (6703); Atr_Hist_Note ("Short Series", 2000)
+w = Atr_Hist_Delta ("Short Series")
+check (w ~= nil,      "three days apart is enough to say something")
+eq (w and w.span, 3,  "... and it reports the REAL span, not a week")
+eq (w and w.from, 1000, "... against the oldest reading there is")
+check (w and math.abs (w.pct - 1.0) < 0.0001, "... doubling reads as +100%")
+
+eq (Atr_Hist_Delta ("Never Heard Of It"), nil, "an unrecorded item has no trend")
+
+gNow = day (6704); Atr_Hist_Note ("One Day Only", 500)
+eq (Atr_Hist_Delta ("One Day Only"), nil, "one reading is not a comparison")
+
+--------------------------------------------------------------------
+-- 15. THE CACHE (stage 4). Atr_Hist_Delta memoises per name per day because two
+--     of its callers are hot -- the Analysis view asks per row per redraw, and
+--     the sell tooltip is rebuilt every frame. A cache that does not drop on a
+--     write is a number frozen at yesterday's answer, which is exactly the sort
+--     of wrong that looks right.
+--------------------------------------------------------------------
+
+gNow = day (6800); Atr_Hist_Note ("Cached Ore", 1000)
+gNow = day (6807); Atr_Hist_Note ("Cached Ore", 2000)
+
+w = Atr_Hist_Delta ("Cached Ore")
+check (w and math.abs (w.pct - 1.0) < 0.0001, "a doubled price reads as +100%")
+
+-- a second write the same day must invalidate: same day, new close
+Atr_Hist_Note ("Cached Ore", 3000)
+w = Atr_Hist_Delta ("Cached Ore")
+check (w and math.abs (w.pct - 2.0) < 0.0001, "a re-close the same day drops the cached delta")
+
+-- and a new day's write, likewise
+gNow = day (6808); Atr_Hist_Note ("Cached Ore", 4000)
+w = Atr_Hist_Delta ("Cached Ore")
+eq (w and w.to, 4000, "a new day's write drops it too")
+
+--------------------------------------------------------------------
+-- 16. ONE PHRASING, SHARED. Four readers print this figure now; they all round
+--     and clamp through here so the addon cannot describe one number two ways.
+--------------------------------------------------------------------
+
+eq (Atr_Hist_PctText (nil), nil,                     "no reading, no text")
+eq (Atr_Hist_PctText ({ pct =  0.4118 }), "+41%",    "a rise rounds and signs")
+eq (Atr_Hist_PctText ({ pct = -0.4118 }), "-41%",    "a fall keeps its sign")
+eq (Atr_Hist_PctText ({ pct =  0 }),      "+0%",     "flat is a reading, not a blank")
+eq (Atr_Hist_PctText ({ pct = 330 }),     ">999%",   "an unreadable rise is clamped, not printed")
+eq (Atr_Hist_PctText ({ pct = -0.999 }),  "-99%",    "... and so is a total collapse")
+
+local mv = Atr_Hist_MoveText ("Cached Ore")
+check (mv and mv:find ("vs 8d ago", 1, true) ~= nil,
+	"the move text always carries the REAL span -- got " .. tostring (mv))
+
+--------------------------------------------------------------------
+-- 17. THE SELL SENTENCE. It fires on a fall (undercutting a crash is the
+--     mistake it exists to prevent), says less on a rise, and says nothing at
+--     all about noise or about a market nobody has looked at lately.
+--------------------------------------------------------------------
+
+gNow = day (6900); Atr_Hist_Note ("Crashing Ore", 10000)
+gNow = day (6907); Atr_Hist_Note ("Crashing Ore", 4000)
+
+local note = Atr_Hist_SellNote ("Crashing Ore")
+check (note ~= nil and note:find ("dumping", 1, true) ~= nil,
+	"a market down 60% warns about undercutting a dumper")
+check (note ~= nil and note:find ("60%% on 7 days ago", 1, false) ~= nil,
+	"... naming the move and the REAL span -- got " .. tostring (note))
+
+gNow = day (6910); Atr_Hist_Note ("Rising Ore", 1000)
+gNow = day (6917); Atr_Hist_Note ("Rising Ore", 3000)
+note = Atr_Hist_SellNote ("Rising Ore")
+check (note ~= nil and note:find ("Up", 1, true) ~= nil, "a rise is reported")
+check (note ~= nil and note:find ("dumping", 1, true) == nil, "... without the warning")
+check (note ~= nil and note:find ("on 7 days ago", 1, true) ~= nil,
+	"... and with the span intact (gsub returns two values; the count must not reach %d)")
+
+gNow = day (6920); Atr_Hist_Note ("Flat Ore", 1000)
+gNow = day (6927); Atr_Hist_Note ("Flat Ore", 1030)
+eq (Atr_Hist_SellNote ("Flat Ore"), nil, "3% either way is noise and gets no sentence")
+
+-- stale: the reading stands on the Analysis column but must not become advice
+gNow = day (6930)
+eq (Atr_Hist_SellNote ("Crashing Ore"), nil,
+	"a reading nobody has refreshed in days is not advice about today")
+
+eq (Atr_Hist_SellNote ("Never Heard Of It"), nil, "and an unrecorded item says nothing")
+
+--------------------------------------------------------------------
+-- 18. THE MEDIAN (stage 5). The owner's report was that the tooltip's "Auction
+--     median" is usually a poisoned number. The measured cause is in the addon
+--     already: that database averages 1.97 samples per name and 64% hold ONE,
+--     so two thirds of the time the word "median" is over a single scan. This
+--     one is over dated daily closes and refuses to answer below three of them.
+--------------------------------------------------------------------
+
+gNow = day (7000); Atr_Hist_Note ("Median Ore", 1000)
+eq (Atr_Hist_Median ("Median Ore"), nil, "one day is not a median")
+
+gNow = day (7001); Atr_Hist_Note ("Median Ore", 1200)
+eq (Atr_Hist_Median ("Median Ore"), nil, "two days is not a median either")
+
+gNow = day (7002); Atr_Hist_Note ("Median Ore", 1100)
+local med, mn = Atr_Hist_Median ("Median Ore")
+eq (med, 1100, "three days is, and it is the middle one")
+eq (mn, 3,     "... reporting how many days it stands on")
+
+-- the whole point: one absurd day must not become the item's typical price
+gNow = day (7003); Atr_Hist_Note ("Median Ore", 900000)
+med = Atr_Hist_Median ("Median Ore")
+check (med ~= nil and med < 2000,
+	"a single poisoned day does not move the median -- got " .. tostring (med))
+
+eq (Atr_Hist_Median ("Never Heard Of It"), nil, "an unrecorded item has no typical price")
 
 --------------------------------------------------------------------
 

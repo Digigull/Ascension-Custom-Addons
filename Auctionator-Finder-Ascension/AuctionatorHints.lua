@@ -438,6 +438,25 @@ function Atr_GetAuctionPrice (item, variantKey)  -- itemName or itemID
 		if (p) then return p; end
 	end
 
+	-- THE MARKET SERIES, above your own postings (BACKLOG item 31, stage 2).
+	--
+	-- The rung below this one is Atr_GetMostRecentSale, which reads
+	-- AUCTIONATOR_PRICING_HISTORY -- and that is a record of WHAT YOU LISTED
+	-- THINGS AT, not what the market did.  So when the scan database has nothing,
+	-- this function's answer used to be your own last guess, priced back to you
+	-- as though it were evidence.  A recorded market reading is strictly better,
+	-- and it is bounded by the store's own month of retention where the posting
+	-- history has no age bound at all.
+	--
+	-- Name-keyed, so like every fallback under it this answers the name's default
+	-- rather than a variant -- the same limitation the mean database carries, and
+	-- for the same reason (item 12 part 3b).  Costs a table lookup and one string
+	-- match, and only on the path where the scan database already missed.
+	if (type (Atr_Hist_Recent) == "function") then
+		local hp = Atr_Hist_Recent (itemName);
+		if (hp and hp > 0) then return hp; end
+	end
+
 	local recent = Atr_GetMostRecentSale (itemName);
 	if (recent) then
 		return recent;
@@ -530,6 +549,30 @@ function Atr_MeanAppend (db, name, sample)
 	table.sort (cur);
 end
 
+-- How many samples a stored value actually holds, whatever shape it is in.
+function Atr_MeanCount (v)
+
+	if (type (v) == "number") then return 1; end				-- the one-sample shape
+	if (type (v) ~= "table") then return 0; end
+
+	return #v;
+end
+
+-- BELOW THIS, IT IS NOT A MEDIAN AND MUST NOT BE CALLED ONE (BACKLOG item 31,
+-- stage 5, from the owner's report: "most of the time mean price is just showing
+-- something skewed because of a poisoned price").
+--
+-- The cause is measured and is in this file already: **this database averages
+-- 1.97 samples per name and 64% of names have exactly ONE** (see ATR_MEAN_CAP's
+-- note). At one sample the "median" IS that sample -- so one odd listing, on the
+-- one day somebody happened to scan, becomes the item's typical price and stays
+-- there, because eviction is random and nothing ages out.
+--
+-- Three is the smallest number for which a median means anything at all: it can
+-- outvote one bad sample, which is the entire job.
+local ATR_MEAN_MIN = 3;
+
+-- Returns  price, samples, source  -- source is "history" or "samples".
 function Atr_GetMeanPrice (item)  -- itemName or itemID
 
 	local itemName;
@@ -544,8 +587,28 @@ function Atr_GetMeanPrice (item)  -- itemName or itemID
 		return nil;
 	end
 
+	-- THE DATED SERIES FIRST (BACKLOG item 31, stage 5).  One sample a day,
+	-- bounded by retention, ordered, and thinned by age rather than at random --
+	-- which is every one of the things wrong with the array below.  It answers
+	-- only when the history feature is on and has enough days in it, so on a
+	-- default install nothing here changes.
+	if (type (Atr_Hist_Median) == "function") then
+		local m, n = Atr_Hist_Median (itemName);
+		if (m and m > 0) then return m, n, "history"; end
+	end
+
 	if (gAtr_MeanDB) then
-		return Atr_MeanMedian (gAtr_MeanDB[itemName]);
+
+		local v = gAtr_MeanDB[itemName];
+		local n = Atr_MeanCount (v);
+
+		-- Fewer than ATR_MEAN_MIN and we say NOTHING rather than print one scan's
+		-- number as an average.  The row stays in the database untouched: it is
+		-- still a real observation and the Auction line is still built from the
+		-- same feed -- it just stops being dressed up as a statistic.
+		if (n >= ATR_MEAN_MIN) then
+			return Atr_MeanMedian (v), n, "samples";
+		end
 	end
 	
 	return nil;
@@ -2403,7 +2466,10 @@ local function ShowTipWithPricing (tip, link, num, skillIndex)
 
 	if (AUCTIONATOR_V_TIPS == 1) then vendorPrice	= itemVendorPrice; end;
 	if (AUCTIONATOR_A_TIPS == 1) then auctionPrice	= Atr_GetAuctionPrice (itemName); end;
-    if (AUCTIONATOR_A_TIPS == 1) then auctionMedianPrice = Atr_GetMeanPrice (itemName); end;
+    local auctionMedianDays, auctionMedianSrc;
+    if (AUCTIONATOR_A_TIPS == 1) then
+        auctionMedianPrice, auctionMedianDays, auctionMedianSrc = Atr_GetMeanPrice (itemName);
+    end;
 
 	-- FINDER_TAB: NPC-sold trade good?  If we've learned this item from a vendor
 	-- (Atr_GetNPCPrice), its going cost is the fixed NPC price, so we show that
@@ -2588,8 +2654,39 @@ local function ShowTipWithPricing (tip, link, num, skillIndex)
 			tip:AddDoubleLine (ZT("Auction")..xstring, "|cFFFFFFFF"..ZT("unknown").."  ");
 		end
         if (auctionMedianPrice ~= nil) then
-            tip:AddDoubleLine (Atr_TipLabel (ZT("Auction median"), medianShown, medianBest)..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (auctionMedianPrice));
+            -- How much is behind it, which is the thing this line never used to
+            -- say (item 31, stage 5).  A median over dated daily closes carries
+            -- its day count; the old sample array carries nothing, because it has
+            -- no dates -- and it now only reaches this line at all once it holds
+            -- enough samples to be a median rather than one scan.
+            local mcount = "";
+            if (auctionMedianSrc == "history" and auctionMedianDays) then
+                mcount = "|cFF888888 ("..auctionMedianDays.."d)|r";
+            end
+            tip:AddDoubleLine (Atr_TipLabel (ZT("Auction median"), medianShown, medianBest)..xstring, "|cFFFFFFFF"..zc.priceToMoneyString (auctionMedianPrice)..mcount);
         end
+
+		-- WHAT IT USED TO COST (BACKLOG item 31, stage 4).  Every other money
+		-- line here is present tense, and a price on its own cannot tell a normal
+		-- day from a spike.
+		--
+		-- It carries a PRICE and a PERCENTAGE and deliberately does not compete
+		-- for the best-price highlight: the highlight answers "what is this worth
+		-- to me", and a week-old figure is not an offer.  The label states the
+		-- real span rather than saying "week", because until a week has been
+		-- recorded it is not one -- the same rule the Analysis column follows.
+		if (type (Atr_Hist_Delta) == "function") then
+			local wk = Atr_Hist_Delta (itemName);
+			if (wk) then
+				local pcttxt = Atr_Hist_PctText (wk);
+				local col    = "|cFF888888";
+				if ((wk.age or 0) <= 3) then
+					if (wk.pct >= 0.05) then col = "|cFF40FF40"; elseif (wk.pct <= -0.05) then col = "|cFFFF6060"; end
+				end
+				tip:AddDoubleLine (string.format (ZT("Auction %dd ago"), wk.span or 0)..xstring,
+					"|cFFCCCCCC"..zc.priceToMoneyString (wk.from).."|r "..col..pcttxt.."|r");
+			end
+		end
 	end
 
 	-- disenchanting info

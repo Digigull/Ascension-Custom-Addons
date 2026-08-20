@@ -249,7 +249,25 @@ Assume a **daily** sample (§6 argues why daily is not merely enough but generou
 |---|---|---|---|
 | A. `obs[name][i] = { t = , p = }` | ~5–8 MB | 158,000 **tables** | the shape item 8 C ruled out; do not |
 | B. `obs[name][i] = "day:price"` | ~3.2–4.7 MB | 5,267 tables + 158,000 strings | still one line per sample |
-| **C. `obs[name] = "d1:p1;d2:p2;…"`** | **~1.5–1.8 MB** | **5,267 strings** | one line per *name*; decode lazily |
+| **C. `obs[name] = "d1:p1;d2:p2;…"`** | **~1.8 MB** (measured) | **5,267 strings** | one line per *name*; decode lazily |
+
+**The C row stopped being an estimate on 2026-08-21.** A first real day on the owner's account wrote
+647 items in 31 KB, which decomposes as: **23 bytes of item name, 15 bytes of fixed line overhead,
+and 9.8 bytes of packed sample**. Only the last of those grows with time, which is the property the
+shape was chosen for. Projected from the measured figures:
+
+| | 7 days | 30 days | 90 days |
+|---|---|---|---|
+| 647 items (one session's scanning) | 71 KB | 228 KB | 636 KB |
+| 5267 items (the whole price database) | 578 KB | **1.81 MB** | 5.06 MB |
+
+Stage 5's condenser changes the 30-day column: 30 dailies plus twelve folded weeks is ~530 bytes a
+name rather than ~360, so the whole-database figure becomes **~2.5 MB** — for a quarter of shape
+instead of a month. `ATR_HIST_WEEKS` is the dial.
+
+So the estimate held, and the 30-day whole-market case is confirmed affordable: **1.81 MB in a file
+that regrows by scanning**, against a main file of 1.14 MB that cannot. 90 days is the one that is
+not, which is what the condenser (stage 5) is for.
 
 Shape **C** — one packed string per item name, the whole series in it — is the recommendation, and
 the reasoning is the same one item 13 made about the mean database's single-sample wrapper: the
@@ -345,25 +363,54 @@ follows. Ships dark: it records and nothing reads it. **That is deliberate** —
 play then produces real data, and stage 2's readers can be built against something instead of
 against an empty table.
 
-**Stage 2 — the cheapest, highest-value read: the cascade.**
+**Stage 2 — the cheapest, highest-value read: the cascade. — BUILT 2026-08-21, see §12.**
 `Atr_GetAuctionPrice` gains a history rung above `Atr_GetMostRecentSale`. One branch, and every
 price in the addon improves at once.
 
 **Stage 3 — the week-over-week column** (this *is* item 8 group C, and it closes it).
+**— BUILT 2026-08-21, see §12.**
 One column on the Analysis tab's Market view: `+240%`, no chart, nil when the comparison sample is
 too old to be honest.
 
-**Stage 4 — the readers that were waiting for it.** Item 30's ore card, item 28's demand signal,
-the Sell tab's "you are undercutting a rising market", the age-aware tooltip line.
+**Stage 4 — the readers that were waiting for it. — BUILT 2026-08-21 (the two that could be), see
+§13.** Item 30's ore card and item 28's demand signal want items that do not exist yet; the Sell
+tab's warning and the age-aware tooltip line did not, and shipped.
 
-**Stage 5 — retention polish.** The condenser, and only then the question of whether the mean
-database still earns its 5267 rows.
+**Stage 5 — retention polish. — BUILT 2026-08-21, see §14.** The condenser, and the mean database
+question — which the owner answered from use before the data could.
 
 ---
 
-## 11. Stage 1 as built, 2026-08-21
+## 11. Stage 1 as built, 2026-08-21 — and confirmed in game the same day
 
-Reasoned and unit-tested offline; **not yet seen in game**. Files:
+**It works.** First real run on the owner's account: 647 items recorded from one session's
+scanning, all on day 6593 (2008-08-01 + 6593 days = 2026-08-20 — the epoch arithmetic is right),
+24 of them closed more than once and carrying the `:2` / `:3` scan counts, `n = 647` in step with
+the entry count, and the whole thing in
+`WTF/Account/<ACCT>/SavedVariables/Auctionator-Finder-Ascension-History.lua` — its own file, which
+was the entire premise. `/atrhistory show` round-tripped a series back out of the packed string
+through the real client, not a stub.
+
+**One defect, found and fixed by that run.** The copy box printed `58  00` where it meant 58 gold:
+`zc.priceToMoneyString` renders coins as TEXTURES, and a texture copies out of an EditBox as
+nothing. Every money formatter in this addon has that property, and it is invisible until someone
+pastes. The diagnostic now formats plain `58g 00s 00c` text with the raw copper beside it — a copy
+box whose text does not survive being copied has not delivered anything.
+
+**The baseline load figure, from `/cpp load` on the same session:**
+`Auctionator-Finder-Ascension` costs **96.2 ms and 1052 KB** at login, rank 7 of 27 addons, against
+a 3683 ms total login and a top entry (Details) of 1724.5 ms. That reading was taken while the
+history file was still empty — SavedVariables are written at logout, so a login profile always
+reflects the *previous* session's file — which makes it exactly the before-figure. The comparison
+worth taking next is the same command after a login with a full file in place; the companion should
+appear as a line of its own, which is the per-addon attribution the separate file was supposed to
+buy.
+
+The capture also independently confirms a research finding: `GetAddOnMemoryUsage` reports
+`st=zero` on this server, so `/atr clear`'s memory line is indeed useless here and the load profile
+is the only per-addon channel.
+
+Files:
 
 - **`Auctionator-Finder-Ascension-History/`** — the companion. A `.toc` declaring
   `AUCTIONATOR_MARKET_HISTORY` and one line of Lua setting
@@ -427,6 +474,214 @@ split, and that an unreadable record is dropped rather than guessed at.
 **What is deliberately not here:** no reader. `Atr_Hist_Series` exists and nothing in the addon
 calls it. That is stage 2's seam, and leaving it dark is what lets a week of ordinary play produce
 real data for the readers to be built against.
+
+---
+
+## 12. Stages 2 and 3 as built, 2026-08-21
+
+Built back to back on the owner's call to keep moving rather than verify each step
+(*"assume it's going to work... continue as if nothing will go wrong for efficiency"*), which is
+the repo's own standing rule applied deliberately. Offline checks pass; **not seen in game**.
+
+### Stage 2 — the cascade rung
+
+`Atr_GetAuctionPrice` becomes: scan database → **`Atr_Hist_Recent`** → `Atr_GetMostRecentSale` →
+`Atr_GetAHVariantEstimate`.
+
+The rung it was inserted above is the point. `Atr_GetMostRecentSale` reads
+`AUCTIONATOR_PRICING_HISTORY`, which is **what you listed things at** — so when the scan database
+had nothing, this function's answer was *your own last guess, priced back to you as evidence*. That
+is not a small thing to fix: 29 call sites across 6 files go through this function, so every price
+the addon shows for an unscanned item improves at once.
+
+`Atr_Hist_Recent` reads only the tail of the packed string — a table lookup and one match — and it
+runs only on the path where the scan database already missed. **No age filter**, deliberately: the
+store's own month of retention *is* the filter, and the rung below it has no age bound at all, so a
+three-week-old market reading is strictly better than an unbounded guess. The age comes back as a
+second return for callers that want to say how old it is.
+
+### Stage 3 — the Week column, which closes item 8's group C
+
+One column on the Analysis tab's Market view reading `+240%`. **No chart** — group C settled that:
+the demand driver rotates weekly, so what is wanted is "vs seven days ago", not a curve.
+
+- **`Atr_Hist_Delta`** picks the **newest sample at or before seven days back** — "what it was a
+  week ago", not "the oldest thing I have". Until a week has been recorded that sample does not
+  exist, so it falls back to the oldest reading it does have **and returns the real span with it**,
+  and the hover says *"4 days ago"* rather than quietly calling four days a week. Under three days
+  it returns nothing: two readings a day apart is noise.
+- **Up is green**, which is this view's reading — the column two along is Gold/day and the question
+  the table answers is what is worth going and getting. The hover states both prices and both dates
+  so the buyer's half of the story is one glance away.
+- **A stale newer end is dimmed, not hidden.** It is still the last thing the market did, and
+  hiding it would say "no movement" about an item nobody has scanned lately — a claim about the
+  player, not the market.
+- **Widths paid for it the same way the Reagents view paid for Outlay**: Item 184→176, Group 74→60,
+  Sellers 48→44, Listings 54→48, Sold/day 80→74, Low 84→78, Gold/day 96→88. Eight columns is 684 of
+  the 702px row, clearing it by 18.
+- The delta is computed **once per row per rebuild** and cached on the record beside `st`, because
+  the sort calls a column's `val` for every row and the draw calls it again for every visible one —
+  and this one decodes a string.
+
+**A superseded decision, worth naming.** Group C's plan was to store the series as a capped daily
+`{ t, low }` **on each watched item's `obs` record**. Item 31 replaced that: the series is general,
+so the column reads the same store every other consumer does and the watchlist is no longer the
+unit of retention. One store, one shape — which is the whole of §10's argument arriving early.
+
+**Tested:** the smoke test grew to 66 assertions, covering which sample "a week ago" resolves to,
+the short-history fallback and its reported span, the three-day floor, the staleness age, and the
+cascade read. That off-by-one is the kind nothing in game would ever show you — the number would
+simply be wrong.
+
+---
+
+## 13. Stage 4 as built, 2026-08-21 — the readers, minus two that had nothing to read from
+
+**Two of the four listed readers were not buildable and are not built.** Item 30's ore card and
+item 28's demand signal are features of items that do not exist yet — there is no Advisor tab and no
+Call Board capture to put a line on. Nothing about them is blocked on the history any more, which is
+the point: when either gets built, its figure is one call away. The other two shipped.
+
+**Four surfaces now print this figure, so there is one function that phrases it.**
+`Atr_Hist_PctText` rounds and clamps; `Atr_Hist_MoveText` adds the span. Four sites rounding a
+percentage their own way is four chances to describe one number two ways, which is the duplication
+FRAMEWORK.md §6 warns about for prices and is no different here. The Analysis column was rewritten
+to go through it rather than keep its own copy.
+
+### The item tooltip — everywhere an item is drawn
+
+A fifth money line under Vendor / Auction / Auction median / Disenchant, reading
+`Auction 7d ago    12s  +240%`. It carries the old **price** as well as the move, because the other
+four lines are all money and a bare percentage in that stack reads as a different kind of thing.
+
+It **does not compete for the best-price highlight**. That highlight answers "what is this worth to
+me", and a week-old figure is not an offer.
+
+The label states the real span — `7d ago`, `4d ago` — never the word "week", for the same reason the
+Analysis column does: until a week has been recorded it is not one.
+
+This also covers the Sell tab's item hover for free, since that hover is `SetHyperlink` on the same
+tooltip.
+
+### The Sell tab's sentence
+
+One line on the drop-box hover, and the direction that matters is the one the flow makes dangerous.
+Auctionator's sell flow is *undercut the current lowest*, and the lowest listing is one seller's
+decision — so the case worth a warning is not a dear market, it is a **fallen** one: undercutting a
+crash prices you into it. The rise is reported too, shorter, because it is reassurance rather than a
+decision.
+
+Three gates, each for its own reason: **SELL tab only** (the same hover serves BUY, where
+"undercutting it" is not what you are doing), **±15% or nothing** (a few percent is the noise a
+daily close carries, and a tooltip that comments on noise teaches you to ignore it), and **nothing
+when the newer end is stale** — "the market has fallen" would then be a claim about a market nobody
+has looked at.
+
+`Atr_ShowRecTooltip` is re-run **every frame** while that tooltip is up. That is why
+`Atr_Hist_Delta` now memoises per name per day: a decode allocates a table per sample, so uncached
+this would be thousands of short-lived tables a second for a number that changes once a day. The
+cache entry is dropped whenever that name is written, and the stored day makes a day roll drop it by
+itself.
+
+### The Crafting and Reagents side tooltips
+
+One line each, and they answer the same question from opposite ends. On a **craft row**: a recipe
+that pays today because its product spiked is a different proposition from one that pays every week,
+and Profit/craft cannot tell them apart. On a **reagent row**: is this dear *today* — the difference
+between a bad recipe and a bad week. Neither could be a column; the Reagents view has no width left
+for a ninth and it was never a table's job to say it.
+
+### One bug, caught by re-reading rather than by running
+
+The sell sentence used `txt:gsub("^%-", "")` inline as a `string.format` argument. **`gsub` returns
+two values** — the string and a replacement count — and an unparenthesised call passes both, so the
+count landed in the `%d` and every sentence would have read *"on 1 days ago"*. Parenthesised, and
+pinned by an assertion that checks the span survives, because the test that was there passed happily
+without it.
+
+**Tested:** the smoke test is now **84 assertions**. The new ones cover the cache dropping on a
+same-day re-close and on a new day's write, the shared formatter's rounding and clamping in both
+directions, that the move text always carries the real span, and each gate on the sell sentence —
+the fall, the rise, the noise floor and the staleness floor.
+
+---
+
+## 14. Stage 5 as built, 2026-08-21 — the condenser, and an honest median
+
+Two halves. The first is the named content; the second is the question stage 5 was supposed to
+*ask*, which the owner answered from use before any data could:
+
+> "Most of the time mean price is just showing something skewed because of a 'poisoned' price, I
+> don't really find it useful when I see it on the tooltip honestly."
+
+### The condenser
+
+Beyond the 30-day daily window a week now folds into **one record holding that week's median
+close**, and those keep for twelve weeks. Past that — and only past that — data is destroyed.
+
+**Why keep anything when no reader asks for it yet.** Retention is the one decision that cannot be
+deferred: a reader can be added next month, a dropped month cannot be recovered. The asymmetry is
+entirely one-sided, and it is the same argument that put the store in its own file.
+
+**Why a week is the fold unit.** The market mechanism this was built for rotates weekly, so "this is
+the week copper spikes" is a real question and a monthly average would erase exactly that signal. A
+quarter of weekly shape answers it; more is speculation.
+
+**A week is folded exactly once, from whole days**, which is what makes the trim safe to re-run: a
+week folds only when all seven of its days have left the daily window, and an already-folded record
+is carried through untouched. Re-medianing a median would drift the number a little further on every
+trim, and that drift is invisible. The record grew a fourth field — `day:price:n:span` — with `span`
+omitted when it is 1, so a daily close is still nine characters.
+
+**The cost, from the measured 9.8 bytes a sample:** a full name goes from ~360 bytes to ~530, so the
+whole-database projection moves from **1.81 MB to about 2.5 MB**. `ATR_HIST_WEEKS` is the dial and
+setting it to 0 restores the old drop-everything behaviour exactly.
+
+### The median, and why the old one was poisoned
+
+The owner's report has a cause already measured *in this repo*, and it is not the one the word
+"poisoned" suggests. It is not a skew — it is a **sample size of one**:
+
+> `AuctionatorHints.lua`, item 12 part 3b: "this database averages **1.97 samples per name**, 64%
+> have one and only 8.7% have five or more."
+
+At one sample the median **is** that sample. So two thirds of the time, "Auction median" was one
+scan's number wearing the word median — and because `Atr_MeanAppend` evicts at `math.random` and
+carries no dates, one odd listing on the one day somebody happened to scan became the item's typical
+price and stayed there. Nothing ages out; an unlucky thin can drop every sample from the week you
+are asking about.
+
+`Atr_GetMeanPrice` now answers in two tiers:
+
+1. **The dated series**, when the history is on and holds at least three days. One sample a day,
+   ordered, bounded by retention, thinned by age rather than at random — every one of the things
+   wrong with the array below.
+2. **The old sample array**, but only once it holds **three or more samples**. Three is the smallest
+   number for which a median can outvote one bad sample, which is the whole job. Below that the
+   function returns nothing and the tooltip line simply does not appear.
+
+**No rows are deleted.** A one-sample row is still a real observation and still feeds the Auction
+line; it has only stopped being dressed up as a statistic. On a default install — history off — the
+visible change is that the roughly two thirds of median lines that were never medians go away.
+
+The tooltip line now also says how much is behind it: a history-derived median carries `(12d)`.
+The old array carries nothing, because it has no dates to count.
+
+### The evidence for eventually deleting the mean database
+
+`/atrhistory audit` prints, into the copy box: how many rows the mean database holds and how they
+split by sample count, how many names the history already covers with three or more days, and — for
+the names where both can answer — how far apart the two figures are, bucketed at 10% and 50%.
+
+§4.2 promised that decision would be taken on data rather than a feeling, after the history had
+proven itself on a real account. This is that data, and it is a report: **nothing here deletes
+anything.** If the two mostly agree, the old database is redundant rather than wrong, and it can go
+once the history covers the same names.
+
+**Tested:** 94 assertions. The new ones pin the retention window reaching back past 30 days (data
+condensed, not dropped), day order surviving a fold, a folded record covering at most a week, the
+fold being idempotent across repeated trims, and the median refusing to answer at one and two days
+while a single absurd day fails to move it at four.
 
 ---
 
