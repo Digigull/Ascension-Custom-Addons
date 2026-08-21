@@ -387,6 +387,40 @@ and a `name`**, every ledger row carries both, and every observed watched item c
 most lookups cost nothing and need no capture. Only what cannot be answered that way is learned
 from a live link and saved (BACKLOG item 27).
 
+### "Is this listing mine?" — the owner list decides, not the scan
+
+Everything that treats a listing as yours reads one flag: `data.yours`, set in
+`AtrScan:CondenseAndSort` by comparing the listing's `owner` with `UnitName("player")`.
+`AnalyzeSortData` turns it into `yourBestPrice`/`yourWorstPrice`, the My Auctions undercut icon
+(`Atr_GetUCIcon`) reads those two, the Cancel button enables on it, and the Sell tab's
+recommendation refuses to undercut a row carrying it.
+
+That comparison is unreliable here, in three independent ways, and each one ends with your own
+auctions missing from the My Auctions pane (owner report, 2026-08-21 — five stacks posted, none
+of them in the list, and Check for Undercuts changed nothing, because it re-runs the same
+search):
+
+1. **The server returns no owner.** 3.3.5 streams owner names separately; the batch loop has
+   counted `numNilOwners` since long before this. A nil owner compares as somebody else.
+2. **The listing is in a bucket the UI cannot reach.** The same-name quality split (item 12
+   part 1) files off-quality listings under `name.."#q"..quality`, and `Atr_OnSearchComplete`
+   only re-points `activeScan` when the search produced exactly one scan. Ascension's fused
+   items — one name, several qualities — are what make this bite.
+3. **The query never asked for it.** An exact search narrows by the scanned item's class and
+   subclass, read from whatever link the name-keyed cache last held; a variant filed under a
+   different subclass is excluded server-side.
+
+`AtrScan:MergeYourOwnAuctions` (`AuctionatorScan.lua`, called from `AtrSearch:Finish` before
+each bucket condenses) stops trying to discover this and asks the client: it reconciles the
+scan against `GetAuctionItemInfo("owner", i)` — credit what the scan got right, adopt
+owner-less listings, append the rest. That list is already the authority elsewhere
+(`Atr_BuildActiveAuctions` builds the My Auctions item list from it, `Atr_CancelAuction_ByIndex`
+matches against it to cancel), so a row it adds is a row Cancel can act on. Matching is by
+`(stackSize, buyoutPrice)`, the same identity `Atr_DoesAuctionMatch` uses.
+
+**If you are adding another "is it mine" test, use `data.yours`** — it is now correct for
+reasons the owner comparison alone cannot deliver.
+
 ### Localization
 
 `ZT()` (`AuctionatorLocalize.lua:32`) is the upstream wrapper. The Finder cluster uses `FT()`,

@@ -769,6 +769,12 @@ function AtrSearch:Finish()
 		scn.whenScanned		= finishTime;
 		scn.searchText		= self.searchText;
 
+		-- Reconcile against the client's own list of what you have posted before
+		-- condensing -- see MergeYourOwnAuctions for the three ways a scan loses
+		-- track of your auctions.  pcall'd because nothing about attributing a
+		-- listing is worth breaking a completed search over.
+		pcall (scn.MergeYourOwnAuctions, scn);
+
 		scn:CondenseAndSort ();
 
 		-- update the fullscan DB
@@ -916,6 +922,157 @@ end
 function Atr_SortAuctionData (x, y)
 
 	return x.itemPrice < y.itemPrice;
+
+end
+
+-----------------------------------------
+
+-- YOUR OWN AUCTIONS ARE THE CLIENT'S TO KNOW, NOT THE SCAN'S TO GUESS.
+--
+-- Everything downstream of here decides "is this one mine?" by comparing the
+-- listing's owner with UnitName("player") -- CondenseAndSort sets data.yours
+-- that way, AnalyzeSortData derives yourBestPrice/yourWorstPrice from it, the
+-- My Auctions tab's undercut icon reads those two, the Cancel button enables on
+-- data.yours, and the Sell tab refuses to undercut a row carrying it.
+--
+-- That comparison answers "no" in three situations that all mean "yes", and on
+-- the My Auctions tab the result is a list of everybody's auctions but yours
+-- (owner report, 2026-08-21: five stacks on the auction house, none of them in
+-- the pane, and pressing Check for Undercuts changed nothing -- it re-runs the
+-- same search):
+--
+--   1. THE SERVER RETURNED NO OWNER.  A 3.3.5 auction house streams owner names
+--      separately from the listing and can hand back nil for them; the batch
+--      loop above already counts these (numNilOwners) because it has been seen
+--      here.  A nil owner is not "someone else", but it compares as one.
+--   2. THE LISTING NEVER REACHED THIS BUCKET.  The same-name quality split
+--      (BACKLOG item 12 part 1) files listings whose quality differs from the
+--      bucket's under a second scan keyed name.."#q"..quality, and nothing shows
+--      that second bucket: Atr_OnSearchComplete only re-points the pane's
+--      activeScan when the search produced exactly ONE scan, so with a split the
+--      pane keeps showing the primary one.  Ascension's fused items are the case
+--      that makes this bite -- one name, several qualities, and if yours is not
+--      the quality the primary bucket adopted, your listings are in the bucket
+--      the UI cannot reach.
+--   3. THE QUERY NEVER ASKED FOR IT.  An exact search narrows the auction house
+--      query by the scanned item's class and subclass (AtrSearch:Continue), read
+--      from whatever link the name-keyed cache last held -- which the batch loop
+--      overwrites from other people's listings.  A variant filed under a
+--      different subclass is then excluded server-side.
+--
+-- All three are the same failure -- the scan is being asked to discover
+-- something the client already knows for certain -- so this reconciles against
+-- the owner list instead of trying to fix the discovery.  GetAuctionItemInfo
+-- ("owner", i) is the auction house's own answer to "what have I got up?", it
+-- is what Atr_BuildActiveAuctions builds the My Auctions item list from, and it
+-- is what Atr_CancelAuction_ByIndex matches against to cancel -- so a row this
+-- adds is a row the Cancel button can already act on.
+--
+-- Three passes, in this order, because the first two cost nothing and avoid
+-- inventing a row that is already on screen:
+--
+--   1. credit listings the scan attributed to you correctly,
+--   2. adopt listings that came back with NO owner at all -- never one owned by
+--      a named player, which is somebody else's however well the stack and
+--      price match,
+--   3. append whatever is still unaccounted for.
+--
+-- Pass 3 is the one that can double-count, and only in a case worth stating: if
+-- the server returns your auctions under some name that is neither nil nor
+-- yours, they are on screen as a stranger's AND appended as yours.  That has not
+-- been observed, and the failure it would replace -- your auctions absent
+-- entirely -- is worse than one duplicated row.
+--
+-- Matching is by (stackSize, buyoutPrice), the same identity
+-- Atr_DoesAuctionMatch uses for cancelling; the count from the owner list is
+-- authoritative for how many of a given stack/price are yours.
+--
+-- Runs before CondenseAndSort so the condensed rows, absoluteBest, the your-best
+-- and your-worst prices and the singleton tally are all built from the corrected
+-- data -- and so the dated history sample, which drops your own listings by
+-- owner, actually drops them.
+function AtrScan:MergeYourOwnAuctions ()
+
+	if (type (GetNumAuctionItems) ~= "function"
+		or type (GetAuctionItemInfo) ~= "function"
+		or type (UnitName) ~= "function") then
+		return;			-- no client (offline tooling); nothing to reconcile against
+	end
+
+	local me = UnitName ("player");
+
+	if (me == nil or me == "") then return; end
+
+	local numOwned = GetNumAuctionItems ("owner") or 0;
+
+	if (numOwned < 1) then return; end		-- owner list not loaded, or nothing posted
+
+	----- what the client says you have up for THIS item, by stack and price
+
+	local owed		= {};
+	local anyOwed	= false;
+	local i;
+
+	for i = 1, numOwned do
+
+		local name, _, count, _, _, _, _, _, buyoutPrice = GetAuctionItemInfo ("owner", i);
+
+		-- count is 0 for a SOLD auction: that is history, not a listing
+		if (name and count and count > 0 and zc.StringSame (name, self.itemName)) then
+			local key = count..":"..(buyoutPrice or 0);
+			owed[key]	= (owed[key] or 0) + 1;
+			anyOwed		= true;
+		end
+	end
+
+	if (not anyOwed) then return; end
+
+	local sd;
+
+	----- pass 1: the scan already got these right
+
+	for i,sd in ipairs (self.scanData) do
+		if (sd.owner == me) then
+			local key = (sd.stackSize or 0)..":"..(sd.buyoutPrice or 0);
+			if (owed[key] and owed[key] > 0) then
+				owed[key] = owed[key] - 1;
+			end
+		end
+	end
+
+	----- pass 2: listings that came back with no owner at all
+
+	for i,sd in ipairs (self.scanData) do
+		if (sd.owner == nil or sd.owner == "") then
+			local key = (sd.stackSize or 0)..":"..(sd.buyoutPrice or 0);
+			if (owed[key] and owed[key] > 0) then
+				sd.owner	= me;
+				owed[key]	= owed[key] - 1;
+			end
+		end
+	end
+
+	----- pass 3: still missing -- the scan never saw them
+
+	local key, n;
+
+	for key, n in pairs (owed) do
+
+		if (n > 0) then
+
+			local ss, bp = string.match (key, "^(%d+):(%d+)$");
+
+			ss = tonumber (ss);
+			bp = tonumber (bp);
+
+			if (ss and ss > 0) then
+				local j;
+				for j = 1, n do
+					self:AddScanItem (self.itemName, ss, bp, me, 1, 0);
+				end
+			end
+		end
+	end
 
 end
 
