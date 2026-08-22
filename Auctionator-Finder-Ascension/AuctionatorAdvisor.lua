@@ -1481,6 +1481,44 @@ function Atr_Advisor_Init ()
 	end);
 	ign:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
 
+	-- THE TAB SAYS SO ITSELF.  Every card here is built out of scan estimates --
+	-- craft costs, margins, sale rates, all of which the Analysis tab already
+	-- calls approximations -- and ranking them compounds the error rather than
+	-- cancelling it.  The note under the title admits that about the ordering;
+	-- this says the louder half, that the tab is new and its cards are a place
+	-- to start looking, not a decision.  Said once, in the chrome, so no card
+	-- has to hedge in its own body text.
+	--
+	-- It rides the Ignored button's row rather than sitting above the scroll
+	-- frame because that row is empty to the left of the button: a banner in
+	-- the gap costs the cards no height, and the cards were already the thing
+	-- that outgrew this panel (see the scroll frame below).
+	local banner = CreateFrame ("Frame", "Atr_Advisor_Banner", panel);
+	banner:SetHeight (20);
+	banner:SetPoint ("TOPLEFT", 20, -46);
+	banner:SetPoint ("TOPRIGHT", ign, "TOPLEFT", -8, 0);
+	banner:EnableMouse (true);
+
+	local bnbg = banner:CreateTexture (nil, "BACKGROUND");
+	bnbg:SetTexture (0.55, 0.33, 0.04, 0.55);
+	bnbg:SetAllPoints (banner);
+
+	local bntxt = banner:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+	bntxt:SetPoint ("LEFT", 8, 0);
+	bntxt:SetPoint ("RIGHT", -8, 0);
+	bntxt:SetJustifyH ("CENTER");
+	bntxt:SetTextColor (1, 0.85, 0.4);
+	bntxt:SetText (DZT("Experimental - advice, not instructions. Use at your own discretion."));
+
+	banner:SetScript ("OnEnter", function (self)
+		if (GameTooltip == nil) then return; end
+		GameTooltip:SetOwner (self, "ANCHOR_BOTTOM");
+		GameTooltip:SetText (DZT("Experimental"), 1, 0.85, 0.4);
+		GameTooltip:AddLine (DZT("This tab reads the Analysis tab and guesses at what is worth your time. Every figure behind a card is an estimate, and a card can be confidently wrong when the scan data behind it is thin or stale. Check the numbers before you spend on them."), 0.8, 0.8, 0.8, true);
+		GameTooltip:Show();
+	end);
+	banner:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
 	-- THE CARDS SCROLL, and they have to.  Six cards with three item rows each is
 	-- roughly twice the height this panel has -- the tab was a fixed page of six
 	-- short cards before the rows went in, and it stopped being one the moment a
