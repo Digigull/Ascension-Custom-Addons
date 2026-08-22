@@ -548,8 +548,14 @@
 				</ScrollChild>
 			</ScrollFrame>
 
+			<!-- Scan Inventory / Profit Margin: the inventory column's own action
+			     row.  Both are narrowed to a few pixels of padding around their
+			     labels (and the Scan button's widest running caption,
+			     "Cancel (n/n)") so the pair tucks under the inventory instead of
+			     running on past its right edge; the expanded SELL layout parks
+			     them at that column's bottom-left corner. -->
 			<Button name="Atr_SellBrowser_Scan" inherits="UIPanelButtonTemplate" text="Scan Inventory" hidden="true">
-				<Size><AbsDimension x="85" y="18"/></Size>
+				<Size><AbsDimension x="80" y="18"/></Size>
 				<Anchors>
 					<Anchor point="TOPLEFT" relativeTo="Atr_SellBrowser" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-4"/></Offset></Anchor>
 				</Anchors>
@@ -565,9 +571,9 @@
 			     Crafted Goods Margin filters.  Sits right of Scan Inventory and is
 			     positioned/shown by the expanded SELL layout so it tracks that button. -->
 			<Button name="Atr_SB_ProfitMargin" inherits="UIPanelButtonTemplate" text="Profit Margin" hidden="true">
-				<Size><AbsDimension x="95" y="18"/></Size>
+				<Size><AbsDimension x="76" y="18"/></Size>
 				<Anchors>
-					<Anchor point="LEFT" relativeTo="Atr_SellBrowser_Scan" relativePoint="RIGHT"><Offset><AbsDimension x="12" y="0"/></Offset></Anchor>
+					<Anchor point="LEFT" relativeTo="Atr_SellBrowser_Scan" relativePoint="RIGHT"><Offset><AbsDimension x="6" y="0"/></Offset></Anchor>
 				</Anchors>
 				<Scripts>
 					<OnClick>Atr_PM_Open();</OnClick>

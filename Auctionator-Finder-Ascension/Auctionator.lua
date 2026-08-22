@@ -3305,14 +3305,15 @@ ATR_SELL_LIST_H = 74;       -- results scroll height; 4 rows at 16px
 -- These six are the only place the split is decided.  Both columns and the
 -- batch column's two buttons measure off them.
 ATR_SELL_BROWSER_Y = -82;   -- top edge of both columns, panel-relative
-ATR_SELL_BROWSER_H = 168;   -- height of both columns
+ATR_SELL_BROWSER_H = 150;   -- height of both columns
                             --
                             -- 194 until 2026-08-23, which put the bottom edge
                             -- at -276 and overlapped the Current/History/Ledger
                             -- strip (owner's report, with a screenshot).  That
                             -- strip is Atr_ListTabs: 250 wide, anchored
                             -- BOTTOMRIGHT to Atr_HeadingsBar's TOPRIGHT at
-                            -- y -22, so with the bar at ATR_SELL_HB_Y it owns
+                            -- y -22, so with the bar at ATR_SELL_HB_Y its tab
+                            -- buttons own
                             --
                             --     x 361..611,  y -258..-290
                             --
@@ -3321,8 +3322,22 @@ ATR_SELL_BROWSER_H = 168;   -- height of both columns
                             -- most of the way across it.  Both are shortened
                             -- anyway, because two columns side by side have to
                             -- stay level -- an 8px step between them would read
-                            -- as a bug of its own.  168 puts the bottom at -250,
+                            -- as a bug of its own.  168 put the bottom at -250,
                             -- eight pixels clear.
+                            --
+                            -- 168 -> 150 on 2026-08-24, and this is the part to
+                            -- read before putting it back: the action rows moved
+                            -- OUT of the tab band and under their own columns
+                            -- (ATR_SELL_BTNROW_Y below), and an 18px row hung
+                            -- under a column bottom of -250 lands at -252..-270,
+                            -- which is twelve pixels inside that same strip --
+                            -- and the batch pair, unlike the old single row, now
+                            -- starts at x 298 and so would sit on Current again.
+                            -- 150 bottoms the columns at -232 and puts the rows
+                            -- at -234..-252, six pixels clear of the tabs.  The
+                            -- 18px came off the columns rather than off
+                            -- ATR_SELL_LIST_H because both columns scroll and the
+                            -- results list, at four rows, does not.
 ATR_SELL_INV_X = -26;
 ATR_SELL_INV_W = 290;
 ATR_SELL_BP_X  = 298;       -- inventory right edge is 264; its bar reaches 286
@@ -3334,7 +3349,23 @@ ATR_SELL_BP_W  = 276;       -- right edge 574, its own bar out to 596
 -- constants because these are the two values to nudge when tuning that gap.
 ATR_SELL_HB_Y = -268;       -- Atr_HeadingsBar TOPLEFT y (tabs follow it)
 ATR_SELL_SF_Y = -313;       -- AuctionatorScrollFrame TOPLEFT y (45 below the bar)
-ATR_SELL_SCANBTN_Y = 2;     -- Scan Inventory button y vs the divider top edge
+
+-- The two action rows, one per column.  Scan Inventory | Profit Margin sits at
+-- the inventory's bottom-left corner and Batch Post | Clear at the batch
+-- column's -- each pair tucked under the window it acts on rather than strung
+-- out in one long row across both (owner's request, 2026-08-24; the single row
+-- ran from the inventory's left edge to well past its right one, so the batch
+-- column's buttons read as belonging to the inventory).
+--
+-- The row is 2px under its column's bottom edge, in the band the columns gave
+-- up for it (see ATR_SELL_BROWSER_H): -234..-252, clear of the tab strip at
+-- -258 and of the headings-bar divider at -268.  Riding the divider with a
+-- raised frame level, which is what the old single row did, is no longer
+-- needed -- the raises in Atr_ApplySellExpandedLayout and Atr_BP_Layout are
+-- kept only so that a future nudge of the block cannot bury a button again.
+ATR_SELL_BTNROW_Y  = -2;    -- action-row top edge vs its column's bottom edge
+ATR_SELL_BTN_GAP   = 6;     -- gap between the two buttons of a pair (Auctionator.xml
+                            -- carries the same 6 for the Scan/Profit Margin pair)
 -- Item-name budget.  This used to be 215 -- the header strip's width before the
 -- basis note.  The name now lives in the 170px left column, above the drop box,
 -- so it is the column that sets the budget: same value as the drop hint's, for
@@ -3968,9 +3999,11 @@ function Atr_ApplySellExpandedLayout()
     ---- 4. results area takes the height the inventory gave up ----
 
     -- Atr_ListTabs anchors to Atr_HeadingsBar's TOPRIGHT, so it follows.  The
-    -- block is raised (-290 -> -268) so the Current/Ledger tabs sit right under
-    -- the inventory, level with the Scan Inventory button, instead of a row
-    -- lower.  ATR_SELL_HB_Y / ATR_SELL_SF_Y keep the two in step for tuning.
+    -- block is raised (-290 -> -268) so the Current/Ledger tabs sit close under
+    -- the two columns instead of a row lower.  They no longer share a line with
+    -- Scan Inventory: since 2026-08-24 that button and its three neighbours sit
+    -- in the band above, tucked under the column each pair acts on.
+    -- ATR_SELL_HB_Y / ATR_SELL_SF_Y keep the bar and the list in step for tuning.
     if (Atr_HeadingsBar) then
         Atr_HeadingsBar:ClearAllPoints();
         Atr_HeadingsBar:SetPoint ("TOPLEFT", panel, "TOPLEFT", 6, ATR_SELL_HB_Y);
@@ -3984,20 +4017,28 @@ function Atr_ApplySellExpandedLayout()
             Atr_HeadingsBarMiddle:SetPoint ("BOTTOMRIGHT", Atr_HeadingsBar, "BOTTOMRIGHT",   0, 0);
         end
 
-        -- Raising the block put the divider on top of the Scan Inventory button
-        -- (anchored to the inventory's bottom) and buried it.  Re-anchor the
-        -- button onto the divider's top edge, left-aligned with the extended
-        -- divider, and lift its frame level so the bar cannot draw over it.
-        if (Atr_SellBrowser_Scan) then
+        -- The inventory's action row: Scan Inventory, with Profit Margin
+        -- anchored to it in XML.  Anchored to the INVENTORY, not to this bar --
+        -- the pair belongs to the column above it, so it tracks that column's
+        -- bottom-left corner and stays true if ATR_SELL_BROWSER_H or
+        -- ATR_SELL_INV_X is retuned.  (It rode the bar until 2026-08-24, when
+        -- the four buttons were split into a pair per column; the columns gave
+        -- up 18px so the rows could clear the tab strip -- see
+        -- ATR_SELL_BROWSER_H.)  The raised frame level is no longer load-bearing
+        -- now that the row clears the divider by 16px, but it costs nothing and
+        -- it is the thing that stops the bar burying a button if the block is
+        -- ever nudged back up.
+        if (Atr_SellBrowser_Scan and Atr_SellBrowser) then
+            local lvl = (Atr_HeadingsBar:GetFrameLevel() or 5) + 5;
+
             Atr_SellBrowser_Scan:ClearAllPoints();
-            Atr_SellBrowser_Scan:SetPoint ("TOPLEFT", Atr_HeadingsBar, "TOPLEFT", -32, ATR_SELL_SCANBTN_Y);
-            Atr_SellBrowser_Scan:SetFrameLevel ((Atr_HeadingsBar:GetFrameLevel() or 5) + 5);
+            Atr_SellBrowser_Scan:SetPoint ("TOPLEFT", Atr_SellBrowser, "BOTTOMLEFT", 0, ATR_SELL_BTNROW_Y);
+            Atr_SellBrowser_Scan:SetFrameLevel (lvl);
             Atr_SellBrowser_Scan:Show();
 
             -- The Profit Margin button is anchored (in XML) to the Scan button, so
             -- it follows it here; it just needs to be raised above the headings-bar
             -- divider and shown alongside it.
-            local lvl = (Atr_HeadingsBar:GetFrameLevel() or 5) + 5;
             if (Atr_SB_ProfitMargin) then
                 Atr_SB_ProfitMargin:SetFrameLevel (lvl);
                 Atr_SB_ProfitMargin:Show();
