@@ -95,6 +95,11 @@ and right click to add it to a shopping list or an Analysis group.
 
 ### Advisor tab
 
+Experimental, and the tab says so in a banner across its top: the cards are a
+place to start looking, not a decision. Everything behind them is an estimate
+read off the Analysis tab, and a card can be confidently wrong when the scan
+data under it is thin or stale. Check the numbers before you spend on them.
+
 Five or six cards, in sentences, saying what to do about all of that. The
 Analysis tab holds the evidence; this one holds the conclusions — what to make
 and what it earns, which reagent your shopping bill actually is, who is holding
