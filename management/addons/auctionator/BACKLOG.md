@@ -1157,3 +1157,105 @@ asserted as such).
 `luac5.1 -p` clean; XML parses; all eleven suites pass. **Not verified in game** — and `/atrbound`
 is the first thing to run there, because anything still leaking is a string nobody has seen yet and
 that dump names it.
+
+---
+
+## 15. First real /atrbound dump: three corrections — DONE
+
+**Owner ran `/atrbound` over 99 bag items, 2026-08-23** (item 14 shipped it the same day). The dump
+did its job: two of item 14's guesses were wrong and it said so, and the reported item turned out to
+need a mechanism that did not exist yet. Written up in `BATCH-POST.md` §4d.
+
+**1. Ascension redefines stock globals rather than adding new ones.** The dump prints the marker
+list actually in use, and it read `Binds to realm` and `Realm Bound` where the source expected
+`Binds to account` and `Account Bound`. So `ITEM_BIND_TO_ACCOUNT` and `ITEM_ACCOUNTBOUND` already
+covered every realm-bound item in the dump, `ITEM_BNETACCOUNTBOUND` does not exist on this client at
+all (the `add` guard swallowed it, as designed), and **item 14's claim that Realmbound "has no
+global" was wrong**. The comment saying so is corrected in place rather than deleted — the guess was
+reasonable and someone will make it again. The two literals stay as belt-and-braces: the unspaced
+spelling, which no global carries, and a hedge against a client without the redefinition.
+
+**Worth generalising: this repo cannot read Ascension's globals, only its behaviour.** Any future
+work that leans on a stock `ITEM_*` / `LOCALE_*` string should print it back before trusting it.
+
+**2. A marker now has to START a line.** The dump caught a live false positive: Personal Bank's
+flavour text, *"...You can put soulbound items into bank."*, matched. That item was bound anyway so
+the verdict was right by luck, but the same sentence on a tradeable item would have hidden it with
+no visible cause. Every genuine binding line across all 99 items is the marker and nothing else, so
+matching is anchored to the start of the trimmed line. The line-1 name skip becomes a second guard
+rather than the only one.
+
+**3. The reported item needed a second source.** Item 22523's tooltip *in the bag* is one line long
+— just its name, no bind line to match. A slot scan cannot find what the slot does not have. New
+`Atr_Sell_ItemDefIsBound(link)`: `SetHyperlink` draws the item's DEFINITION, and on 3.3.5 that
+settles it, because a bind-on-pickup item binds when looted — if it is in your bags it is bound
+whatever the slot tooltip says. **That question is cacheable by link** (it is a property of the
+item, like quality) which is the only reason it can afford to run, and it cannot false-positive on
+BoE because "Binds when equipped" is not a marker. It keeps the same rule `Atr_Sell_ItemIsGrey`
+keeps: never remember a verdict read off a tooltip that had not arrived.
+
+`/atrbound` now prints the item's own tooltip whenever the slot's said nothing, so the two sources
+can be compared. **If 22523's definition also carries no bind line, this realm does not mark it
+bound and the db page is stale** — the auction house will take it and there is nothing to fix. The
+next dump answers that without another round trip, which is the point of the command.
+
+`bound-scan-smoke.lua` grew to 48 assertions: the real Ascension strings, the real flavour-text line,
+and both tooltip sources. It gained a ~30-line tooltip stub — the one place this suite is allowed to
+grow, because the new function caches by link and that is the exact shape of every bug item 12
+describes.
+
+`luac5.1 -p` clean; all eleven suites pass. **Not verified in game.**
+
+---
+
+## 16. SELL tab: three fixes from the second in-game session — DONE
+
+**Asked (owner, 2026-08-23, with a screenshot):** *"Can you shorten both windows, there is a bit of
+overlap at the bottom with the tabs. Can you also make it if I left click or right click the item in
+the sell slot it will just empty the slot. Also can you link up the progress bar to single item
+scans, like when i just choose one to sell?"*
+
+**Built 2026-08-23.** Details in `BATCH-POST.md` §2, §3 and §5.
+
+**1. The overlap was two overlaps, and the screenshot showed both.** `Atr_ListTabs` — the
+Current/History/Ledger strip — is 250 wide anchored BOTTOMRIGHT to `Atr_HeadingsBar`'s TOPRIGHT at
+y −22, so it owns **x 361..611, y −258..−290**. The columns bottomed out at −276, eighteen pixels
+into that band *vertically*; and the two batch buttons sat at panel x 298..451, which put `Clear`
+squarely on top of `Current` *horizontally*. `ATR_SELL_BROWSER_H` 194 → 168 fixes the first; moving
+the buttons fixes the second.
+
+Worth noting which column was at fault: the **inventory** spans x −26..264 and never reaches 361, so
+it never touched the tabs — only the batch column did. Both were shortened anyway, because two
+columns side by side have to stay level; an 8px step between them would read as a bug of its own.
+
+The buttons now continue the existing action row instead of starting a second one:
+**Scan Inventory | Profit Margin | Batch Post | Clear**, each anchored to the one before it, ending
+at panel x ≈ 331 with thirty pixels clear of the tabs.
+
+**2. Clicking the sell slot empties it.** There is no "empty the sell slot" API on 3.3.5;
+`Atr_Sell_ClearSlot` does the only thing there is — `ClickAuctionSellItemButton()` on an empty
+cursor **lifts** the item out, `ClearCursor()` drops it back in the bag. Raw rather than through
+`Atr_ClickAuctionSellItemButton`, for the reason the batch driver does: the wrapper raises
+`gAtr_ClickAuctionSell` and would fire a full auction query for the item being discarded. Either
+button. Two cases keep the old path and both are still a "put something *in*": a drop from the
+cursor, and a click on an empty slot. Duration is deliberately not reset — a setting for the visit,
+not a property of the item. The XML button registers no clicks so it answered LeftButtonUp only;
+`RegisterForClicks` is added from the layout path where its other per-tab wiring already lives.
+`Atr_BP_GoClicked` now calls this instead of inlining the same lift-and-drop.
+
+**3. The progress bar shows single-item searches too.** A single sale runs the same throttled query
+a batch run makes per name, and the column sits there saying nothing through it. `Atr_BP_Ticker` now
+runs for as long as the column is **placed** rather than only during a run (`Atr_BP_Layout` starts
+it, `Atr_BP_Unplace` alone stops it — `Cancel`/`Finish` leave it going), and with no run each tick
+asks the new `Atr_Sell_SearchLabel()`.
+
+**That is a poll and the poll is the design.** A sell search starts from at least four places — a
+drop into the slot, an inventory tile, the bag right-click, `Atr_OnNewAuctionUpdate` — and gains more
+whenever someone adds a path. A list of hooks goes stale silently; asking the pane cannot. Two
+global reads every 0.25 s. `Atr_Sell_SearchLabel` returns nil for a **blank** search text as well as
+an idle pane, because `ClearSearch()` is `DoSearch("")` and `Atr_Sell_ClearSlot` runs it every time
+the slot empties. The watcher only tears the bar down if it was what put it up, so it cannot stamp
+on a batch run's own display.
+
+`luac5.1 -p` clean; all eleven suites pass. **Not verified in game** — all three are layout and
+event wiring, which is the category offline work cannot check at all.

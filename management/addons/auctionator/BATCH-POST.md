@@ -27,11 +27,13 @@ preference. They are written up in that order.
 | `Auctionator.lua`, `Atr_ResetSellExpandedLayout` | calls `Atr_BP_Unplace` |
 | `Auctionator.lua`, `Atr_SB_Item_OnClick` | right-click queues / unqueues |
 | `Auctionator.lua`, `Atr_SB_Build` | soulbound bucket, green wash on queued tiles, tail-calls `Atr_BP_Build` |
-| `Auctionator.lua`, `Atr_Sell_ItemIsGrey` / `Atr_Sell_ItemIsBound` / `Atr_Sell_TextIsBinding` | the bound classification (§4) |
+| `Auctionator.lua`, `Atr_Sell_ItemIsGrey` / `Atr_Sell_ItemIsBound` / `Atr_Sell_ItemDefIsBound` / `Atr_Sell_TextIsBinding` | the bound classification (§4) |
 | `Auctionator.lua`, `Atr_Sell_BindDump` | `/atrbound`, the tooltip diagnostic (§4c) |
+| `Auctionator.lua`, `Atr_Sell_ClearSlot` / `Atr_SellItemButton_OnClick` | click the sell slot to empty it (§5) |
+| `Auctionator.lua`, `Atr_Sell_SearchLabel` | what the sell pane is querying, for the bar (§3) |
 | `AuctionatorFinder.lua`, `Atr_Finder_CancelSearch` | calls `Atr_BP_ScanCancelled` (§3) |
 | `management/addons/auctionator/tools/batch-price-smoke.lua` | **new.** 25 assertions over the two pricing functions |
-| `management/addons/auctionator/tools/bound-scan-smoke.lua` | **new.** 32 assertions over the bind marker list |
+| `management/addons/auctionator/tools/bound-scan-smoke.lua` | **new.** 48 assertions over the bind marker list and both tooltip sources |
 
 **No new saved variable.** The queue is session-only on purpose — see §3.
 
@@ -57,12 +59,27 @@ constants in `Auctionator.lua` now split it, and they are the only place the spl
 
 ```
 ATR_SELL_BROWSER_Y = -82     top edge of BOTH columns
-ATR_SELL_BROWSER_H = 194     height of BOTH columns
+ATR_SELL_BROWSER_H = 168     height of BOTH columns   (194 until 2026-08-23)
 ATR_SELL_INV_X = -26         inventory left   -> right edge 264
 ATR_SELL_INV_W = 290
 ATR_SELL_BP_X  = 298         batch left       -> right edge 574
 ATR_SELL_BP_W  = 276
 ```
+
+**The height came down from 194 on 2026-08-23** (owner's report, with a screenshot: *"shorten both
+windows, there is a bit of overlap at the bottom with the tabs"*). The tabs are `Atr_ListTabs`, the
+Current/History/Ledger strip: 250 wide, anchored BOTTOMRIGHT to `Atr_HeadingsBar`'s TOPRIGHT at
+y −22, which with the bar at `ATR_SELL_HB_Y` puts it at
+
+```
+x 361..611,   y -258..-290
+```
+
+At 194 the columns bottomed out at −276 — eighteen pixels into that band. Note which column was
+actually at fault: the **inventory** spans x −26..264 and never reaches 361, so it never touched the
+tabs. Only the batch column (298..574) did. Both were shortened regardless, because two columns
+side by side have to stay level — an 8px step between them would read as a bug of its own. 168 puts
+the bottom at −250, eight pixels clear.
 
 **The 34px gap between the two is not padding.** A `UIPanelScrollFrameTemplate` anchors its scroll
 bar to its own TOPRIGHT at +6 with a width of 16, so the bar lives *outside* the width you set,
@@ -76,12 +93,22 @@ row; the list inside it lines up with the inventory to the pixel, and both botto
 `Atr_SB_Build` computes its tile columns from `Atr_SellBrowser:GetWidth()`, so halving the width
 re-flows the inventory with no further change: 18 tile columns became 8.
 
-**The two buttons ride `Atr_HeadingsBar`, not the panel.** That is the same trick `Scan Inventory`
-already uses and for the same reason — the headings-bar divider is drawn *over* anything sitting
-at the inventory's bottom edge, so a button anchored there is buried. They sit on the divider at
-`ATR_SELL_SCANBTN_Y` with the frame level raised by 5, offset to the batch column's left edge
-(`x - 6`, because the headings bar starts at panel x 6). The list itself deliberately stays at the
-default level, *under* the divider, which is what the inventory does.
+**The two buttons ride `Atr_SB_ProfitMargin`, continuing the row that starts with `Scan Inventory`.**
+They are not children of the batch column and are not anchored to it. Two reasons, and the second
+one was a bug:
+
+- The headings-bar divider is drawn *over* anything sitting at a column's bottom edge, so a button
+  anchored there is buried. `Scan Inventory` already solved that by sitting **on** the divider with
+  its frame level raised by 5; these do the same.
+- They used to be placed at the batch column's own left edge, panel x 298..451 — and `Atr_ListTabs`
+  owns x 361..611, so `Clear` sat squarely on top of `Current` (owner's screenshot, 2026-08-23).
+  Shortening the columns fixed the vertical half of that overlap; moving the buttons fixes the
+  horizontal half.
+
+The row now reads **Scan Inventory | Profit Margin | Batch Post | Clear** — every action this tab
+has, in one line, ending at panel x ≈ 331 with thirty pixels to spare before the tabs. Each button
+is anchored to the one before it, so the row stays true if any of them is moved or resized. The
+lists themselves deliberately stay at the default frame level, *under* the divider.
 
 Nothing here calls `SetToplevel` or `Raise` (`DRAG-FREEZE.md`).
 
@@ -165,6 +192,27 @@ the query runs, driven off the driver's own tick counter, capped short of the it
 it can never run ahead of what actually happened. Without that the bar would freeze at precisely
 the moments the run is doing the most work. The label alternates between
 `Scanning <item>  (n/total)` and `Posting  n/total`.
+
+**It also shows ordinary single-item searches** (owner's request, 2026-08-23: *"link up the progress
+bar to single item scans, like when i just choose one to sell"*). Dropping one item in the sell box
+makes the pane run exactly the same throttled query a batch run makes per name, and the column is
+sitting right there saying nothing for the length of it.
+
+So `Atr_BP_Ticker` runs for as long as the column is **placed**, not only during a run — `Atr_BP_Layout`
+starts it and `Atr_BP_Unplace` is the only thing that stops it; `Atr_BP_Cancel` and `Atr_BP_Finish`
+deliberately leave it going. With no run, each tick calls `Atr_BP_WatchSellScan`, which asks
+`Atr_Sell_SearchLabel()` (in `Auctionator.lua`) what the sell pane is querying for.
+
+**That is a poll, and the poll is the design rather than laziness.** A sell search starts from at
+least four places — a drop into the slot, a tile in the inventory browser, the bag right-click,
+`Atr_OnNewAuctionUpdate` — and gains more whenever someone adds a path. A list of hooks goes stale
+silently; asking the pane what it is doing cannot. It costs two global reads every 0.25 s.
+
+`Atr_Sell_SearchLabel` returns nil for a **blank** search text as well as for an idle pane, because
+`AtrPane:ClearSearch()` is `DoSearch("")` — a real search object with no name, which
+`Atr_Sell_ClearSlot` runs every time the slot is emptied. That is not something to report as
+scanning. The watcher only tears the bar down if it was the thing that put it up, so it can never
+stamp on a run's own display.
 
 ### The driver is a ticker, not an event chain
 
@@ -330,6 +378,67 @@ most gear worth selling. A looser test — anything containing "bound", say — 
 of exactly the items it exists for, silently, and only for the player whose bags hold them.
 `bound-scan-smoke.lua` asserts both negatives; they are the reason it exists.
 
+### 4d. What the first real `/atrbound` dump changed
+
+The owner ran it over 99 bag items on 2026-08-23. Three things came back, and two of them were
+corrections to guesses made above.
+
+**Ascension redefines stock globals rather than adding new ones.** The dump prints the marker list
+it is actually using, and that list read:
+
+```
+Soulbound | Binds when picked up | Quest Item | Binds to realm | Realm Bound | Realmbound | Realm Bound
+```
+
+So on this client `ITEM_BIND_TO_ACCOUNT` is **"Binds to realm"** and `ITEM_ACCOUNTBOUND` is
+**"Realm Bound"** — and `ITEM_BNETACCOUNTBOUND` does not exist at all, which the `add` guard
+swallowed silently, as designed. The claim in §4b that Realmbound "has no global at all" was
+**wrong**: reading the two account globals already covered every realm-bound item in the dump
+(scourgestones, Realm Bank, Personal Bank). The two literals are kept as belt-and-braces — the
+unspaced spelling, which no global carries, and a hedge against a client without the redefinition —
+and the comment in the source now says so. `bound-scan-smoke.lua` uses the **real** strings, because
+a test against the stock ones would pass while the addon failed on the only realm it runs on.
+
+**A marker now has to START a line.** The dump caught this:
+
+```
+[2:6] Personal Bank   ->   BOUND - bottom bucket
+     2L  Realm Bound                                          <== MATCHED
+     4L  "...You can put soulbound items into bank."          <== MATCHED
+```
+
+Line 4 is *flavour text*. That item was bound anyway, so the verdict was right by luck — but the
+same sentence on a tradeable item would have hidden it from the browser with no way for the seller
+to see why. Every genuine binding line across all 99 items is the marker and nothing else, so
+matching is anchored to the start of the trimmed line. That also demotes the line-1 name skip from
+the only guard to a second one.
+
+**And the reported item needed a second source entirely.** Item 22523's tooltip *in the bag* is one
+line long:
+
+```
+[0:6] Insignia of the Dawn   ->   sellable
+     1L  Insignia of the Dawn
+```
+
+No bind line to match — a slot scan cannot find what the slot does not have. So there is now a
+second question, and it is a different one: not *"is the copy in this slot bound"* but *"does this
+ITEM bind on pickup at all"*. `Atr_Sell_ItemDefIsBound(link)` answers it with `SetHyperlink`, which
+draws the item's definition with no ownership context. On 3.3.5 that settles it — a bind-on-pickup
+item binds when it is looted, so if it is in your bags it is bound whatever its slot tooltip says.
+
+**That one *is* cacheable by link**, which is the only reason it can afford to run: it is a property
+of the item, exactly as quality is, unlike the slot scan whose entire bug history (§4a) is people
+caching it this way. One lookup per distinct item per session. It cannot false-positive on what
+matters either — a definition tooltip says "Binds when equipped" for BoE gear, which is not a
+marker. The one rule it must keep is the same one `Atr_Sell_ItemIsGrey` keeps: **never remember a
+verdict read off a tooltip that had not arrived**, or the item stays in the selling categories until
+a reload.
+
+If item 22523's *definition* tooltip also carries no bind line, then this realm does not mark it
+bound, the database page is stale, and the auction house will take it — the next dump says which,
+because `/atrbound` now prints the item's own tooltip whenever the slot's had nothing to say.
+
 ### 4c. `/atrbound` — reading the tooltips this repo cannot see
 
 An in-game diagnostic is the last resort here, and the reason is stated at the call site: **a custom
@@ -345,9 +454,12 @@ not another round trip.
 
 It prints, per bag slot: the item, the verdict the browser will give it
 (`sellable` / `BOUND - bottom bucket` / `GREY - hidden entirely`), every tooltip line in both
-columns, and `<== MATCHED` against whichever line made it bound. It ends with the marker list
-itself. So an item that says `sellable` but should not shows the line that ought to have matched,
-sitting right there next to a list that does not contain it.
+columns, and `<== MATCHED` against whichever line made it bound. When the slot's tooltip said
+nothing it then prints the **item's own** tooltip (`SetHyperlink`) under a `def` prefix, since a
+disagreement between those two is the whole answer. It ends with the marker list itself. So an item
+that says `sellable` but should not shows the line that ought to have matched, sitting right there
+next to a list that does not contain it — and if neither tooltip carries such a line, that is the
+answer too: this realm does not mark that item bound.
 
 **Output goes to the copy/paste box** (`Atr_An_ShowDebugBox`, reused rather than rebuilt), never to
 chat — chat text cannot be selected on this client, so a printed diagnostic can only come back as a
@@ -366,6 +478,7 @@ the predicate rather than one of the several bind kinds under it. The tile field
 
 | gesture | what happens |
 |---|---|
+| **left OR right click the item in the sell slot** | empties the slot, item back to the bag |
 | left-click an inventory tile | unchanged — loads the item into the sell slot |
 | **right-click an inventory tile** | queues it into Batch Post |
 | right-click a queued tile again | takes it back out |
@@ -377,6 +490,23 @@ the predicate rather than one of the several bind kinds under it. The tile field
 Right-click inside the browser used to be a second copy of the left click, so **no behaviour was
 lost.** Right-click in the *actual bags* (`Atr_ContainerFrameItemButton_OnClick`) is untouched and
 still loads to the sell slot.
+
+**Clicking the sell slot empties it** (owner's request, 2026-08-23), on either button. There is no
+"empty the sell slot" API on 3.3.5, so `Atr_Sell_ClearSlot` does the only thing there is:
+`ClickAuctionSellItemButton()` with an empty cursor **lifts** the slot's item onto the cursor, and
+`ClearCursor()` drops it back where it came from. It calls that raw rather than through
+`Atr_ClickAuctionSellItemButton`, for the reason the batch driver does — the wrapper raises
+`gAtr_ClickAuctionSell`, which would send `Atr_OnNewAuctionUpdate` into a full auction query for the
+item being thrown away.
+
+Two cases keep the old path, and both are still a "put something *in*": dropping an item already on
+the cursor, and clicking an **empty** slot. The duration is deliberately not reset — it is a setting
+the seller chose for this visit, not a property of the item that just left. The XML button registers
+no clicks, so it answered LeftButtonUp only; `RegisterForClicks` is added from the layout path,
+where the rest of this button's per-tab wiring already lives.
+
+`Atr_BP_GoClicked` uses the same function to clear a stray item before a run, rather than inlining
+the lift-and-drop a second time.
 
 A queued tile gets a green wash. Without it, a right-click that queued something and one that did
 nothing look identical, and the queue is off in the other column.
@@ -398,14 +528,17 @@ frames, no engine, no post. It must not grow past that. All 25 passed first run.
 
 `bound-scan-smoke.lua` is also new. It loads the **real** `Auctionator.lua` — that file runs under
 bare lua5.1 with only `time` and `date` stubbed — so it drives the actual matcher rather than a
-transcription of the marker list, which would be worth nothing. 32 assertions; one failed on the
-first run and it was the test's own fault (it reused a link the grey cache had already judged,
-which is correct behaviour and is now asserted as such).
+transcription of the marker list, which would be worth nothing. 48 assertions, including the real
+strings and the real flavour-text line from the owner's dump. It carries a ~30-line tooltip stub,
+the one place this suite is allowed to grow: `Atr_Sell_ItemDefIsBound` caches **by link**, which is
+the exact shape of every bug §4a describes, and the rule that makes it safe there needs pinning.
 
 **Nothing here is verified in game.** The parts most worth a look on first run, in order:
 
-1. **`/atrbound` first, before anything else.** If a bound item still reads `sellable`, its block
-   in that dump contains the line that should have matched, and adding it is a one-line change.
+1. **`/atrbound insignia` first.** It now prints the item's *own* tooltip when the slot's says
+   nothing. If that shows `Binds when picked up`, the fix above catches it; if it shows nothing
+   either, this realm does not mark item 22523 bound and the database page is stale — in which case
+   the auction house will take it and there is nothing to fix.
 2. Does a run actually advance — scan comes back, item posts, next scan starts? That chain is the
    whole feature and it is the one thing offline work cannot check.
 3. Does the progress bar creep during a scan rather than only between items, and does the title

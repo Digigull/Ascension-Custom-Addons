@@ -1717,7 +1717,70 @@ end
 
 -----------------------------------------
 
+-- Take whatever is in the auction sell slot back out and put the pane back to
+-- its empty state.  Returns true if there was something to remove.
+function Atr_Sell_ClearSlot ()
+
+	if (type (ClickAuctionSellItemButton) ~= "function") then return false; end
+
+	local name = GetAuctionSellItemInfo and GetAuctionSellItemInfo();
+	if (name == nil or name == "") then return false; end
+
+	-- ClickAuctionSellItemButton with an empty cursor LIFTS the slot's item onto
+	-- the cursor; ClearCursor then drops it back where it came from.  There is no
+	-- "empty the sell slot" API on 3.3.5 -- this pair is it.
+	--
+	-- Raw, not Atr_ClickAuctionSellItemButton: the wrapper raises
+	-- gAtr_ClickAuctionSell, which sends Atr_OnNewAuctionUpdate into
+	-- gSellPane:DoSearch -- a full auction query for the item we are in the
+	-- middle of throwing away.  Same reason the batch driver calls it raw.
+	ClearCursor();
+	ClickAuctionSellItemButton();
+	ClearCursor();
+
+	-- The icon clears itself: emptying the slot fires NEW_AUCTION_UPDATE and
+	-- Atr_SellItemButton_OnEvent sets the normal texture from what is in it,
+	-- which is now nothing.  Everything else has to be told.
+	Atr_ClearAll();
+
+	if (MoneyInputFrame_SetCopper) then
+		if (Atr_StackPrice)		then MoneyInputFrame_SetCopper (Atr_StackPrice, 0);		end
+		if (Atr_ItemPrice)		then MoneyInputFrame_SetCopper (Atr_ItemPrice, 0);		end
+		if (Atr_StartingPrice)	then MoneyInputFrame_SetCopper (Atr_StartingPrice, 0);	end
+	end
+
+	-- The duration is deliberately NOT reset.  It is a setting the seller chose
+	-- for this visit, not a property of the item that just left the slot.
+	gJustPosted_ItemName = nil;
+
+	if (gSellPane and gSellPane.ClearSearch) then gSellPane:ClearSearch(); end
+	if (gSellPane) then gSellPane.UINeedsUpdate = true; end
+
+	Atr_UpdateUI();
+
+	return true;
+end
+
+-----------------------------------------
+
 function Atr_SellItemButton_OnClick (self, button, ...)
+
+	-- A CLICK ON A FULL SLOT EMPTIES IT (owner's request, 2026-08-23: "make it
+	-- if I left click or right click the item in the sell slot it will just
+	-- empty the slot").  Either button, because the request says either and
+	-- because there is nothing else a click on an occupied slot could usefully
+	-- mean -- the old behaviour picked the item up onto the cursor and left it
+	-- there, which is a state you then have to get out of.
+	--
+	-- Two cases keep the old path, and both are still a "put something IN":
+	-- dropping an item that is already on the cursor, and clicking an empty
+	-- slot (which is how the Blizzard flow starts a sale from an open bag).
+	if (GetCursorInfo and GetCursorInfo() == "item") then
+		Atr_ClickAuctionSellItemButton (self, button);
+		return;
+	end
+
+	if (Atr_Sell_ClearSlot()) then return; end
 
 	Atr_ClickAuctionSellItemButton (self, button);
 end
@@ -2003,9 +2066,21 @@ local function Atr_Sell_BindMarkers()
     add (ITEM_ACCOUNTBOUND);        -- "Account Bound"
     add (ITEM_BNETACCOUNTBOUND);    -- "Binds to Battle.net account"
 
-    -- Ascension's own.  No global exists to read these from, so they are
-    -- literals and they are enUS-only -- which is the cost of a custom status
-    -- and is why /atrbound prints this list back.
+    -- CORRECTED 2026-08-23 from a real /atrbound dump, which is exactly what
+    -- that command is for.  The guess above this was that "Realmbound" had no
+    -- global.  It has one -- Ascension REDEFINES two stock globals rather than
+    -- adding any, and on the owner's client they read:
+    --
+    --     ITEM_BIND_TO_ACCOUNT  =  "Binds to realm"      (not "Binds to account")
+    --     ITEM_ACCOUNTBOUND     =  "Realm Bound"         (not "Account Bound")
+    --
+    -- So the two adds above already covered every realm-bound item in the dump,
+    -- and ITEM_BNETACCOUNTBOUND does not exist here at all -- which the `add`
+    -- guard handled silently, as intended.
+    --
+    -- These two literals are kept anyway and are now belt-and-braces: the
+    -- unspaced spelling, which no global carries, and a hedge against a client
+    -- where the redefinition has not been made.  They cost one string compare.
     add ("Realmbound");
     add ("Realm Bound");
 
@@ -2020,21 +2095,116 @@ function Atr_Sell_TextIsBinding (text)
 
     if (type (text) ~= "string" or text == "") then return false; end
 
-    local lower   = string.lower (text);
+    -- THE MARKER MUST START THE LINE.  It used to be allowed anywhere in it,
+    -- and a real /atrbound dump showed what that costs (2026-08-23):
+    --
+    --   [2:6] Personal Bank
+    --        2L  Realm Bound                                   <== MATCHED
+    --        4L  "...You can put soulbound items into bank."   <== MATCHED
+    --
+    -- Line 4 is FLAVOUR TEXT.  That item happened to be bound anyway, so the
+    -- verdict was right by luck -- but the same sentence on a freely tradeable
+    -- item would have hidden it from the browser, and a seller cannot see why.
+    --
+    -- Every genuine binding line in that dump of 99 items is the marker and
+    -- nothing else: "Soulbound", "Realm Bound", "Quest Item", "Binds when
+    -- picked up".  Anchoring to the start of the line kills prose that merely
+    -- mentions one, while still tolerating a suffix if the server ever adds
+    -- one.  It also makes the line-1 name skip in the caller belt-and-braces
+    -- rather than the only guard.
+    local line = string.lower ((string.gsub (text, "^%s*(.-)%s*$", "%1")));
+
     local markers = Atr_Sell_BindMarkers();
 
     for i = 1, #markers do
-        if (string.find (lower, markers[i], 1, true)) then return true; end
+        local m = markers[i];
+        if (string.sub (line, 1, string.len (m)) == m) then return true; end
     end
 
     return false;
 end
 
--- Soulbound / bind-on-pickup / quest-bound / account-bound / realmbound, read
--- off the tooltip for ONE bag slot.  Never cache this by link -- see the block
--- comment further up.
-function Atr_Sell_ItemIsBound(bag, slot)
-    if (not AtrScanningTooltip or not AtrScanningTooltip.SetBagItem) then return false; end
+-----------------------------------------
+-- The second source: what the ITEM says, not what the slot says
+--
+-- From the same /atrbound dump (2026-08-23).  The owner named item 22523 as
+-- bind-on-pickup and db.ascension.gg agrees; its tooltip IN THE BAG is one
+-- line long:
+--
+--     [0:6] Insignia of the Dawn   ->   sellable
+--          1L  Insignia of the Dawn
+--
+-- No "Soulbound", no "Binds when picked up", nothing to match.  A slot scan
+-- cannot find a line the slot does not have.
+--
+-- So there is a second question to ask, and it is a different one: not "is the
+-- copy in this slot bound" but "does this ITEM bind on pickup at all".
+-- SetHyperlink answers that -- it draws the item's definition, with no
+-- ownership context -- and on 3.3.5 the answer settles it, because a
+-- bind-on-pickup item binds the moment it is looted.  If it is in your bags it
+-- is bound, whatever its tooltip in that slot does or does not say.
+--
+-- AND THIS ONE *IS* CACHEABLE BY LINK, which is the whole reason it can afford
+-- to run at all.  It is a property of the item, exactly as quality is -- unlike
+-- the slot scan, whose entire bug history is people caching it this way.  One
+-- lookup per distinct item per session.
+--
+-- It cannot produce a false positive on the items that matter: a definition
+-- tooltip says "Binds when equipped" for BoE gear, which is deliberately not a
+-- marker.  The only lines it can match are ones that mean the auction house
+-- will refuse the item.
+-----------------------------------------
+
+local itemDefBindCache = {};
+
+function Atr_Sell_ItemDefIsBound (link)
+
+    if (type (link) ~= "string" or link == "") then return false; end
+    if (itemDefBindCache[link] ~= nil) then return itemDefBindCache[link]; end
+    if (not AtrScanningTooltip or not AtrScanningTooltip.SetHyperlink) then return false; end
+
+    AtrScanningTooltip:ClearLines();
+    AtrScanningTooltip:SetHyperlink (link);
+
+    -- An item the client has not cached draws as RETRIEVING_ITEM_INFO, or as
+    -- nothing at all.  Answering "not bound" off that is fine; REMEMBERING it
+    -- is not -- it would stick for the session and the item would stay in the
+    -- selling categories until a reload.  Same rule as Atr_Sell_ItemIsGrey.
+    local first = _G["AtrScanningTooltipTextLeft1"];
+    local firstText = first and first:GetText();
+
+    if (firstText == nil or firstText == ""
+        or (RETRIEVING_ITEM_INFO and firstText == RETRIEVING_ITEM_INFO)) then
+        return false;
+    end
+
+    local num = AtrScanningTooltip:NumLines() or 0;
+
+    for i = 2, num do
+        local l = _G["AtrScanningTooltipTextLeft"..i];
+        local r = _G["AtrScanningTooltipTextRight"..i];
+        if (Atr_Sell_TextIsBinding (l and l:GetText())
+            or Atr_Sell_TextIsBinding (r and r:GetText())) then
+            itemDefBindCache[link] = true;
+            return true;
+        end
+    end
+
+    itemDefBindCache[link] = false;
+    return false;
+end
+
+-- Soulbound / bind-on-pickup / quest-bound / account-bound / realmbound.
+--
+-- Two sources, asked in this order: the tooltip of THIS BAG SLOT (per slot,
+-- never cached -- see the block comment further up), then the tooltip of the
+-- ITEM ITSELF (per link, cached -- see the block immediately above).  The first
+-- catches a copy that is bound; the second catches an item that binds on pickup
+-- but whose slot tooltip does not say so.
+function Atr_Sell_ItemIsBound(bag, slot, link)
+    if (not AtrScanningTooltip or not AtrScanningTooltip.SetBagItem) then
+        return Atr_Sell_ItemDefIsBound (link);
+    end
 
     AtrScanningTooltip:ClearLines();
     AtrScanningTooltip:SetBagItem(bag, slot);
@@ -2059,7 +2229,40 @@ function Atr_Sell_ItemIsBound(bag, slot)
         if (Atr_Sell_TextIsBinding (r and r:GetText())) then return true; end
     end
 
-    return false;
+    -- Nothing in the slot's tooltip. Ask the item.
+    return Atr_Sell_ItemDefIsBound (link);
+end
+
+-- What the SELL pane is querying the auction house for right now, or nil when
+-- it is idle.
+--
+-- Published for the Batch Post column's progress bar (owner's request,
+-- 2026-08-23: "link up the progress bar to single item scans, like when i just
+-- choose one to sell").  That bar already existed for batch runs; a single-item
+-- search is the same wait for the same reason -- one throttled query -- and the
+-- column is sitting right there with nothing to say during it.
+--
+-- A POLL rather than a hook, deliberately.  A sell search starts from at least
+-- four places (a drop into the slot, a tile in the inventory browser, the bag
+-- right-click, Atr_OnNewAuctionUpdate) and gains more whenever someone adds a
+-- path; hooking each is a list that goes stale silently.  Asking the pane what
+-- it is doing cannot.
+function Atr_Sell_SearchLabel ()
+
+	if (gSellPane == nil) then return nil; end
+	if (not Atr_IsTabSelected or not Atr_IsTabSelected (SELL_TAB)) then return nil; end
+	if (gSellPane.GetProcessingState == nil) then return nil; end
+	if (gSellPane:GetProcessingState() == KM_NULL_STATE) then return nil; end
+
+	local search = gSellPane.activeSearch;
+	local label  = search and search.searchText;
+
+	-- AtrPane:ClearSearch is DoSearch("") -- a real search object with a blank
+	-- name, which Atr_Sell_ClearSlot runs every time the slot is emptied.  It is
+	-- not something to report as scanning.
+	if (label == nil or label == "") then return nil; end
+
+	return label;
 end
 
 -----------------------------------------
@@ -2110,7 +2313,7 @@ function Atr_Sell_BindDump (filter)
             if (name and (filter == nil or string.find (string.lower (name), filter, 1, true))) then
 
                 local isGrey  = Atr_Sell_ItemIsGrey (link, nil);
-                local isBound = (not isGrey) and Atr_Sell_ItemIsBound (bag, slot);
+                local isBound = (not isGrey) and Atr_Sell_ItemIsBound (bag, slot, link);
 
                 local verdict = "sellable";
                 if (isGrey) then
@@ -2122,10 +2325,11 @@ function Atr_Sell_BindDump (filter)
 
                 put (string.format ("[%d:%d] %s   ->   %s", bag, slot, name, verdict));
 
-                if (AtrScanningTooltip and AtrScanningTooltip.SetBagItem) then
-                    AtrScanningTooltip:ClearLines();
-                    AtrScanningTooltip:SetBagItem (bag, slot);
-
+                -- Dump one tooltip, marking every line the matcher would take.
+                -- `prefix` labels which of the two sources it came from, because
+                -- when they disagree that is the whole answer.
+                local function dumpTip (prefix)
+                    local slotMatched = false;
                     for i = 1, (AtrScanningTooltip:NumLines() or 0) do
                         local l = _G["AtrScanningTooltipTextLeft"..i];
                         local r = _G["AtrScanningTooltipTextRight"..i];
@@ -2135,14 +2339,36 @@ function Atr_Sell_BindDump (filter)
                         -- i > 1 mirrors the real scan: line 1 is the name and is
                         -- never tested, so it must never be marked as matching.
                         if (lt and lt ~= "") then
-                            put (string.format ("    %2dL  %s%s", i, lt,
-                                 (i > 1 and Atr_Sell_TextIsBinding (lt)) and "   <== MATCHED" or ""));
+                            local hit = (i > 1 and Atr_Sell_TextIsBinding (lt));
+                            slotMatched = slotMatched or hit;
+                            put (string.format ("  %s%2dL  %s%s", prefix, i, lt, hit and "   <== MATCHED" or ""));
                         end
                         if (rt and rt ~= "") then
-                            put (string.format ("    %2dR  %s%s", i, rt,
-                                 (i > 1 and Atr_Sell_TextIsBinding (rt)) and "   <== MATCHED" or ""));
+                            local hit = (i > 1 and Atr_Sell_TextIsBinding (rt));
+                            slotMatched = slotMatched or hit;
+                            put (string.format ("  %s%2dR  %s%s", prefix, i, rt, hit and "   <== MATCHED" or ""));
                         end
                     end
+                    return slotMatched;
+                end
+
+                local slotSaidSo = false;
+
+                if (AtrScanningTooltip and AtrScanningTooltip.SetBagItem) then
+                    AtrScanningTooltip:ClearLines();
+                    AtrScanningTooltip:SetBagItem (bag, slot);
+                    slotSaidSo = dumpTip ("  ");
+                end
+
+                -- The ITEM's own tooltip, shown only when the SLOT's had nothing
+                -- to say -- which is the case that sent item 22523 to the
+                -- selling categories.  Printing it always would double the
+                -- length of the dump for no new information.
+                if (not slotSaidSo and AtrScanningTooltip and AtrScanningTooltip.SetHyperlink) then
+                    AtrScanningTooltip:ClearLines();
+                    AtrScanningTooltip:SetHyperlink (link);
+                    put ("    -- the item's own tooltip (SetHyperlink), since the slot's said nothing:");
+                    dumpTip ("def ");
                 end
 
                 put ("");
@@ -2157,8 +2383,14 @@ function Atr_Sell_BindDump (filter)
     put ("Markers checked (case-insensitive, matched anywhere from line 2 on):");
     put ("    " .. table.concat (markers, "  |  "));
     put ("");
+    put ("A marker has to START a line (after trimming), not merely appear in it,");
+    put ("so prose that happens to mention one does not count.");
+    put ("");
     put ("If something above says 'sellable' but should not be, the line that");
-    put ("should have matched is in its block and is not on the marker list.");
+    put ("should have matched is in its block -- in EITHER tooltip -- and is not");
+    put ("on the marker list above.  If neither tooltip carries such a line at");
+    put ("all, then this realm does not mark that item as bound and the auction");
+    put ("house will take it.");
 
     if (type (Atr_An_ShowDebugBox) == "function") then
         Atr_An_ShowDebugBox ("Auctionator bind scan  --  already selected, press Ctrl+C to copy",
@@ -2189,7 +2421,7 @@ function Atr_IsItemSellableOnAH(bag, slot, link, quality)
     -- never needs it.  Grey is not "bound", it is "not worth showing".
     if (Atr_Sell_ItemIsGrey(link, quality)) then return false, false; end
 
-    local bound = Atr_Sell_ItemIsBound(bag, slot);
+    local bound = Atr_Sell_ItemIsBound(bag, slot, link);
     return (not bound), bound;
 end
 
@@ -2916,7 +3148,24 @@ ATR_SELL_LIST_H = 74;       -- results scroll height; 4 rows at 16px
 -- These six are the only place the split is decided.  Both columns and the
 -- batch column's two buttons measure off them.
 ATR_SELL_BROWSER_Y = -82;   -- top edge of both columns, panel-relative
-ATR_SELL_BROWSER_H = 194;   -- height of both columns
+ATR_SELL_BROWSER_H = 168;   -- height of both columns
+                            --
+                            -- 194 until 2026-08-23, which put the bottom edge
+                            -- at -276 and overlapped the Current/History/Ledger
+                            -- strip (owner's report, with a screenshot).  That
+                            -- strip is Atr_ListTabs: 250 wide, anchored
+                            -- BOTTOMRIGHT to Atr_HeadingsBar's TOPRIGHT at
+                            -- y -22, so with the bar at ATR_SELL_HB_Y it owns
+                            --
+                            --     x 361..611,  y -258..-290
+                            --
+                            -- The INVENTORY never reached that x range and was
+                            -- never the problem; the batch column (298..574) is
+                            -- most of the way across it.  Both are shortened
+                            -- anyway, because two columns side by side have to
+                            -- stay level -- an 8px step between them would read
+                            -- as a bug of its own.  168 puts the bottom at -250,
+                            -- eight pixels clear.
 ATR_SELL_INV_X = -26;
 ATR_SELL_INV_W = 290;
 ATR_SELL_BP_X  = 298;       -- inventory right edge is 264; its bar reaches 286
@@ -3229,6 +3478,15 @@ function Atr_ApplySellExpandedLayout()
         -- An empty box shows nothing -- Atr_ShowRecTooltip has no link to open.
         Atr_SellControls_Tex:SetScript ("OnEnter", function () Atr_ShowRecTooltip(); end);
         Atr_SellControls_Tex:SetScript ("OnLeave", function () Atr_HideRecTooltip(); end);
+
+        -- The XML button registers no clicks, so it answers LeftButtonUp only.
+        -- Emptying the slot is bound to either button (Atr_SellItemButton_OnClick),
+        -- so the right one has to be turned on.  Here rather than in the XML for
+        -- the same reason as the two scripts above: this button is shared with
+        -- the panel's other tabs.
+        if (Atr_SellControls_Tex.RegisterForClicks) then
+            Atr_SellControls_Tex:RegisterForClicks ("LeftButtonUp", "RightButtonUp");
+        end
     end
 
     -- The Ignore button sits at the far left of the column, tucked against the

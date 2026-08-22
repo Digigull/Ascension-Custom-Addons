@@ -123,6 +123,11 @@ local gRun = nil;
 
 local gRowPool = {};		-- recycled queue rows; frames cannot be destroyed
 
+-- The single-item scan the bar is currently showing, and how long it has been
+-- showing it.  Nothing to do with gRun -- see Atr_BP_WatchSellScan.
+local gWatchLabel = nil;
+local gWatchWait  = 0;
+
 -----------------------------------------------------------------------------
 -- Small shared helpers
 -----------------------------------------------------------------------------
@@ -213,6 +218,53 @@ local function Atr_BP_PaintProgress ()
 	end
 
 	Atr_BP_ShowProgress (done / total, label);
+end
+
+-- THE BAR ALSO SHOWS ORDINARY SINGLE-ITEM SEARCHES (owner's request,
+-- 2026-08-23: "link up the progress bar to single item scans, like when i just
+-- choose one to sell").
+--
+-- Dropping one item in the sell box makes the pane run exactly the same
+-- throttled query a batch run makes per name, and the column is sitting right
+-- there saying nothing for the length of it.  So the ticker runs for as long as
+-- the column is placed, not only during a run, and when there is no run it asks
+-- the sell pane what it is doing.
+--
+-- Atr_Sell_SearchLabel is a POLL, and that is the design rather than laziness:
+-- a sell search starts from at least four places and gains more whenever
+-- somebody adds a path, so a list of hooks goes stale silently where asking
+-- cannot.  See its comment in Auctionator.lua.
+--
+-- The fill creeps off the tick counter exactly as the batch's own scan fill
+-- does, and for the same reason: the client will not say how many pages are
+-- coming, and a bar frozen at zero for six seconds reads as a hang.
+local function Atr_BP_WatchSellScan (dt)
+
+	local label = (Atr_BP_Panel and Atr_BP_Panel:IsShown() and Atr_Sell_SearchLabel)
+	              and Atr_Sell_SearchLabel() or nil;
+
+	if (label == nil) then
+		-- Only tear down if WE put something up; the bar is shared with the run.
+		if (gWatchLabel) then
+			gWatchLabel = nil;
+			gWatchWait  = 0;
+			Atr_BP_HideProgress();
+			Atr_BP_Build();			-- the title text under it may be stale
+		end
+		return;
+	end
+
+	if (gWatchLabel ~= label) then
+		gWatchLabel = label;
+		gWatchWait  = 0;
+	end
+
+	gWatchWait = gWatchWait + dt;
+
+	local part = gWatchWait / ATR_BP_SCAN_EXPECT;
+	if (part > 0.95) then part = 0.95; end
+
+	Atr_BP_ShowProgress (part, "Scanning " .. label .. "...");
 end
 
 -- Atr_CalcUndercutPrice bottoms out at 0 for a 1c item, and a zero buyout is
@@ -608,9 +660,14 @@ function Atr_BP_Ensure ()
 
 	Atr_BP_LabelEnsure ("Atr_BP_InvLabel", "Inventory");
 
-	-- The driver's clock.  Parented to UIParent, not to the panel: hiding the
-	-- panel (a tab switch mid-run) must reach Atr_BP_Cancel's bookkeeping, and
-	-- an OnUpdate on a hidden frame never fires.
+	-- The clock.  It drives two things and runs for as long as the column is
+	-- placed, not only during a run -- the second of them is the whole reason
+	-- for that: with no run going it watches for an ordinary single-item sell
+	-- search and puts that on the same bar.
+	--
+	-- Parented to UIParent, not to the panel: hiding the panel (a tab switch
+	-- mid-run) must reach Atr_BP_Cancel's bookkeeping, and an OnUpdate on a
+	-- hidden frame never fires.  Atr_BP_Unplace is what stops it.
 	local tick = CreateFrame ("Frame", "Atr_BP_Ticker", UIParent);
 	tick:Hide();
 	tick.elapsed = 0;
@@ -618,7 +675,11 @@ function Atr_BP_Ensure ()
 		self.elapsed = self.elapsed + (e or 0);
 		if (self.elapsed < ATR_BP_TICK) then return; end
 		self.elapsed = 0;
-		Atr_BP_Step();
+		if (gRun) then
+			Atr_BP_Step();
+		else
+			Atr_BP_WatchSellScan (ATR_BP_TICK);
+		end
 	end);
 
 	return p;
@@ -657,15 +718,42 @@ function Atr_BP_Layout (x, y, w, h, labelX, labelY, labelW)
 		Atr_BP_InvLabel:Show();
 	end
 
-	-- Buttons: same row and the same raised level as Scan Inventory, offset to
-	-- the batch column's left edge.  Atr_HeadingsBar sits at panel x 6, so the
-	-- offset is the column's panel x minus that.
-	if (Atr_HeadingsBar and Atr_BP_Go) then
-		local lvl = (Atr_HeadingsBar:GetFrameLevel() or 5) + 5;
-		local dx  = x - 6;
+	-- THE BUTTONS RIDE Atr_SB_ProfitMargin, not the batch column above them.
+	--
+	-- They used to be placed at the batch column's own left edge, which put them
+	-- at panel x 298..451 -- and Atr_ListTabs, the Current/History/Ledger strip,
+	-- owns x 361..611.  Clear sat squarely on top of Current (owner's screenshot,
+	-- 2026-08-23).  Shortening the columns fixed the vertical half of that
+	-- overlap; this fixes the horizontal half.
+	--
+	-- Continuing the existing action row rather than starting a second one is
+	-- the point: the row reads Scan Inventory | Profit Margin | Batch Post |
+	-- Clear, which is every action this tab has, in one line, ending at panel
+	-- x ~331 with thirty pixels to spare before the tabs.  Anchored to the
+	-- button before them so it stays true if that one moves or is resized.
+	local anchorTo = Atr_SB_ProfitMargin or Atr_SellBrowser_Scan;
+
+	if (anchorTo and Atr_BP_Go) then
+		local lvl = ((Atr_HeadingsBar and Atr_HeadingsBar:GetFrameLevel()) or 5) + 5;
 
 		Atr_BP_Go:ClearAllPoints();
-		Atr_BP_Go:SetPoint ("TOPLEFT", Atr_HeadingsBar, "TOPLEFT", dx, ATR_SELL_SCANBTN_Y or 2);
+		Atr_BP_Go:SetPoint ("LEFT", anchorTo, "RIGHT", 12, 0);
+		Atr_BP_Go:SetFrameLevel (lvl);
+		Atr_BP_Go:Show();
+
+		Atr_BP_ClearButton:ClearAllPoints();
+		Atr_BP_ClearButton:SetPoint ("LEFT", Atr_BP_Go, "RIGHT", 8, 0);
+		Atr_BP_ClearButton:SetFrameLevel (lvl);
+		Atr_BP_ClearButton:Show();
+
+	elseif (Atr_HeadingsBar and Atr_BP_Go) then
+		-- The inventory's own buttons are not up (nothing else builds them, so
+		-- this is the never case) -- fall back to the old headings-bar offset
+		-- rather than leaving two buttons unanchored in the corner.
+		local lvl = (Atr_HeadingsBar:GetFrameLevel() or 5) + 5;
+
+		Atr_BP_Go:ClearAllPoints();
+		Atr_BP_Go:SetPoint ("TOPLEFT", Atr_HeadingsBar, "TOPLEFT", x - 6, ATR_SELL_SCANBTN_Y or 2);
 		Atr_BP_Go:SetFrameLevel (lvl);
 		Atr_BP_Go:Show();
 
@@ -677,6 +765,13 @@ function Atr_BP_Layout (x, y, w, h, labelX, labelY, labelW)
 
 	p:Show();
 
+	-- The ticker runs while the column is placed: with no batch going it is the
+	-- single-item scan watcher.  Cheap -- two global reads every 0.25s.
+	if (Atr_BP_Ticker and not Atr_BP_Ticker:IsShown()) then
+		Atr_BP_Ticker.elapsed = 0;
+		Atr_BP_Ticker:Show();
+	end
+
 	Atr_BP_Build();
 end
 
@@ -684,6 +779,13 @@ end
 -- showing once the player is on another tab.
 function Atr_BP_Unplace ()
 	if (gRun) then Atr_BP_Cancel (true); end
+
+	-- The one place the ticker stops.  Cancel and Finish deliberately leave it
+	-- running: the column is still up and still watching for single-item scans.
+	if (Atr_BP_Ticker)		then Atr_BP_Ticker:Hide();		end
+	gWatchLabel = nil;
+	gWatchWait  = 0;
+
 	if (Atr_BP_Progress)	then Atr_BP_Progress:Hide();	end
 	if (Atr_BP_Panel)		then Atr_BP_Panel:Hide();		end
 	if (Atr_BP_Go)			then Atr_BP_Go:Hide();			end
@@ -866,7 +968,8 @@ function Atr_BP_Cancel (quiet)
 	local r = gRun;
 	gRun = nil;
 
-	if (Atr_BP_Ticker) then Atr_BP_Ticker:Hide(); end
+	-- The ticker keeps running: the column is still placed, so it goes back to
+	-- watching for single-item scans.  Only Atr_BP_Unplace stops it.
 	if (ClearCursor) then ClearCursor(); end
 	Atr_BP_HideProgress();
 
@@ -895,8 +998,7 @@ local function Atr_BP_Finish ()
 	local r = gRun;
 	gRun = nil;
 
-	if (Atr_BP_Ticker) then Atr_BP_Ticker:Hide(); end
-	Atr_BP_HideProgress();
+	Atr_BP_HideProgress();		-- the ticker stays up; see Atr_BP_Cancel
 
 	if (r) then
 		local parts = string.format ("%d posted", r.posted);
@@ -1055,10 +1157,9 @@ end
 -- clear the sell slot, or starting the next item.
 function Atr_BP_Step ()
 
-	if (not gRun) then
-		if (Atr_BP_Ticker) then Atr_BP_Ticker:Hide(); end
-		return;
-	end
+	-- Only ever called with a run going (the ticker dispatches), but a stale
+	-- call must not act on nil.
+	if (not gRun) then return; end
 
 	-- Anything that takes the auction house or the SELL tab away takes the run
 	-- with it.  There is nothing queued server-side, so stopping is free, and
@@ -1235,11 +1336,9 @@ function Atr_BP_GoClicked ()
 	-- An item left sitting in the sell box would be swapped out by the first
 	-- post and land back in the bags mid-run -- which is the one moment the
 	-- queue is being re-pointed at bag slots.  Put it away before starting.
-	if (GetAuctionSellItemInfo and GetAuctionSellItemInfo() ~= nil) then
-		ClearCursor();
-		ClickAuctionSellItemButton();
-		ClearCursor();
-	end
+	-- Atr_Sell_ClearSlot is the same lift-and-drop this used to inline, plus the
+	-- pane reset; one implementation beats two that have to agree.
+	if (Atr_Sell_ClearSlot) then Atr_Sell_ClearSlot(); end
 
 	-- Whatever a previous run learned is stale by definition -- that is the
 	-- reason this run is scanning at all.
