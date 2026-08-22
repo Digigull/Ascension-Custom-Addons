@@ -208,6 +208,15 @@ Report.ACTIVITY_LABEL = ACTIVITY_LABEL
 -- back CHAT_MSG_CHANNEL, burying the real fingerprint). CHAT_MSG_* is matched by prefix.
 local TRIGGER_NOISE = {
     UNIT_AURA = true, COMBAT_LOG_EVENT_UNFILTERED = true,
+    -- Server infrastructure, not addon noise, and now explained rather than merely
+    -- flagged: Ascension implements Blizzard's arena SPECTATOR system (an NPC lets you
+    -- watch live matches from behind either player), so the Commentator API is live on
+    -- this client doing its intended job. The server ticks skirmish queue state to
+    -- every client at a fixed rate to keep that feature current, whether or not you
+    -- ever use it. Measured at 1.57-1.68/s across five captures spanning a 226x swing
+    -- in chat volume and an addon count of 21-26 — it did not move, and outbound
+    -- stayed at 0.04-0.10 KB/s throughout, so it is a broadcast TO the client, not a
+    -- report FROM it. Nothing to chase; do not re-investigate.
     COMMENTATOR_SKIRMISH_QUEUE_REQUEST = true,
     SPELL_UPDATE_COOLDOWN = true, SPELL_UPDATE_USABLE = true, SPELL_UPDATE_CHARGES = true,
     ACTIONBAR_UPDATE_COOLDOWN = true, ACTIONBAR_UPDATE_USABLE = true, ACTIONBAR_UPDATE_STATE = true,
