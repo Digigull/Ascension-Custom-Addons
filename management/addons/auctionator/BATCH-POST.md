@@ -29,6 +29,8 @@ preference. They are written up in that order.
 | `Auctionator.lua`, `Atr_SB_Build` | soulbound bucket, green wash on queued tiles, tail-calls `Atr_BP_Build` |
 | `Auctionator.lua`, `Atr_Sell_ItemIsGrey` / `Atr_Sell_ItemIsBound` / `Atr_Sell_ItemDefIsBound` / `Atr_Sell_TextIsBinding` | the bound classification (§4) |
 | `Auctionator.lua`, `Atr_Sell_BindDump` | `/atrbound`, the tooltip diagnostic (§4c) |
+| `Auctionator.lua`, `Atr_Sell_ClearSlot` / `Atr_SellItemButton_OnClick` | click the sell slot to empty it (§5) |
+| `Auctionator.lua`, `Atr_Sell_SearchLabel` | what the sell pane is querying, for the bar (§3) |
 | `AuctionatorFinder.lua`, `Atr_Finder_CancelSearch` | calls `Atr_BP_ScanCancelled` (§3) |
 | `management/addons/auctionator/tools/batch-price-smoke.lua` | **new.** 25 assertions over the two pricing functions |
 | `management/addons/auctionator/tools/bound-scan-smoke.lua` | **new.** 48 assertions over the bind marker list and both tooltip sources |
@@ -57,12 +59,27 @@ constants in `Auctionator.lua` now split it, and they are the only place the spl
 
 ```
 ATR_SELL_BROWSER_Y = -82     top edge of BOTH columns
-ATR_SELL_BROWSER_H = 194     height of BOTH columns
+ATR_SELL_BROWSER_H = 168     height of BOTH columns   (194 until 2026-08-23)
 ATR_SELL_INV_X = -26         inventory left   -> right edge 264
 ATR_SELL_INV_W = 290
 ATR_SELL_BP_X  = 298         batch left       -> right edge 574
 ATR_SELL_BP_W  = 276
 ```
+
+**The height came down from 194 on 2026-08-23** (owner's report, with a screenshot: *"shorten both
+windows, there is a bit of overlap at the bottom with the tabs"*). The tabs are `Atr_ListTabs`, the
+Current/History/Ledger strip: 250 wide, anchored BOTTOMRIGHT to `Atr_HeadingsBar`'s TOPRIGHT at
+y −22, which with the bar at `ATR_SELL_HB_Y` puts it at
+
+```
+x 361..611,   y -258..-290
+```
+
+At 194 the columns bottomed out at −276 — eighteen pixels into that band. Note which column was
+actually at fault: the **inventory** spans x −26..264 and never reaches 361, so it never touched the
+tabs. Only the batch column (298..574) did. Both were shortened regardless, because two columns
+side by side have to stay level — an 8px step between them would read as a bug of its own. 168 puts
+the bottom at −250, eight pixels clear.
 
 **The 34px gap between the two is not padding.** A `UIPanelScrollFrameTemplate` anchors its scroll
 bar to its own TOPRIGHT at +6 with a width of 16, so the bar lives *outside* the width you set,
@@ -76,12 +93,22 @@ row; the list inside it lines up with the inventory to the pixel, and both botto
 `Atr_SB_Build` computes its tile columns from `Atr_SellBrowser:GetWidth()`, so halving the width
 re-flows the inventory with no further change: 18 tile columns became 8.
 
-**The two buttons ride `Atr_HeadingsBar`, not the panel.** That is the same trick `Scan Inventory`
-already uses and for the same reason — the headings-bar divider is drawn *over* anything sitting
-at the inventory's bottom edge, so a button anchored there is buried. They sit on the divider at
-`ATR_SELL_SCANBTN_Y` with the frame level raised by 5, offset to the batch column's left edge
-(`x - 6`, because the headings bar starts at panel x 6). The list itself deliberately stays at the
-default level, *under* the divider, which is what the inventory does.
+**The two buttons ride `Atr_SB_ProfitMargin`, continuing the row that starts with `Scan Inventory`.**
+They are not children of the batch column and are not anchored to it. Two reasons, and the second
+one was a bug:
+
+- The headings-bar divider is drawn *over* anything sitting at a column's bottom edge, so a button
+  anchored there is buried. `Scan Inventory` already solved that by sitting **on** the divider with
+  its frame level raised by 5; these do the same.
+- They used to be placed at the batch column's own left edge, panel x 298..451 — and `Atr_ListTabs`
+  owns x 361..611, so `Clear` sat squarely on top of `Current` (owner's screenshot, 2026-08-23).
+  Shortening the columns fixed the vertical half of that overlap; moving the buttons fixes the
+  horizontal half.
+
+The row now reads **Scan Inventory | Profit Margin | Batch Post | Clear** — every action this tab
+has, in one line, ending at panel x ≈ 331 with thirty pixels to spare before the tabs. Each button
+is anchored to the one before it, so the row stays true if any of them is moved or resized. The
+lists themselves deliberately stay at the default frame level, *under* the divider.
 
 Nothing here calls `SetToplevel` or `Raise` (`DRAG-FREEZE.md`).
 
@@ -165,6 +192,27 @@ the query runs, driven off the driver's own tick counter, capped short of the it
 it can never run ahead of what actually happened. Without that the bar would freeze at precisely
 the moments the run is doing the most work. The label alternates between
 `Scanning <item>  (n/total)` and `Posting  n/total`.
+
+**It also shows ordinary single-item searches** (owner's request, 2026-08-23: *"link up the progress
+bar to single item scans, like when i just choose one to sell"*). Dropping one item in the sell box
+makes the pane run exactly the same throttled query a batch run makes per name, and the column is
+sitting right there saying nothing for the length of it.
+
+So `Atr_BP_Ticker` runs for as long as the column is **placed**, not only during a run — `Atr_BP_Layout`
+starts it and `Atr_BP_Unplace` is the only thing that stops it; `Atr_BP_Cancel` and `Atr_BP_Finish`
+deliberately leave it going. With no run, each tick calls `Atr_BP_WatchSellScan`, which asks
+`Atr_Sell_SearchLabel()` (in `Auctionator.lua`) what the sell pane is querying for.
+
+**That is a poll, and the poll is the design rather than laziness.** A sell search starts from at
+least four places — a drop into the slot, a tile in the inventory browser, the bag right-click,
+`Atr_OnNewAuctionUpdate` — and gains more whenever someone adds a path. A list of hooks goes stale
+silently; asking the pane what it is doing cannot. It costs two global reads every 0.25 s.
+
+`Atr_Sell_SearchLabel` returns nil for a **blank** search text as well as for an idle pane, because
+`AtrPane:ClearSearch()` is `DoSearch("")` — a real search object with no name, which
+`Atr_Sell_ClearSlot` runs every time the slot is emptied. That is not something to report as
+scanning. The watcher only tears the bar down if it was the thing that put it up, so it can never
+stamp on a run's own display.
 
 ### The driver is a ticker, not an event chain
 
@@ -430,6 +478,7 @@ the predicate rather than one of the several bind kinds under it. The tile field
 
 | gesture | what happens |
 |---|---|
+| **left OR right click the item in the sell slot** | empties the slot, item back to the bag |
 | left-click an inventory tile | unchanged — loads the item into the sell slot |
 | **right-click an inventory tile** | queues it into Batch Post |
 | right-click a queued tile again | takes it back out |
@@ -441,6 +490,23 @@ the predicate rather than one of the several bind kinds under it. The tile field
 Right-click inside the browser used to be a second copy of the left click, so **no behaviour was
 lost.** Right-click in the *actual bags* (`Atr_ContainerFrameItemButton_OnClick`) is untouched and
 still loads to the sell slot.
+
+**Clicking the sell slot empties it** (owner's request, 2026-08-23), on either button. There is no
+"empty the sell slot" API on 3.3.5, so `Atr_Sell_ClearSlot` does the only thing there is:
+`ClickAuctionSellItemButton()` with an empty cursor **lifts** the slot's item onto the cursor, and
+`ClearCursor()` drops it back where it came from. It calls that raw rather than through
+`Atr_ClickAuctionSellItemButton`, for the reason the batch driver does — the wrapper raises
+`gAtr_ClickAuctionSell`, which would send `Atr_OnNewAuctionUpdate` into a full auction query for the
+item being thrown away.
+
+Two cases keep the old path, and both are still a "put something *in*": dropping an item already on
+the cursor, and clicking an **empty** slot. The duration is deliberately not reset — it is a setting
+the seller chose for this visit, not a property of the item that just left. The XML button registers
+no clicks, so it answered LeftButtonUp only; `RegisterForClicks` is added from the layout path,
+where the rest of this button's per-tab wiring already lives.
+
+`Atr_BP_GoClicked` uses the same function to clear a stray item before a run, rather than inlining
+the lift-and-drop a second time.
 
 A queued tile gets a green wash. Without it, a right-click that queued something and one that did
 nothing look identical, and the queue is off in the other column.

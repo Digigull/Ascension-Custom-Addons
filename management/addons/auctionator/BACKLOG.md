@@ -1205,3 +1205,57 @@ grow, because the new function caches by link and that is the exact shape of eve
 describes.
 
 `luac5.1 -p` clean; all eleven suites pass. **Not verified in game.**
+
+---
+
+## 16. SELL tab: three fixes from the second in-game session — DONE
+
+**Asked (owner, 2026-08-23, with a screenshot):** *"Can you shorten both windows, there is a bit of
+overlap at the bottom with the tabs. Can you also make it if I left click or right click the item in
+the sell slot it will just empty the slot. Also can you link up the progress bar to single item
+scans, like when i just choose one to sell?"*
+
+**Built 2026-08-23.** Details in `BATCH-POST.md` §2, §3 and §5.
+
+**1. The overlap was two overlaps, and the screenshot showed both.** `Atr_ListTabs` — the
+Current/History/Ledger strip — is 250 wide anchored BOTTOMRIGHT to `Atr_HeadingsBar`'s TOPRIGHT at
+y −22, so it owns **x 361..611, y −258..−290**. The columns bottomed out at −276, eighteen pixels
+into that band *vertically*; and the two batch buttons sat at panel x 298..451, which put `Clear`
+squarely on top of `Current` *horizontally*. `ATR_SELL_BROWSER_H` 194 → 168 fixes the first; moving
+the buttons fixes the second.
+
+Worth noting which column was at fault: the **inventory** spans x −26..264 and never reaches 361, so
+it never touched the tabs — only the batch column did. Both were shortened anyway, because two
+columns side by side have to stay level; an 8px step between them would read as a bug of its own.
+
+The buttons now continue the existing action row instead of starting a second one:
+**Scan Inventory | Profit Margin | Batch Post | Clear**, each anchored to the one before it, ending
+at panel x ≈ 331 with thirty pixels clear of the tabs.
+
+**2. Clicking the sell slot empties it.** There is no "empty the sell slot" API on 3.3.5;
+`Atr_Sell_ClearSlot` does the only thing there is — `ClickAuctionSellItemButton()` on an empty
+cursor **lifts** the item out, `ClearCursor()` drops it back in the bag. Raw rather than through
+`Atr_ClickAuctionSellItemButton`, for the reason the batch driver does: the wrapper raises
+`gAtr_ClickAuctionSell` and would fire a full auction query for the item being discarded. Either
+button. Two cases keep the old path and both are still a "put something *in*": a drop from the
+cursor, and a click on an empty slot. Duration is deliberately not reset — a setting for the visit,
+not a property of the item. The XML button registers no clicks so it answered LeftButtonUp only;
+`RegisterForClicks` is added from the layout path where its other per-tab wiring already lives.
+`Atr_BP_GoClicked` now calls this instead of inlining the same lift-and-drop.
+
+**3. The progress bar shows single-item searches too.** A single sale runs the same throttled query
+a batch run makes per name, and the column sits there saying nothing through it. `Atr_BP_Ticker` now
+runs for as long as the column is **placed** rather than only during a run (`Atr_BP_Layout` starts
+it, `Atr_BP_Unplace` alone stops it — `Cancel`/`Finish` leave it going), and with no run each tick
+asks the new `Atr_Sell_SearchLabel()`.
+
+**That is a poll and the poll is the design.** A sell search starts from at least four places — a
+drop into the slot, an inventory tile, the bag right-click, `Atr_OnNewAuctionUpdate` — and gains more
+whenever someone adds a path. A list of hooks goes stale silently; asking the pane cannot. Two
+global reads every 0.25 s. `Atr_Sell_SearchLabel` returns nil for a **blank** search text as well as
+an idle pane, because `ClearSearch()` is `DoSearch("")` and `Atr_Sell_ClearSlot` runs it every time
+the slot empties. The watcher only tears the bar down if it was what put it up, so it cannot stamp
+on a batch run's own display.
+
+`luac5.1 -p` clean; all eleven suites pass. **Not verified in game** — all three are layout and
+event wiring, which is the category offline work cannot check at all.

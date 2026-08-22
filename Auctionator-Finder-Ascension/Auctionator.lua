@@ -1717,7 +1717,70 @@ end
 
 -----------------------------------------
 
+-- Take whatever is in the auction sell slot back out and put the pane back to
+-- its empty state.  Returns true if there was something to remove.
+function Atr_Sell_ClearSlot ()
+
+	if (type (ClickAuctionSellItemButton) ~= "function") then return false; end
+
+	local name = GetAuctionSellItemInfo and GetAuctionSellItemInfo();
+	if (name == nil or name == "") then return false; end
+
+	-- ClickAuctionSellItemButton with an empty cursor LIFTS the slot's item onto
+	-- the cursor; ClearCursor then drops it back where it came from.  There is no
+	-- "empty the sell slot" API on 3.3.5 -- this pair is it.
+	--
+	-- Raw, not Atr_ClickAuctionSellItemButton: the wrapper raises
+	-- gAtr_ClickAuctionSell, which sends Atr_OnNewAuctionUpdate into
+	-- gSellPane:DoSearch -- a full auction query for the item we are in the
+	-- middle of throwing away.  Same reason the batch driver calls it raw.
+	ClearCursor();
+	ClickAuctionSellItemButton();
+	ClearCursor();
+
+	-- The icon clears itself: emptying the slot fires NEW_AUCTION_UPDATE and
+	-- Atr_SellItemButton_OnEvent sets the normal texture from what is in it,
+	-- which is now nothing.  Everything else has to be told.
+	Atr_ClearAll();
+
+	if (MoneyInputFrame_SetCopper) then
+		if (Atr_StackPrice)		then MoneyInputFrame_SetCopper (Atr_StackPrice, 0);		end
+		if (Atr_ItemPrice)		then MoneyInputFrame_SetCopper (Atr_ItemPrice, 0);		end
+		if (Atr_StartingPrice)	then MoneyInputFrame_SetCopper (Atr_StartingPrice, 0);	end
+	end
+
+	-- The duration is deliberately NOT reset.  It is a setting the seller chose
+	-- for this visit, not a property of the item that just left the slot.
+	gJustPosted_ItemName = nil;
+
+	if (gSellPane and gSellPane.ClearSearch) then gSellPane:ClearSearch(); end
+	if (gSellPane) then gSellPane.UINeedsUpdate = true; end
+
+	Atr_UpdateUI();
+
+	return true;
+end
+
+-----------------------------------------
+
 function Atr_SellItemButton_OnClick (self, button, ...)
+
+	-- A CLICK ON A FULL SLOT EMPTIES IT (owner's request, 2026-08-23: "make it
+	-- if I left click or right click the item in the sell slot it will just
+	-- empty the slot").  Either button, because the request says either and
+	-- because there is nothing else a click on an occupied slot could usefully
+	-- mean -- the old behaviour picked the item up onto the cursor and left it
+	-- there, which is a state you then have to get out of.
+	--
+	-- Two cases keep the old path, and both are still a "put something IN":
+	-- dropping an item that is already on the cursor, and clicking an empty
+	-- slot (which is how the Blizzard flow starts a sale from an open bag).
+	if (GetCursorInfo and GetCursorInfo() == "item") then
+		Atr_ClickAuctionSellItemButton (self, button);
+		return;
+	end
+
+	if (Atr_Sell_ClearSlot()) then return; end
 
 	Atr_ClickAuctionSellItemButton (self, button);
 end
@@ -2168,6 +2231,38 @@ function Atr_Sell_ItemIsBound(bag, slot, link)
 
     -- Nothing in the slot's tooltip. Ask the item.
     return Atr_Sell_ItemDefIsBound (link);
+end
+
+-- What the SELL pane is querying the auction house for right now, or nil when
+-- it is idle.
+--
+-- Published for the Batch Post column's progress bar (owner's request,
+-- 2026-08-23: "link up the progress bar to single item scans, like when i just
+-- choose one to sell").  That bar already existed for batch runs; a single-item
+-- search is the same wait for the same reason -- one throttled query -- and the
+-- column is sitting right there with nothing to say during it.
+--
+-- A POLL rather than a hook, deliberately.  A sell search starts from at least
+-- four places (a drop into the slot, a tile in the inventory browser, the bag
+-- right-click, Atr_OnNewAuctionUpdate) and gains more whenever someone adds a
+-- path; hooking each is a list that goes stale silently.  Asking the pane what
+-- it is doing cannot.
+function Atr_Sell_SearchLabel ()
+
+	if (gSellPane == nil) then return nil; end
+	if (not Atr_IsTabSelected or not Atr_IsTabSelected (SELL_TAB)) then return nil; end
+	if (gSellPane.GetProcessingState == nil) then return nil; end
+	if (gSellPane:GetProcessingState() == KM_NULL_STATE) then return nil; end
+
+	local search = gSellPane.activeSearch;
+	local label  = search and search.searchText;
+
+	-- AtrPane:ClearSearch is DoSearch("") -- a real search object with a blank
+	-- name, which Atr_Sell_ClearSlot runs every time the slot is emptied.  It is
+	-- not something to report as scanning.
+	if (label == nil or label == "") then return nil; end
+
+	return label;
 end
 
 -----------------------------------------
@@ -3053,7 +3148,24 @@ ATR_SELL_LIST_H = 74;       -- results scroll height; 4 rows at 16px
 -- These six are the only place the split is decided.  Both columns and the
 -- batch column's two buttons measure off them.
 ATR_SELL_BROWSER_Y = -82;   -- top edge of both columns, panel-relative
-ATR_SELL_BROWSER_H = 194;   -- height of both columns
+ATR_SELL_BROWSER_H = 168;   -- height of both columns
+                            --
+                            -- 194 until 2026-08-23, which put the bottom edge
+                            -- at -276 and overlapped the Current/History/Ledger
+                            -- strip (owner's report, with a screenshot).  That
+                            -- strip is Atr_ListTabs: 250 wide, anchored
+                            -- BOTTOMRIGHT to Atr_HeadingsBar's TOPRIGHT at
+                            -- y -22, so with the bar at ATR_SELL_HB_Y it owns
+                            --
+                            --     x 361..611,  y -258..-290
+                            --
+                            -- The INVENTORY never reached that x range and was
+                            -- never the problem; the batch column (298..574) is
+                            -- most of the way across it.  Both are shortened
+                            -- anyway, because two columns side by side have to
+                            -- stay level -- an 8px step between them would read
+                            -- as a bug of its own.  168 puts the bottom at -250,
+                            -- eight pixels clear.
 ATR_SELL_INV_X = -26;
 ATR_SELL_INV_W = 290;
 ATR_SELL_BP_X  = 298;       -- inventory right edge is 264; its bar reaches 286
@@ -3366,6 +3478,15 @@ function Atr_ApplySellExpandedLayout()
         -- An empty box shows nothing -- Atr_ShowRecTooltip has no link to open.
         Atr_SellControls_Tex:SetScript ("OnEnter", function () Atr_ShowRecTooltip(); end);
         Atr_SellControls_Tex:SetScript ("OnLeave", function () Atr_HideRecTooltip(); end);
+
+        -- The XML button registers no clicks, so it answers LeftButtonUp only.
+        -- Emptying the slot is bound to either button (Atr_SellItemButton_OnClick),
+        -- so the right one has to be turned on.  Here rather than in the XML for
+        -- the same reason as the two scripts above: this button is shared with
+        -- the panel's other tabs.
+        if (Atr_SellControls_Tex.RegisterForClicks) then
+            Atr_SellControls_Tex:RegisterForClicks ("LeftButtonUp", "RightButtonUp");
+        end
     end
 
     -- The Ignore button sits at the far left of the column, tucked against the
