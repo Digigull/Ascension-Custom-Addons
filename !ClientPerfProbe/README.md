@@ -3,7 +3,7 @@
 Find out *what* is causing client stutter before trying to fix it. Per-addon and
 per-event frame-time spike attribution, with a copy/paste report.
 
-**Version 0.2.1 · Interface 30300 (WotLK 3.3.5 / Ascension)**
+**Version 0.2.2 · Interface 30300 (WotLK 3.3.5 / Ascension)**
 
 ## What it does
 
@@ -61,6 +61,14 @@ without a `/cpp clear` mixes this session's spikes with restored ones. Those are
 marked `old=1` so a report is never misread.
 
 ## Notes
+
+- **Naming a chat flood.** In a city, `CHAT_MSG_CHANNEL` is routinely the busiest
+  event the client handles, and the `R` rate row can only say so — not which channel.
+  The `C` rows break it down per channel: message rate, KB/s of your inbound bandwidth,
+  distinct senders, the loudest one, and `j=` for whether you are actually joined to
+  that channel. `j=0` means traffic is arriving from a channel you did not join, which
+  means an addon joined it for you. Message text is never stored — the report is a blob
+  you paste in public. Background: `management/addons/clientperfprobe/CHAT-FLOOD.md`.
 
 - **What the probe costs you.** Answering "which addon moved memory" means calling
   `UpdateAddOnMemoryUsage()`, which walks the entire Lua heap. On a played-in session

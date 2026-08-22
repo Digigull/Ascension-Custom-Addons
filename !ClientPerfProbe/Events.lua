@@ -121,16 +121,162 @@ end
 ns.BlockedCounter = Blocked
 
 --------------------------------------------------------------------------------
+-- PURE per-CHANNEL chat counting ----------------------------------------------
+-- Why this exists: a live Ironforge capture came back with CHAT_MSG_CHANNEL at
+-- 109.3/s — 14,231 messages in 130s, which at the observed sizes is essentially the
+-- whole 19.2 KB/s inbound. The R rate row can say "chat is the firehose" but not
+-- WHICH channel or WHO, and that distinction IS the diagnosis: an addon cannot make
+-- CHAT_MSG_CHANNEL fire for traffic you would not otherwise receive UNLESS something
+-- joined a channel. "Trade - City" at the top means genuine spam and no addon is at
+-- fault; an unrecognised channel means something joined it on your behalf. Same
+-- honest-attribution principle as the Blocked counter — the event carries the answer,
+-- we only have to keep it.
+--
+-- MESSAGE TEXT IS NEVER STORED, only the channel, the sender, a count and a byte
+-- total. The report is a copy/paste blob the owner pastes in public; it must not
+-- carry other people's conversations. Byte totals are kept because they are what
+-- ties an event rate to the observed inbound bandwidth.
+local Chat = {}
+Chat.__index = Chat
+
+-- Distinct senders tracked per channel. A flood is a repeat offender, so the top
+-- sender lands well inside this; the cap only bounds a channel with thousands of
+-- distinct speakers, and capped=true says when it bit.
+Chat.SENDER_CAP = 48
+
+function Chat.new()
+    return setmetatable({ chans = {}, total = 0 }, Chat)
+end
+
+-- record one CHAT_MSG_CHANNEL: channel base name (arg9), channel index (arg8),
+-- sender (arg2), and the message LENGTH (never the message).
+function Chat:record(name, id, sender, bytes)
+    name = (type(name) == "string" and name ~= "") and name or "?"
+    local c = self.chans[name]
+    if not c then
+        c = { name = name, id = tonumber(id), n = 0, bytes = 0,
+              senders = {}, distinct = 0, capped = false }
+        self.chans[name] = c
+    end
+    c.n = c.n + 1
+    -- bytes arrives as a number from the caller's #message; a tonumber() call here
+    -- would be a wasted C call on a path that runs at the flood rate.
+    c.bytes = c.bytes + ((type(bytes) == "number") and bytes or 0)
+    if c.id == nil then c.id = tonumber(id) end
+    self.total = self.total + 1
+
+    if type(sender) == "string" and sender ~= "" then
+        local have = c.senders[sender]
+        if have then
+            c.senders[sender] = have + 1
+        elseif c.distinct < Chat.SENDER_CAP then
+            c.senders[sender] = 1
+            c.distinct = c.distinct + 1
+        else
+            c.capped = true
+        end
+    end
+end
+
+-- ranked(elapsedSec, limit, joined) -> desc array of per-channel rows.
+-- `joined` is an optional { [channelId] = name } map from GetChannelList(). Channels
+-- in it that carried NO traffic are still emitted at n=0 — a data channel something
+-- joined silently is exactly what we are hunting and it may be quiet in this window.
+-- Matching is by channel ID, not name: GetChannelList's naming need not match arg9's,
+-- and an ID is the one key both sides agree on.
+function Chat:ranked(elapsedSec, limit, joined)
+    local dt = (type(elapsedSec) == "number" and elapsedSec > 0) and elapsedSec or 1
+    local out = {}
+    for name, c in pairs(self.chans) do
+        -- Tri-state, and it must NOT be written as `cond and X or nil`: when X is
+        -- false that idiom yields nil, collapsing "definitely not joined" into
+        -- "unknown" — the one verdict this row exists to deliver.
+        --   true  = we can enumerate channels and this is one of them
+        --   false = we can enumerate channels and this is NOT one (suspicious)
+        --   nil   = GetChannelList unavailable, so no opinion
+        local isJoined
+        if type(joined) == "table" and c.id ~= nil then
+            isJoined = (joined[c.id] ~= nil)
+        end
+        local topName, topN = nil, 0
+        for sender, n in pairs(c.senders) do
+            -- name ascending breaks a tie so the row is deterministic
+            if n > topN or (n == topN and topName and sender < topName) then
+                topName, topN = sender, n
+            end
+        end
+        out[#out + 1] = {
+            name = name, id = c.id, count = c.n, perSec = c.n / dt,
+            kbPerSec = (c.bytes / 1024) / dt,
+            senders = c.distinct, capped = c.capped,
+            top = topName, topCount = topN,
+            joined = isJoined,
+        }
+    end
+    if type(joined) == "table" then
+        local seen = {}
+        for _, c in pairs(self.chans) do if c.id then seen[c.id] = true end end
+        for id, nm in pairs(joined) do
+            if not seen[id] then
+                out[#out + 1] = { name = nm, id = id, count = 0, perSec = 0,
+                                  kbPerSec = 0, senders = 0, joined = true }
+            end
+        end
+    end
+    table.sort(out, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        return tostring(a.name) < tostring(b.name)
+    end)
+    if limit and #out > limit then
+        for i = #out, limit + 1, -1 do out[i] = nil end
+    end
+    return out
+end
+
+function Chat:reset()
+    self.chans = {}
+    self.total = 0
+end
+
+ns.ChatCounter = Chat
+
+-- parseChannelList(flat) -> { [id] = name } from GetChannelList()'s flat returns.
+-- STRIDE-AGNOSTIC on purpose (ground rule 2: feature-detect, do not assume). 3.3.5
+-- is documented as returning id,name pairs and later clients add a third `disabled`
+-- value; rather than betting on which one Ascension ships, walk the list and pair
+-- every number that is followed by a string, skipping anything that does not pair.
+-- Both shapes fall out correctly. PURE — self-tested.
+local function parseChannelList(flat)
+    local out, n = {}, 0
+    local i = 1
+    while i <= #flat do
+        local id, name = tonumber(flat[i]), flat[i + 1]
+        if id and type(name) == "string" then
+            out[id] = name
+            n = n + 1
+            i = i + 2
+        else
+            i = i + 1
+        end
+    end
+    if n == 0 then return nil end
+    return out
+end
+ns.parseChannelList = parseChannelList
+
+--------------------------------------------------------------------------------
 -- WoW wiring -------------------------------------------------------------------
 local Events = {}
 local counter = Counter.new()
 local blocked = Blocked.new()
+local chat = Chat.new()
 local windowStart = 0            -- GetTime() when the current count window opened
 local recent                     -- RingBuffer of recent event names (context for spikes)
 
 function Events.init()
     counter:reset()
     blocked:reset()
+    chat:reset()
     windowStart = (type(GetTime) == "function") and GetTime() or 0
     -- Deep enough that a firehose (city chat ~14/s, dungeon CLEU) can't flush the
     -- rarer context (e.g. the GLOBAL_MOUSE_DOWN behind a window-drag spike) before
@@ -156,6 +302,32 @@ function Events.init()
         blocked:record(addon, func)
     end)
     Events.blockedFrame = bf
+
+    -- Dedicated frame for the per-channel chat breakdown. Registered NARROWLY, not on
+    -- the all-events firehose, for exactly the reason the blocked frame is: capturing
+    -- args up there would pay the arg cost on every CLEU as well. Here it is paid only
+    -- on the event being dissected. CHAT_MSG_CHANNEL args on 3.3.5:
+    --   1 message  2 sender  3 language  4 channelString  5 target
+    --   6 flags    7 zoneId  8 channelIndex  9 channelBaseName
+    -- arg9 is preferred and arg4 is the fallback: the base name is absent on some
+    -- server-generated lines, and a row labelled "?" names nothing.
+    local cf = CreateFrame("Frame", "ClientPerfProbeChat")
+    cf:RegisterEvent("CHAT_MSG_CHANNEL")
+    cf:SetScript("OnEvent", function(_, _, message, sender, _, chanString,
+                                     _, _, _, chanIndex, chanBase)
+        chat:record(chanBase or chanString, chanIndex, sender,
+                    (type(message) == "string") and #message or 0)
+    end)
+    Events.chatFrame = cf
+end
+
+-- Channels this client is currently JOINED to, { [id] = name }, or nil when the API
+-- is absent. Read on demand (report build), never on the hot path.
+local function joinedChannels()
+    if type(GetChannelList) ~= "function" then return nil end
+    local ok, flat = pcall(function() return { GetChannelList() } end)
+    if not ok then return nil end
+    return parseChannelList(flat)
 end
 
 -- cumulative CLEU count since window open (Core diffs this per-frame for rate).
@@ -209,9 +381,19 @@ function Events.blockedRanked(limit)
     return blocked:ranked(now - windowStart, limit)
 end
 
+-- ranked per-channel CHAT_MSG_CHANNEL traffic over the window since the last reset,
+-- with joined-but-silent channels included at n=0.
+function Events.chatRanked(limit)
+    local now = (type(GetTime) == "function") and GetTime() or (windowStart + 1)
+    return chat:ranked(now - windowStart, limit, joinedChannels())
+end
+
+function Events.chatTotal() return chat.total end
+
 function Events.reset()
     counter:reset()
     blocked:reset()
+    chat:reset()
     windowStart = (type(GetTime) == "function") and GetTime() or 0
 end
 
@@ -295,6 +477,79 @@ if _SELFTEST then
     b:reset()
     eq(b.total, 0, "blocked reset")
     eq(next(b.seen), nil, "blocked reset clears pairs")
+
+    -- ChatCounter: the per-channel breakdown that answers "who is flooding the
+    -- channel", the question the flat R rate row cannot.
+    do
+        local ch = ns.ChatCounter.new()
+        for i = 1, 30 do ch:record("Trade - City", 2, "Spammer", 100) end
+        for i = 1, 5 do ch:record("Trade - City", 2, "Someone", 40) end
+        ch:record("General - Ironforge", 1, "Player", 10)
+        eq(ch.total, 36, "chat counter totals every message")
+
+        local r = ch:ranked(10)
+        eq(r[1].name, "Trade - City", "busiest channel ranks first")
+        eq(r[1].count, 35, "per-channel count")
+        eq(string.format("%.1f", r[1].perSec), "3.5", "per-channel rate = count/elapsed")
+        eq(r[1].top, "Spammer", "names the loudest sender in the channel")
+        eq(r[1].topCount, 30, "and how many of the messages were theirs")
+        eq(r[1].senders, 2, "counts distinct senders")
+        -- bytes -> KB/s, the field that ties the event rate to inbound bandwidth
+        -- 30*100 + 5*40 = 3200 bytes over 10s = 0.3125 KB/s
+        eq(string.format("%.2f", r[1].kbPerSec), "0.31", "per-channel KB/s from message sizes")
+        eq(r[2].name, "General - Ironforge", "quieter channel ranks second")
+
+        -- a joined channel with NO traffic still shows: a data channel something
+        -- joined silently is the thing being hunted and may be quiet right now.
+        local withJoined = ch:ranked(10, nil, { [1] = "General - Ironforge",
+                                                [2] = "Trade - City",
+                                                [9] = "xtensionxtooltip2" })
+        local quiet
+        for _, row in ipairs(withJoined) do
+            if row.id == 9 then quiet = row end
+        end
+        assert(quiet, "a joined channel with no traffic still gets a row")
+        eq(quiet.count, 0, "silent joined channel reports zero traffic")
+        eq(quiet.joined, true, "and is marked as joined")
+
+        -- traffic from a channel NOT in the joined list is the suspicious case
+        local unknown = ch:ranked(10, nil, { [1] = "General - Ironforge" })
+        for _, row in ipairs(unknown) do
+            if row.name == "Trade - City" then
+                eq(row.joined, false, "traffic from an unjoined channel is flagged")
+            end
+        end
+
+        -- the distinct-sender cap bounds memory and says when it bit
+        local many = ns.ChatCounter.new()
+        for i = 1, ns.ChatCounter.SENDER_CAP + 10 do many:record("World", 5, "P" .. i, 10) end
+        eq(many.chans["World"].distinct, ns.ChatCounter.SENDER_CAP, "distinct senders are capped")
+        eq(many:ranked(1)[1].capped, true, "and the cap is reported, not hidden")
+
+        -- limit trims the ranked list
+        eq(#ch:ranked(10, 1), 1, "ranked honours the limit")
+
+        -- a message with no usable channel name is still counted, never dropped
+        local anon = ns.ChatCounter.new()
+        anon:record(nil, nil, "X", 5)
+        eq(anon:ranked(1)[1].name, "?", "unnamed channel falls back to '?' rather than vanishing")
+    end
+
+    -- parseChannelList is STRIDE-AGNOSTIC: 3.3.5 is documented as id,name pairs and
+    -- later clients add a third `disabled` value. Both must parse, because betting on
+    -- one would silently produce an empty joined-channel list on the other.
+    do
+        local pairsForm = ns.parseChannelList({ 1, "General - Ironforge", 2, "Trade - City" })
+        eq(pairsForm[1], "General - Ironforge", "pairs form: first channel")
+        eq(pairsForm[2], "Trade - City", "pairs form: second channel")
+
+        local triplesForm = ns.parseChannelList({ 1, "General - Ironforge", 0,
+                                                  2, "Trade - City", 0 })
+        eq(triplesForm[1], "General - Ironforge", "triples form: first channel")
+        eq(triplesForm[2], "Trade - City", "triples form: second channel")
+
+        eq(ns.parseChannelList({}), nil, "no channels -> nil, not an empty table")
+    end
 
     print("Events: OK")
 end
