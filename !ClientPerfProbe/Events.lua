@@ -184,7 +184,7 @@ end
 -- joined silently is exactly what we are hunting and it may be quiet in this window.
 -- Matching is by channel ID, not name: GetChannelList's naming need not match arg9's,
 -- and an ID is the one key both sides agree on.
-function Chat:ranked(elapsedSec, limit, joined)
+function Chat:ranked(elapsedSec, limit, joined, displayed)
     local dt = (type(elapsedSec) == "number" and elapsedSec > 0) and elapsedSec or 1
     local out = {}
     for name, c in pairs(self.chans) do
@@ -197,6 +197,17 @@ function Chat:ranked(elapsedSec, limit, joined)
         local isJoined
         if type(joined) == "table" and c.id ~= nil then
             isJoined = (joined[c.id] ~= nil)
+        end
+        -- Same tri-state, same trap: displayed in SOME chat window / in none / no
+        -- opinion. This is the field that explains the case that started all of
+        -- this — the owner unticked FrostSeek's channels and disabled the addon, and
+        -- 61 messages a second kept arriving. Unticking a channel stops it being
+        -- DRAWN; you stay joined, the server keeps sending, and every addon that
+        -- registers CHAT_MSG_CHANNEL keeps paying. High n= with disp=0 means you are
+        -- paying full price for messages you never see.
+        local isShown
+        if type(displayed) == "table" then
+            isShown = (displayed[tostring(name):lower()] ~= nil)
         end
         local topName, topN = nil, 0
         for sender, n in pairs(c.senders) do
@@ -211,6 +222,7 @@ function Chat:ranked(elapsedSec, limit, joined)
             senders = c.distinct, capped = c.capped,
             top = topName, topCount = topN,
             joined = isJoined,
+            displayed = isShown,
         }
     end
     if type(joined) == "table" then
@@ -218,8 +230,13 @@ function Chat:ranked(elapsedSec, limit, joined)
         for _, c in pairs(self.chans) do if c.id then seen[c.id] = true end end
         for id, nm in pairs(joined) do
             if not seen[id] then
+                local shown
+                if type(displayed) == "table" then
+                    shown = (displayed[tostring(nm):lower()] ~= nil)
+                end
                 out[#out + 1] = { name = nm, id = id, count = 0, perSec = 0,
-                                  kbPerSec = 0, senders = 0, joined = true }
+                                  kbPerSec = 0, senders = 0, joined = true,
+                                  displayed = shown }
             end
         end
     end
@@ -381,11 +398,34 @@ function Events.blockedRanked(limit)
     return blocked:ranked(now - windowStart, limit)
 end
 
+-- Channel names currently DISPLAYED in some chat window, as a lowercased set, or nil
+-- when the API is absent. Matching is by NAME here (not ID) because that is all
+-- GetChatWindowChannels gives; it returns name,zone pairs, so every string in the flat
+-- return is a channel name. An empty-but-non-nil result is a real answer ("you display
+-- none of them") and must not collapse to nil — that is the finding, not a gap.
+local function displayedChannels()
+    if type(GetChatWindowChannels) ~= "function" then return nil end
+    local out, anyOk = {}, false
+    local windows = tonumber(rawget(_G, "NUM_CHAT_WINDOWS")) or 7
+    for i = 1, windows do
+        local ok, flat = pcall(function() return { GetChatWindowChannels(i) } end)
+        if ok then
+            anyOk = true
+            for j = 1, #flat do
+                local v = flat[j]
+                if type(v) == "string" and v ~= "" then out[v:lower()] = true end
+            end
+        end
+    end
+    if not anyOk then return nil end
+    return out
+end
+
 -- ranked per-channel CHAT_MSG_CHANNEL traffic over the window since the last reset,
 -- with joined-but-silent channels included at n=0.
 function Events.chatRanked(limit)
     local now = (type(GetTime) == "function") and GetTime() or (windowStart + 1)
-    return chat:ranked(now - windowStart, limit, joinedChannels())
+    return chat:ranked(now - windowStart, limit, joinedChannels(), displayedChannels())
 end
 
 function Events.chatTotal() return chat.total end
@@ -525,6 +565,24 @@ if _SELFTEST then
         for i = 1, ns.ChatCounter.SENDER_CAP + 10 do many:record("World", 5, "P" .. i, 10) end
         eq(many.chans["World"].distinct, ns.ChatCounter.SENDER_CAP, "distinct senders are capped")
         eq(many:ranked(1)[1].capped, true, "and the cap is reported, not hidden")
+
+        -- disp= is the field that explains the FrostSeek case: unticking a channel
+        -- stops it being drawn, it does NOT leave it. Traffic keeps arriving.
+        local disp = ch:ranked(10, nil, { [1] = "General - Ironforge", [2] = "Trade - City" },
+                               { ["general - ironforge"] = true })
+        for _, row in ipairs(disp) do
+            if row.name == "Trade - City" then
+                eq(row.joined, true, "joined to the busy channel")
+                eq(row.displayed, false, "...but not displayed: paying for messages never seen")
+            elseif row.name == "General - Ironforge" then
+                eq(row.displayed, true, "a channel shown in a chat window is flagged displayed")
+            end
+        end
+        -- displaying NOTHING is a real answer, not a missing one
+        local none = ch:ranked(10, nil, nil, {})
+        eq(none[1].displayed, false, "an empty displayed set means none, not unknown")
+        -- no API -> no opinion, never a guess
+        eq(ch:ranked(10)[1].displayed, nil, "absent GetChatWindowChannels -> no verdict")
 
         -- limit trims the ranked list
         eq(#ch:ranked(10, 1), 1, "ranked honours the limit")

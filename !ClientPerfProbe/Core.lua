@@ -14,16 +14,16 @@
 local ADDON, ns = ...
 
 local Core = {}
-local VERSION = "0.2.2"
+local VERSION = "0.2.3"
 
 -- defaults (persisted into ClientPerfProbeDB.settings)
 local DEFAULTS = {
     thresholdMs = 50,     -- ~3 dropped frames at 60fps; tune from data
     capacity    = 200,    -- spike ring buffer size
     -- Attrib interval. This was 5s and that was WRONG: the scan walks the whole
-    -- Lua heap (UpdateAddOnMemoryUsage), which on a played-in session measured
-    -- ~50ms — so the probe put a ~50ms stall on the frame loop every 5 seconds and
-    -- then recorded it as an unattributed spike. See runSampler() and
+    -- Lua heap (UpdateAddOnMemoryUsage), measured at ~31ms on a 110MB heap — so the
+    -- probe put a stall a third of a frame-budget long on the frame loop every 5
+    -- seconds and then recorded it as an unattributed spike. See runSampler() and
     -- management/addons/clientperfprobe/SAMPLER-COST.md.
     sampleSec   = 30,     -- 0 disables the interval scan entirely (/cpp sample)
 }
@@ -155,11 +155,12 @@ end
 -- Run the per-addon attribution scan and CHARGE ITS COST TO OURSELVES.
 --
 -- Attrib.sample() calls UpdateAddOnMemoryUsage(), which walks the whole Lua heap to
--- attribute memory per addon. On a played-in session (106MB heap, 22 addons) that
--- walk measured ~50ms. The old driver stamped lastClock BEFORE running it, so the
--- cost landed in the NEXT frame's dt and the probe recorded its own scan as an
--- unattributed spike — a whole live capture came back as a perfect 5-second grid of
--- sus=? frames at 50.3-56.3ms that were the measurement itself. Full write-up:
+-- attribute memory per addon. Measured live at ~31ms on a 110MB heap with 21 addons
+-- (the P row's last=30.7 max=30.9). The old driver stamped lastClock BEFORE running
+-- it, so the cost landed in the NEXT frame's dt and the probe recorded its own scan
+-- as an unattributed spike — a whole live capture came back as a perfect 5-second
+-- grid of sus=? frames at 50.3-56.3ms that were the measurement itself (~31ms of
+-- walk on top of a ~20ms city frame: the arithmetic closes). Full write-up:
 -- management/addons/clientperfprobe/SAMPLER-COST.md.
 --
 -- So: time the scan, re-baseline the frame clock and heap AFTER it so it cannot

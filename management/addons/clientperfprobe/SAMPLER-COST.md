@@ -1,8 +1,15 @@
 # The probe was measuring itself — the 5-second sampler
 
-**Status:** diagnosed from a live capture (2026-08), fixed in `!ClientPerfProbe` 0.2.1.
-The diagnosis is *reasoned from the capture*, not confirmed in game; the confirmation
-test is at the bottom and takes about two minutes.
+**Status:** diagnosed from a live capture (2026-08), fixed in `!ClientPerfProbe` 0.2.1,
+**confirmed in game.** A 202-second post-fix capture in the same spot came back
+`spikes=0^shown=0` at `thr=50`, against 27 before. The 5-second grid is gone.
+
+The same capture measured the walk directly for the first time:
+`P^int=30.0^live=1^last=30.7^max=30.9^n=7^over=0` — **~31 ms** on a 110 MB heap, not
+the ~50 ms estimated below from the spike widths. The estimate was high because a
+spike's `dt` spanned the walk *plus* the rest of that frame: ~31 ms of walk on top of a
+~20 ms city frame lands squarely in the 50.3–56.3 ms band that was observed, so the
+arithmetic closes. `over=0` — the walk no longer crosses the spike threshold at all.
 
 ## The report that started it
 
@@ -78,9 +85,10 @@ itself.
 ## What was ruled out
 
 **Chat volume.** The same capture shows `CHAT_MSG_CHANNEL` at **109.3/s — 14,231
-messages in a 130 s window**, which at ~150 bytes each accounts for essentially all of
-the 19.2 KB/s inbound. That is abnormal and worth chasing on its own, but it is
-*continuous*: it cannot produce a clean 5-second grid. It is a real ambient tax though,
+messages in a 130 s window**, accounting for essentially all of the 19.2 KB/s inbound.
+That is abnormal and worth chasing on its own, but it is *continuous*: it cannot produce
+a clean 5-second grid. Chased separately and now solved — three addon data channels, see
+`CHAT-FLOOD.md`. It is a real ambient tax though,
 including on the probe's own `RegisterAllEvents` frame (`Events.lua`).
 
 **The server update.** Latency was flat at 122–128 ms with `out=0.1` throughout. Nothing
@@ -89,8 +97,9 @@ in the capture moves with it.
 **"Only when standing still."** No mechanism was found: the accumulator sums `elapsed`
 and fires every 5 s regardless of movement. The likely explanation is perception — a
 50 ms hitch is visible against a smooth static scene and disappears into the frame
-pacing of running through a city. Unconfirmed, and the confirmation test below settles
-it as a side effect.
+pacing of running through a city. **Still unconfirmed**, and now unfalsifiable from this
+angle: the spikes are gone, so there is nothing left to correlate with movement. Left
+here as an open loose end rather than a solved one.
 
 ## The fix (0.2.1)
 
@@ -120,13 +129,16 @@ it as a side effect.
 
 ## Confirming it in game
 
+**Done, 2026-08 — both checks passed.** A 202 s capture standing in the same spot with
+the at-a-glance window open returned `spikes=0` at `thr=50` (27 before), and the `P` row
+read `last=30.7 max=30.9 n=7 over=0`. Not one of the seven walks crossed the threshold,
+and no 5-second grid survived. Kept here as the record of what was run:
+
 1. `/cpp clear`, then `/cpp thr 25`. Stand still two minutes and read the spikes.
    **Before the fix** the grid would tighten to a spike every 5 s with no gaps; **after**
-   it, with the at-a-glance window closed, no 5-second grid should appear at all.
+   it, no 5-second grid should appear at all.
 2. Open the at-a-glance window, leave it up 2 minutes, `/cpp` and read the `P` row.
-   `last`/`max` are the real cost of the walk on this client and this heap — the first
-   direct measurement of it. If `max` is comfortably under `thr`, the story is confirmed
-   at the low end too.
+   `last`/`max` are the real cost of the walk on this client and this heap.
 3. Anything still landing on an exact 5-second grid after that is **not** ours, and the
    next suspects are Details' and WeakAuras' own periodic timers.
 

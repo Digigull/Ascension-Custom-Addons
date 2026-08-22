@@ -3,7 +3,7 @@
 Find out *what* is causing client stutter before trying to fix it. Per-addon and
 per-event frame-time spike attribution, with a copy/paste report.
 
-**Version 0.2.2 · Interface 30300 (WotLK 3.3.5 / Ascension)**
+**Version 0.2.3 · Interface 30300 (WotLK 3.3.5 / Ascension)**
 
 ## What it does
 
@@ -66,16 +66,21 @@ marked `old=1` so a report is never misread.
   event the client handles, and the `R` rate row can only say so — not which channel.
   The `C` rows break it down per channel: message rate, KB/s of your inbound bandwidth,
   distinct senders, the loudest one, and `j=` for whether you are actually joined to
-  that channel. `j=0` means traffic is arriving from a channel you did not join, which
-  means an addon joined it for you. Message text is never stored — the report is a blob
+  that channel, and `disp=` for whether it is drawn in any chat window. `j=1` with
+  `disp=0` and a high `n=` is the row that matters: **unticking a channel does not leave
+  it** — you stay joined, the server keeps sending, and every addon registered on
+  `CHAT_MSG_CHANNEL` keeps paying, for messages nothing will ever show you. That is what
+  the live capture found: three addon data channels at 107 msg/s, 99.6% of all chat
+  traffic, all unticked, one of them belonging to an addon that was already disabled. Message text is never stored — the report is a blob
   you paste in public. Background: `management/addons/clientperfprobe/CHAT-FLOOD.md`.
 
 - **What the probe costs you.** Answering "which addon moved memory" means calling
   `UpdateAddOnMemoryUsage()`, which walks the entire Lua heap. On a played-in session
-  (106 MB heap, 22 addons) that walk measured **~50 ms** — long enough to feel. Until
+  (110 MB heap, 21 addons) that walk measures **~31 ms** — two dropped frames. Until
   0.2.1 it ran every 5 seconds and the driver stamped its frame clock *before* running
   it, so the cost landed in the next frame's `dt` and the probe recorded its own scan
-  as an unattributed ~50 ms spike, on an exact 5-second grid, forever. Now the scan
+  as an unattributed 50-56 ms spike (the walk plus the rest of that frame), on an exact
+  5-second grid, forever. Now the scan
   runs only while the at-a-glance window is open (the one thing reading it live) plus
   once when you build a report, its cost is timed and printed as the `P` row, and the
   clock and heap baselines are re-stamped after it so it can never be billed to the
