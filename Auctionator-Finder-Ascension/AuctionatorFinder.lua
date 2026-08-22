@@ -77,11 +77,32 @@ local gFdr_SelectedCatSet = {};		-- leaf key -> true
 local gFdr_SpecQueue	 = {};		-- server query specs for the current scan
 local gFdr_SpecIdx		 = 1;
 local gFdr_CapHit		 = false;
+-- Is the run in progress a programmatic ONE-NAME scan (Atr_Finder_StartNameScan
+-- -- Scan Inventory, and a Batch Post run's per-name price scan), rather than a
+-- sweep the player asked for on the Finder tab?  Only the former is subject to
+-- the SELL tab's "Pages per Scan" ceiling; see Fdr_PageCeiling.
+local gFdr_NameScan		 = false;
 
 -- The page at which the scan gives up.  Normally unreachable: the scan ends
 -- when a page comes back short.  Exposed as a global so the harness and any
 -- future diagnostic can read the live ceiling.
 function Fdr_PageCeiling ()
+
+	-- "PAGES PER SCAN" APPLIES TO NAME SCANS, AND ONLY TO THEM.
+	--
+	-- A one-name scan is the same shape as the sell pane's own search and has
+	-- the same problem: QueryAuctionItems matches the name as a SUBSTRING, so
+	-- pricing one bag item can page through most of the auction house.  Scan
+	-- Inventory does that once per distinct name, which is where the paging is
+	-- heaviest of all.
+	--
+	-- A Finder TAB sweep is left alone deliberately.  That one is the player
+	-- asking for a whole category on purpose, it already warns before a large
+	-- one, and cutting it short would silently gut the tab's whole point.
+	if (gFdr_NameScan and type (Atr_PageCap_Get) == "function") then
+		local cap = Atr_PageCap_Get();
+		if (cap > 0) then return cap; end
+	end
 
 	if (FDR_MAX_PAGES > 0) then return FDR_MAX_PAGES; end
 	if (gFdr_TotalPages > 0) then return gFdr_TotalPages + FDR_PAGE_SLACK; end
@@ -2631,6 +2652,7 @@ function Atr_Finder_StartQueueScan (specs, onFinish)
 	gFdr_DupRetries		= 0;
 	gFdr_SkippedPages	= 0;
 	gFdr_CapHit			= false;
+	gFdr_NameScan		= false;
 	gFdr_WaitTicks		= 0;
 	gFdr_RetryHold		= 0;
 
@@ -2698,6 +2720,7 @@ function Atr_Finder_StartNameScan (name, onFinish)
 	gFdr_DupRetries		= 0;
 	gFdr_SkippedPages	= 0;
 	gFdr_CapHit			= false;
+	gFdr_NameScan		= true;
 	gFdr_WaitTicks		= 0;
 	gFdr_RetryHold		= 0;
 
@@ -2753,6 +2776,7 @@ function Atr_Finder_StartSearch ()
 	gFdr_DupRetries		= 0;
 	gFdr_SkippedPages	= 0;
 	gFdr_CapHit			= false;
+	gFdr_NameScan		= false;
 	gFdr_WaitTicks		= 0;
 	gFdr_RetryHold		= 0;
 	gFdr_SpecQueue		= Fdr_BuildSpecQueue ();

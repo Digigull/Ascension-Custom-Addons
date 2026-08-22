@@ -50,6 +50,9 @@ function AtrSearch:Init (searchText, exact, rescanThreshold, callback)
 	end
 
 	self.origSearchText = searchText;
+
+	-- Cleared per search, not per page: AnalyzeResultsPage only ever sets it.
+	self.capHit = false;
 	
 	if (not exact) then
 		if (zc.StringStartsWith (searchText, "\"") and zc.StringEndsWith (searchText, "\"")) then
@@ -467,7 +470,50 @@ function AtrSearch:AnalyzeResultsPage()
 	-- means the server had nothing more to give; anything else -- an early-out
 	-- above, or a watchdog reaching Finish while a page is outstanding -- leaves
 	-- this false and the collected listings are discarded rather than believed.
+	--
+	-- SET BEFORE THE PAGE CEILING BELOW, and that ordering is the point: a search
+	-- the ceiling stops has NOT seen the whole book, so it must not be observed.
+	-- Reading a truncated set as complete would report every listing on the pages
+	-- we chose not to fetch as sold.
 	self.anComplete = done;
+
+	-- THE PAGE CEILING ("Pages per Scan", the box on the SELL tab).
+	--
+	-- This loop had no ceiling at all -- it paged until the server handed back a
+	-- short page.  QueryAuctionItems matches the name as a SUBSTRING, so pricing
+	-- one item could walk most of the auction house: eighteen pages per item in
+	-- the owner's 2026-08-23 probe, each one a server round trip and a visible
+	-- client hitch, and almost all of it listings of other items.  The Finder
+	-- engine has had Fdr_PageCeiling for exactly this reason; the pane search
+	-- never did.
+	--
+	-- Atr_PageCap_Get returns 0 for "no ceiling", which is what the Max button
+	-- stores and what reproduces the old behaviour exactly.  Guarded on the
+	-- function existing because this file does not depend on Auctionator.lua's
+	-- load order.
+	if (not done and type (Atr_PageCap_Get) == "function") then
+
+		local cap = Atr_PageCap_Get();
+
+		-- current_page counts pages REQUESTED: Continue() increments it after
+		-- sending, so page 0's results arrive with it already at 1.
+		if (cap > 0 and self.current_page >= cap) then
+
+			done = true;
+			self.capHit = true;
+
+			-- NEVER SILENT.  A price recommendation that came off a partial book
+			-- can be above the market, and the player has to be able to connect
+			-- that to the setting that caused it -- a one-line notice naming both
+			-- is the whole of what makes the dial safe to ship.
+			if (DEFAULT_CHAT_FRAME) then
+				DEFAULT_CHAT_FRAME:AddMessage (string.format (
+					"|cffffcc00Auctionator:|r stopped scanning |cffffffff%s|r at %d pages"
+					.. " -- raise \"Pages per Scan\" on the SELL tab (or press Max) for the"
+					.. " full book.", tostring (self.searchText), cap));
+			end
+		end
+	end
 
 	if (not done) then
         self.processing_state = KM_PREQUERY;

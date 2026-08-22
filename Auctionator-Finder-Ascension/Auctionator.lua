@@ -3556,6 +3556,214 @@ function Atr_Sell_DropZoneEnsure ()
     return f;
 end
 
+-----------------------------------------
+-- "Pages per Scan" -- the pane search's page ceiling, in the top-right corner
+-- of the inventory window
+--
+-- WHY THERE IS A CEILING AT ALL.  QueryAuctionItems' name filter is a SUBSTRING
+-- match server-side, and AtrSearch pages until the server hands back a short
+-- page -- it has never had a ceiling, unlike the Finder engine, which has
+-- Fdr_PageCeiling.  So pricing ONE item can walk most of the auction house.
+-- The owner's probe caught 448 AUCTION_ITEM_LIST_UPDATE events against about 25
+-- items dropped in the sell slot (2026-08-23): roughly eighteen pages each,
+-- almost all of them listings of other items whose names merely contain this
+-- one's.  Every page is a server round trip and a ~305 ms client frame, and
+-- that rate is the query pressure the disconnects came out of.
+--
+-- IT IS A DIAL AND NOT A CONSTANT BECAUSE IT COSTS SOMETHING.  The
+-- recommendation undercuts the lowest listing the search actually SAW, so a
+-- search cut short can price you ABOVE the market -- the cheapest copy of your
+-- item might be on page twelve.  How much that matters depends on the item and
+-- on how busy the realm is, which is a judgement the seller makes and the
+-- source cannot.  Hence a box on the tab.  Max removes the ceiling entirely and
+-- restores exactly the behaviour that shipped before this.
+--
+-- A truncated search is never silent: AnalyzeResultsPage says so in chat, and
+-- marks the result set incomplete so the Analysis feed cannot read the listings
+-- it never fetched as having sold.
+-----------------------------------------
+
+ATR_PAGECAP_DEFAULT  = 10;      -- 500 listings; more than any ordinary item needs
+ATR_PAGECAP_OFF      = 0;       -- the stored value that means "no ceiling"
+-- Past this the engine's own guard -- "more than 3000 results" on page one --
+-- fires first, so a larger number is not a larger search, it is just Max.
+ATR_PAGECAP_MAXPAGES = 60;
+
+-- The ceiling in force, in pages.  0 means none.  Read live from the saved
+-- table rather than cached into a local: it is read once per auction page, and
+-- a cached copy would need invalidating from the Set button, the Max button and
+-- VARIABLES_LOADED alike.
+function Atr_PageCap_Get ()
+
+    local v = AUCTIONATOR_FINDER_SETTINGS and AUCTIONATOR_FINDER_SETTINGS.panePageCap;
+
+    -- Absent, not zero: the setting has never been touched, so the default
+    -- applies.  An explicit 0 is the player having pressed Max and must survive.
+    if (v == nil) then return ATR_PAGECAP_DEFAULT; end
+
+    v = math.floor (tonumber (v) or ATR_PAGECAP_DEFAULT);
+
+    if (v < 1 or v >= ATR_PAGECAP_MAXPAGES) then return ATR_PAGECAP_OFF; end
+
+    return v;
+end
+
+-- What the box shows for the current setting.
+function Atr_PageCap_Text ()
+    local v = Atr_PageCap_Get();
+    if (v == ATR_PAGECAP_OFF) then return "Max"; end
+    return tostring (v);
+end
+
+-- Store a ceiling.  Anything that is not a number in 1..59 -- blank, "max",
+-- zero, a word, or a number big enough that the engine's own guard would stop
+-- the search first -- is stored as "no ceiling", which is what the Max button
+-- passes.  Returns the value actually stored.
+function Atr_PageCap_Store (value)
+
+    local n = tonumber (value);
+
+    if (n == nil or n < 1 or n >= ATR_PAGECAP_MAXPAGES) then
+        n = ATR_PAGECAP_OFF;
+    else
+        n = math.floor (n);
+    end
+
+    AUCTIONATOR_FINDER_SETTINGS = AUCTIONATOR_FINDER_SETTINGS or {};
+    AUCTIONATOR_FINDER_SETTINGS.panePageCap = n;
+
+    return n;
+end
+
+-- Put the box back in step with the stored setting.  Called after either
+-- button, and on every layout apply, so the box can never disagree with what
+-- the searches are actually doing.
+function Atr_PageCap_Refresh ()
+    if (Atr_PageCap_Box) then
+        Atr_PageCap_Box:SetText (Atr_PageCap_Text());
+        Atr_PageCap_Box:SetCursorPosition (0);
+    end
+end
+
+local ATR_PAGECAP_TIP_TITLE = "Pages per Scan";
+local ATR_PAGECAP_TIP_BODY  =
+    "How many auction pages one item's price scan may fetch before it stops.\n\n"
+    .. "The auction house matches your item's name as a SUBSTRING, so pricing one "
+    .. "item can page through hundreds of listings that are not it. Each page is a "
+    .. "round trip to the server and a visible hitch.\n\n"
+    .. "Lower is faster and lighter on the server. The cost is accuracy: the price "
+    .. "you are offered undercuts the cheapest listing the scan actually saw, so a "
+    .. "scan that stops early can price you above the market.\n\n"
+    .. "Type a number and press Set, or press Enter. Max removes the limit.";
+
+local function Atr_PageCap_TipShow (self)
+    if (GameTooltip == nil) then return; end
+    GameTooltip:SetOwner (self, "ANCHOR_RIGHT");
+    GameTooltip:SetText (ATR_PAGECAP_TIP_TITLE, 1, 1, 1);
+    GameTooltip:AddLine (ATR_PAGECAP_TIP_BODY, 0.8, 0.8, 0.8, true);
+    GameTooltip:Show();
+end
+
+local function Atr_PageCap_TipHide ()
+    if (GameTooltip) then GameTooltip:Hide(); end
+end
+
+-- Build the block once.  Lazy and nil-tolerant for the same reason
+-- Atr_Sell_DropZoneEnsure is: this runs from the layout path, which can be
+-- reached before the panel exists, and it must not create a second copy of
+-- anything (SELL-TAB-COST.md -- a frame made twice is a frame leaked once).
+function Atr_PageCap_Ensure ()
+
+    if (Atr_PageCap_Panel) then return Atr_PageCap_Panel; end
+    if (not Atr_Main_Panel or not CreateFrame) then return nil; end
+
+    local p = CreateFrame ("Frame", "Atr_PageCap_Panel", Atr_Main_Panel);
+    p:SetWidth (140);
+    p:SetHeight (34);
+
+    -- Above the headings-bar divider for the same reason the Scan Inventory
+    -- button is: the band this sits in is empty on the SELL tab, but the divider
+    -- art is drawn over anything at a default level.
+    p:SetFrameLevel ((Atr_Main_Panel:GetFrameLevel() or 1) + 5);
+
+    -- RIGHT TO LEFT from the panel's bottom-right corner, so the whole block
+    -- stays flush with the inventory column's right edge whatever the buttons
+    -- end up measuring.  Left to right would need the widths known here.
+    local maxBtn = CreateFrame ("Button", "Atr_PageCap_MaxButton", p, "UIPanelButtonTemplate");
+    maxBtn:SetWidth (38);
+    maxBtn:SetHeight (18);
+    maxBtn:SetPoint ("BOTTOMRIGHT", p, "BOTTOMRIGHT", 0, 0);
+    maxBtn:SetText ("Max");
+
+    local setBtn = CreateFrame ("Button", "Atr_PageCap_SetButton", p, "UIPanelButtonTemplate");
+    setBtn:SetWidth (34);
+    setBtn:SetHeight (18);
+    setBtn:SetPoint ("RIGHT", maxBtn, "LEFT", -2, 0);
+    setBtn:SetText ("Set");
+
+    -- InputBoxTemplate draws its border OUTSIDE the box, so the gap to the Set
+    -- button is wider than it looks in these numbers.
+    local box = CreateFrame ("EditBox", "Atr_PageCap_Box", p, "InputBoxTemplate");
+    box:SetWidth (34);
+    box:SetHeight (18);
+    box:SetPoint ("RIGHT", setBtn, "LEFT", -6, 0);
+    box:SetAutoFocus (false);
+    box:SetMaxLetters (3);
+
+    -- NOT SetNumeric.  The box has to be able to say "Max", which is the whole
+    -- point of the button beside it, and a numeric EditBox cannot hold letters.
+    -- Atr_PageCap_Store does the validating instead, and treats anything that is
+    -- not 1..59 as "no ceiling" -- so a typo reads as Max rather than as 0 pages.
+
+    local head = p:CreateFontString ("Atr_PageCap_Header", "ARTWORK", "GameFontNormalSmall");
+    head:SetPoint ("BOTTOMLEFT", box, "TOPLEFT", -2, 3);
+    head:SetText ("Pages per Scan");
+
+    -- Reads the box rather than its own argument: the same handler serves the
+    -- Set button (argument: the button) and OnEnterPressed (argument: the box).
+    local function apply ()
+        Atr_PageCap_Store (Atr_PageCap_Box:GetText());
+        Atr_PageCap_Refresh();
+        Atr_PageCap_Box:ClearFocus();
+    end
+
+    setBtn:SetScript ("OnClick", apply);
+
+    maxBtn:SetScript ("OnClick", function ()
+        Atr_PageCap_Store (ATR_PAGECAP_OFF);
+        Atr_PageCap_Refresh();
+        Atr_PageCap_Box:ClearFocus();
+    end);
+
+    box:SetScript ("OnEnterPressed", apply);
+    box:SetScript ("OnEscapePressed", function (self)
+        Atr_PageCap_Refresh();          -- put the stored value back, discard the edit
+        self:ClearFocus();
+    end);
+
+    -- Deliberately NOT applied on focus loss, unlike the Analysis tab's batch
+    -- box.  This one has a Set button of its own, and a half-typed "1" becoming
+    -- a one-page ceiling because the mouse moved is worse than nothing.
+    box:SetScript ("OnEditFocusLost", function () Atr_PageCap_Refresh(); end);
+
+    -- The same tooltip on all three, because a block of controls the player has
+    -- not met before should explain itself wherever in it the pointer lands.
+    --
+    -- On the three WIDGETS and not on the container: a mouse-enabled parent
+    -- gets OnLeave as the pointer crosses onto its child, and 3.3.5 does not
+    -- order that against the child's OnEnter -- so the tooltip would blink out
+    -- half the times you reached for the box.  The header is a FontString and
+    -- takes no scripts anyway.
+    for _, w in ipairs ({ box, setBtn, maxBtn }) do
+        w:SetScript ("OnEnter", Atr_PageCap_TipShow);
+        w:SetScript ("OnLeave", Atr_PageCap_TipHide);
+    end
+
+    Atr_PageCap_Refresh();
+
+    return p;
+end
+
 function Atr_ApplySellExpandedLayout()
 
     -- gSellApplying is NOT redundant with gSellLayoutExpandedApplied.  That one
@@ -3732,6 +3940,20 @@ function Atr_ApplySellExpandedLayout()
         if (Atr_SB_Build) then Atr_SB_Build(); end
     end
 
+    -- "Pages per Scan", in the inventory window's top-right corner (owner's
+    -- request, 2026-08-23).  It sits in the band section 2 emptied, anchored to
+    -- the BROWSER rather than to a panel offset so it stays in that corner if
+    -- ATR_SELL_INV_W or ATR_SELL_BROWSER_Y is ever retuned.  Two pixels of air
+    -- above the frame's top edge; the "Inventory" label shares the row but is
+    -- at the far left of it.
+    local capBlock = Atr_PageCap_Ensure and Atr_PageCap_Ensure();
+    if (capBlock and Atr_SellBrowser) then
+        capBlock:ClearAllPoints();
+        capBlock:SetPoint ("BOTTOMRIGHT", Atr_SellBrowser, "TOPRIGHT", 0, 2);
+        Atr_PageCap_Refresh();      -- the saved value may have arrived since it was built
+        capBlock:Show();
+    end
+
     -- The right half.  Its panel, its rows, its buttons and the post driver all
     -- live in AuctionatorBatchPost.lua; this call and Atr_BP_Unplace in the
     -- reset path below are the whole of the coupling.  The panel is placed 16px
@@ -3828,6 +4050,10 @@ function Atr_ResetSellExpandedLayout()
     if (Atr_SellDropHint) then Atr_SellDropHint:Hide(); end
     if (Atr_SellIgnoreButton) then Atr_SellIgnoreButton:Hide(); end
     if (Atr_SellBrowser) then Atr_SellBrowser:Hide(); end
+
+    -- Same contract as the batch column's: a child of Atr_Main_Panel that
+    -- nothing else hides on the way to the Buy tab.
+    if (Atr_PageCap_Panel) then Atr_PageCap_Panel:Hide(); end
 
     -- Atr_SB_Build's tail re-shows the browser whenever this flag is up, and
     -- it is now parked back on top of the sell controls.
