@@ -3,7 +3,7 @@
 Find out *what* is causing client stutter before trying to fix it. Per-addon and
 per-event frame-time spike attribution, with a copy/paste report.
 
-**Version 0.2.0 · Interface 30300 (WotLK 3.3.5 / Ascension)**
+**Version 0.2.1 · Interface 30300 (WotLK 3.3.5 / Ascension)**
 
 ## What it does
 
@@ -46,6 +46,7 @@ addon count means it got there early.
 | `/cpp load` | Initial-load timeline + per-addon load cost |
 | `/cpp matrix` | API support matrix for this client |
 | `/cpp thr <ms>` | Set the spike threshold |
+| `/cpp sample <sec>` | Per-addon attribution scan interval, `0` to turn it off — see *What the probe costs you* |
 | `/cpp gc` | Force one full GC and measure the pause |
 | `/cpp mem` | Bounded `_G` walk ranking the largest memory globals |
 | `/cpp backdrop <Frame>` | Read a live window's backdrop, to compare one window's chrome against another |
@@ -60,6 +61,18 @@ without a `/cpp clear` mixes this session's spikes with restored ones. Those are
 marked `old=1` so a report is never misread.
 
 ## Notes
+
+- **What the probe costs you.** Answering "which addon moved memory" means calling
+  `UpdateAddOnMemoryUsage()`, which walks the entire Lua heap. On a played-in session
+  (106 MB heap, 22 addons) that walk measured **~50 ms** — long enough to feel. Until
+  0.2.1 it ran every 5 seconds and the driver stamped its frame clock *before* running
+  it, so the cost landed in the next frame's `dt` and the probe recorded its own scan
+  as an unattributed ~50 ms spike, on an exact 5-second grid, forever. Now the scan
+  runs only while the at-a-glance window is open (the one thing reading it live) plus
+  once when you build a report, its cost is timed and printed as the `P` row, and the
+  clock and heap baselines are re-stamped after it so it can never be billed to the
+  client again. Tune with `/cpp sample <sec>`. Full account:
+  `management/addons/clientperfprobe/SAMPLER-COST.md`.
 
 - **There is no CPU attribution, by design.** `scriptProfile` is locked from Lua
   on Ascension — the client resets it to 0 on load — which takes the whole

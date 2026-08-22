@@ -12,6 +12,7 @@
        Load-A : L|r=..|addon=<name>|ms=<loadMs>|heap=<KB>
        Spike  : S|i=..|t=..|dt=..|cmb=..|cleu=..|dh=..|sus=<CODE>|zone=..|ev=..[|open=<frame>][|mouse=held][|net=in/out/lat][|str=n][|old=1]
        Offend : O|r=..|addon=..|mem=..|ev=..
+       Probe  : P|int=<sec>|live=<0/1>|last=<ms>|max=<ms>|n=<scans>|over=<n>|win=<sec>[|base=1]
        Blocked: B|r=..|addon=<name>|func=<protected fn>|n=<count>|ps=<perSec>
        MemSum : WM|kb=<estTotal>|tbls=<visited>|roots=<n>|cap=<0/1>|shown=<n>
        MemTop : W|r=..|name=<global>|kb=<estKB>|tbls=<tableCount>
@@ -476,6 +477,12 @@ Report.GLOSSARY = {
       term = "Mouse held",
       plain = "Shown when you were holding the mouse button as the frame froze - the fingerprint of dragging a window. It appears next to the cause even when something else is named, as context for what you were doing at the time.",
       tech = "IsMouseButtonDown('LeftButton') sampled on the spike frame. Feature-detected (not in the API dump); when absent the field is simply omitted. Drives the Window-drag label when no measured cause owns the frame, and is reported as complementary context (mouse=held) otherwise." },
+    -- Not a per-spike field: a report-level row about the MEASUREMENT, so it belongs
+    -- with the how-to-read entries rather than in the spike-column list.
+    { group = "How to read this", field = "P",
+      term = "What the probe costs you",
+      plain = "This addon is not free, and this row says exactly what it costs. To answer 'which addon moved memory' it has to walk the whole memory pile, which takes tens of milliseconds on a long session - long enough to feel. So it only does that while this window is open, or once when you ask for a report. last/max are the millisecond cost of that walk, n is how many it has run, and over is how many crossed your spike threshold.",
+      tech = "Attrib.sample() calls UpdateAddOnMemoryUsage(), an O(heap) walk; measured ~50 ms against a 106 MB heap with 22 addons. Until 0.2.1 it ran every 5 s and the driver re-stamped lastClock BEFORE it, so the walk landed in the NEXT frame's dt and was captured as an unattributed spike - a live capture came back as an exact 5-second grid of sus=? frames at 50-56 ms that were the probe measuring itself. Now: gated on a live consumer, interval settable with /cpp sample (0 = off), timed, and the clock plus heap baselines re-stamped AFTER the walk. win= is the window the O rows cover, which is NOT the header win= once the scan is on demand. base=1 marks a first scan, whose offender rows are a baseline (every addon zero) rather than deltas." },
     { group = "The numbers on each spike", field = "str",
       term = "New-player loads",
       plain = "How many new players or models were streaming into view on that frame. A high number next to a big unexplained freeze is a hint that model-loading (see 'Loading players') caused it.",
@@ -744,6 +751,35 @@ function Report.build(data)
         end
     end
 
+    -- PROBE — WHAT THE MEASUREMENT ITSELF COSTS. The per-addon attribution scan
+    -- (UpdateAddOnMemoryUsage: a full Lua-heap walk) is the one expensive thing this
+    -- addon does on the frame loop, and for the whole of 0.2.0 it was invisible AND
+    -- mis-recorded: the driver re-stamped its frame clock before running it, so the
+    -- walk landed in the next frame's dt and came back as an unattributed ~50ms
+    -- spike every 5 seconds (management/addons/clientperfprobe/SAMPLER-COST.md).
+    -- A probe that hides its own cost is not measuring, it is contaminating — so the
+    -- cost is now timed and reported here, and win= says what window the O rows above
+    -- actually cover (the scan is on demand when the at-a-glance window is closed,
+    -- so that is NOT the same window as the header's win=).
+    if type(data.probe) == "table" then
+        local p = data.probe
+        local row = {
+            "P",
+            "int=" .. f1(p.interval or 0),
+            "live=" .. (p.live and "1" or "0"),
+            "last=" .. f1(p.last or 0),
+            "max=" .. f1(p.max or 0),
+            "n=" .. inum(p.n or 0),
+            "over=" .. inum(p.over or 0),
+            "win=" .. f1(p.since or 0),
+        }
+        -- The O rows above are a BASELINE, not deltas — every addon reads zero
+        -- because there is nothing to compare against yet. Printed only when true
+        -- (same rule as net=/str=/old=): a flag that is always there says nothing.
+        if p.baseline then row[#row + 1] = "base=1" end
+        body[#body + 1] = table.concat(row, SEP)
+    end
+
     -- BLOCKED (the misbehaving-addon namer). Each ADDON_ACTION_BLOCKED/FORBIDDEN is
     -- SELF-DESCRIBING: the engine names the offending addon + the protected function
     -- it retried under combat lockdown. Ranked by count — a live capture named
@@ -961,6 +997,23 @@ if _SELFTEST then
     local nodrag = Report.build({ meta = { version = "1" },
         spikes = { { index = 3, t = 10.0, dt = 90.0, zone = "x", mouseHeld = false, events = {} } } })
     assert(not nodrag.text:find("mouse=", 1, true), "button-up frame omits mouse=")
+
+    -- build: the P row reports the measurement's own cost, and win= is the offender
+    -- window (not the header's rate window). Regression guard for the 0.2.0 bug where
+    -- the sampler's ~50ms walk was invisible here and billed to the client instead.
+    local probeOut = Report.build({ meta = { version = "1" },
+        probe = { interval = 30, live = false, last = 52.4, max = 58.3,
+                  n = 12, over = 7, since = 124.0 } })
+    has(probeOut.text, "P^int=30.0^live=0^last=52.4^max=58.3^n=12^over=7^win=124.0",
+        "build emits the probe-cost row")
+    assert(not probeOut.text:find("base=", 1, true), "settled attribution omits base=")
+    local baseOut = Report.build({ meta = { version = "1" },
+        probe = { interval = 30, last = 41.0, n = 1, baseline = true } })
+    has(baseOut.text, "^base=1", "a first-scan report flags its offender rows as a baseline")
+
+    -- absent probe data must not fabricate a row (same rule as net=/str=)
+    local noProbe = Report.build({ meta = { version = "1" } })
+    assert(not noProbe.text:find("P^int=", 1, true), "no probe data -> no P row")
 
     -- suspectLabel: friendly names for the UI (the owner-approved plain-English set)
     eq(Report.suspectLabel("?"), "Unknown (likely the game engine)", "label ?")

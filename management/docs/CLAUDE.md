@@ -61,9 +61,13 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/auctionator/tools/price-variant-smoke.lua # 20 assertions
   lua5.1 management/addons/auctionator/tools/batch-price-smoke.lua  # 25 assertions
   lua5.1 management/addons/auctionator/tools/bound-scan-smoke.lua   # 48 assertions
+  lua5.1 management/addons/clientperfprobe/tools/selftest.lua       # 6 pure modules
   ```
 
-  All eleven pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
+  All twelve pass as of 2026-08. The last one is a RUNNER, not a harness: six of
+  `!ClientPerfProbe`'s pure modules already carried `if _SELFTEST then` blocks with no
+  way to invoke them from the repo. It stubs nothing, and the client-facing files stay
+  syntax-check-only. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
   anything new belongs there, not in an addon folder. Several source files are deliberately
   shaped to be testable this way — helpers kept global, `rawget(_G, "CreateFrame")` guards — so
   **do not break that shape** when editing them. That is a preservation rule, not an
@@ -205,7 +209,7 @@ a 1px `WHITE8X8` border, `SetBackdropColor(0.05, 0.05, 0.07, 0.95)`,
 
 | Addon | Indentation | Notes |
 |---|---|---|
-| `!ClientPerfProbe` | 4 spaces | The measurement addon. `darkBackdrop()` in `UI.lua` is its house helper. |
+| `!ClientPerfProbe` | 4 spaces | The measurement addon. `darkBackdrop()` in `UI.lua` is its house helper. Why the probe spent 0.2.0 recording its own per-addon memory scan as a 5-second grid of unattributed ~50ms spikes, and the three rules any periodic probe work must now follow: `management/addons/clientperfprobe/SAMPLER-COST.md` — read before touching `Attrib.sample`, the driver's `onUpdate`, or anything else you are tempted to put on that frame loop. |
 | `AscensionHonorTracker` | 4 spaces | Small. Panel attaches to the character panel; strata matches it. |
 | `Auctionator-Finder-Ascension-History` | tabs | Not an addon — the companion `.toc` that owns `AUCTIONATOR_MARKET_HISTORY` so it gets a file of its own. One line of Lua. Do not put anything else in it: the whole bargain is that everything in that file is re-derivable by scanning. `management/addons/auctionator/HISTORY-STORE.md`. |
 | `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. Vendor pricing: `management/addons/auctionator/VENDOR-PRICE-RESEARCH.md` — read before touching the price estimator or the shipped seed. How the addon is put together — upstream vs. local, the two UI worlds, the saved-variable map, and the recipes for adding a tab or a subsystem: `management/addons/auctionator/FRAMEWORK.md` — read before adding anything new. Open request queue (owner's backlog, with what each item means against the current code): `management/addons/auctionator/BACKLOG.md`. The SELL tab's Batch Post column — the queue, the post driver, the band arithmetic, and why soulbound items were leaking through a filter that was already excluding them: `management/addons/auctionator/BATCH-POST.md` — read before touching the sell inventory browser or `Atr_IsItemSellableOnAH`. Why the Full Scan may now sweep Weapons and Armor, how a gear price is filed under its scaled version rather than its name, and the per-category level range: `management/addons/auctionator/FULL-SCAN-GEAR.md` — read before touching the Full Scan picker, `Fdr_HarvestPage` or the scale-variant store. Why that browser must never create a widget it has created before, and why only one thing at a time may hold the auction query channel: `management/addons/auctionator/SELL-TAB-COST.md` — read before touching `Atr_SB_Build`, any `QueryAuctionItems` caller, or the SELL tab's "Pages per Scan" ceiling. A general market price history in a companion SavedVariables file — researched, not built, and it reopens a decision `FRAMEWORK.md` §5 states as settled: `management/addons/auctionator/HISTORY-STORE.md`. |
