@@ -1020,3 +1020,35 @@ makes 3, sells at a LOSS:
 
 `luac5.1 -p` clean; all five Auctionator suites still pass (27 + 68 + 114 + 25 + 20).
 **Not verified in game.**
+
+---
+
+## 12. Batch Post: the right half of the SELL inventory, and soulbound at the bottom — DONE
+
+**Asked (owner, 2026-08-22):** *"On the Auctionator sell tab, divide the inventory area in half and
+make the new (right half) called batch post, add items from inventory section into batch by right
+clicking them. Press Batch Post button, sells at automatic set price discount, and whatever duration
+is currently set. Also let's keep all soulbound items at the bottom, they are mixed in here and
+there."*
+
+**Built 2026-08-22.** New file `AuctionatorBatchPost.lua` (queue, panel, post driver); the SELL
+tab's expanded layout splits the band and calls into it twice. Full write-up:
+`management/addons/auctionator/BATCH-POST.md`.
+
+Two findings worth carrying forward without opening that doc:
+
+- **The soulbound half was a bug, not a preference.** Those items were already being *filtered out*
+  — `Atr_IsItemSellableOnAH` cached its whole verdict under the **item link**, and boundness is not
+  a property of the link, so whichever copy of an item was read first became the verdict for all of
+  them. Bag order decided which. That is what "mixed in here and there" looked like from outside.
+  The bind scan is per bag slot and uncached now; only the quality half keeps a link key. With the
+  detection fixed they would have vanished entirely, which is not what was asked for, so they are
+  kept in a `Soulbound` bucket above `Ignore` with their tiles inert.
+- **The batch cannot price the way the sell box does, and says so.** The sell box queries per item
+  and refuses to undercut listings that are *yours*; a batch cannot afford a query per item, so it
+  prices off `Atr_GetAuctionPrice`'s cascade, which carries no owner. Consequence, documented rather
+  than hidden: batch-posting the same item twice without a scan in between undercuts your own
+  listing by one step. `Scan Inventory` is the fix and sits under the left column.
+
+`luac5.1 -p` clean; XML parses; all nine offline suites still pass. **Not verified in game** — the
+four things worth looking at first are listed at the end of `BATCH-POST.md`.

@@ -50,6 +50,7 @@ AuctionatorAnalysis.lua
 AuctionatorAdvisor.lua
 AuctionatorFarmList.lua
 AuctionatorCallBoard.lua
+AuctionatorBatchPost.lua
 
 AuctionatorConfig.xml
 
