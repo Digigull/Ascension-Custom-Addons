@@ -1295,8 +1295,13 @@
 
 	<!-- FULLSCREEN_DIALOG, not DIALOG: a toplevel raise restacks its whole strata,  -->
 	<!-- so keep these dialogs on the sparse one (see Atr_Confirm_Frame above).      -->
+	<!-- 520x455, not the old 460x420: the category picker built into the space  -->
+	<!-- Atr_FullScanHTML used to occupy now carries a min/max level pair on     -->
+	<!-- every row (Fdr_FS_BuildPicker), and two columns of those do not fit in  -->
+	<!-- 405 points of width.  Nothing clips a child frame in 3.3.5, so the      -->
+	<!-- overflow would have been invisible in code and obvious in game.         -->
 	<Frame name="Atr_FullScanFrame" inherits="AuctionatorDialog" toplevel="true" parent="UIParent" frameStrata="FULLSCREEN_DIALOG" enableMouse="true" hidden="true">
-		<Size><AbsDimension x="460" y="420" /></Size>		
+		<Size><AbsDimension x="520" y="455" /></Size>		
 		<Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="220" y="-130"/></Offset></Anchor></Anchors>
 
 		<Layers>

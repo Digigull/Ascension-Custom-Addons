@@ -103,7 +103,8 @@ function Fdr_Options_Ensure ()
 	gFdr_OptRows.prices = row ("Atr_Finder_Opt_Prices_CB", -134,
 		FT("Update Auctionator prices from Finder scans"),
 		FT("Update Auctionator prices"),
-		{ FT("Feeds this scan's lowest buyouts into Auctionator's own price database, so the Buy and Sell tabs stay current without a Full Scan. Scaled gear is excluded (that database is keyed by name, which cannot tell scaled variants apart) and nothing is ever deleted. Skipped entirely when a scan hits the result cap, because a truncated scan's lowest prices are too high.") });
+		{ FT("Feeds this scan's lowest buyouts into Auctionator's own price database, so the Buy and Sell tabs stay current without a Full Scan. Scaled gear is excluded (that database is keyed by name, which cannot tell scaled variants apart) and nothing is ever deleted. Skipped entirely when a scan hits the result cap, because a truncated scan's lowest prices are too high."),
+		  FT("Scaled gear is not lost, only kept elsewhere: a Full Scan of the Weapon or Armor category reads each listing's own item level as it goes and files the price under that exact version instead (/atrahdb).") });
 
 	gFdr_OptRows.gearjump = row ("Atr_Finder_Opt_GearJump_CB", -160,
 		FT("Open weapons and armor on the Finder tab"),
@@ -281,7 +282,8 @@ if (SlashCmdList) then
 			..((Atr_AHVariant_Enabled and Atr_AHVariant_Enabled ()) and "ON" or "OFF")
 			.."  ·  "..tostring (db and db.c or 0).." variant(s) known"
 			.."  ·  session "..tostring (db and db.s or 0));
-		zc.msg_pink ("Use /atrahdb on|off.  Prices come from the Verify button; a '*' on the");
+		zc.msg_pink ("Use /atrahdb on|off.  Prices come from the Verify button and from a Full");
+		zc.msg_pink ("Scan of the Weapon/Armor categories; a '*' on the");
 		zc.msg_pink ("Auction line means the price is for that exact scale-variant.");
 	end
 
