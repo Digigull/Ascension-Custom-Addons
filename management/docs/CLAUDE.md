@@ -60,7 +60,7 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/auctionator/tools/callboard-smoke.lua    # 25 assertions
   lua5.1 management/addons/auctionator/tools/price-variant-smoke.lua # 20 assertions
   lua5.1 management/addons/auctionator/tools/batch-price-smoke.lua  # 25 assertions
-  lua5.1 management/addons/auctionator/tools/bound-scan-smoke.lua   # 32 assertions
+  lua5.1 management/addons/auctionator/tools/bound-scan-smoke.lua   # 48 assertions
   ```
 
   All eleven pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;

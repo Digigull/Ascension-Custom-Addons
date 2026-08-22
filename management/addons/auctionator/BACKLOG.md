@@ -1157,3 +1157,51 @@ asserted as such).
 `luac5.1 -p` clean; XML parses; all eleven suites pass. **Not verified in game** — and `/atrbound`
 is the first thing to run there, because anything still leaking is a string nobody has seen yet and
 that dump names it.
+
+---
+
+## 15. First real /atrbound dump: three corrections — DONE
+
+**Owner ran `/atrbound` over 99 bag items, 2026-08-23** (item 14 shipped it the same day). The dump
+did its job: two of item 14's guesses were wrong and it said so, and the reported item turned out to
+need a mechanism that did not exist yet. Written up in `BATCH-POST.md` §4d.
+
+**1. Ascension redefines stock globals rather than adding new ones.** The dump prints the marker
+list actually in use, and it read `Binds to realm` and `Realm Bound` where the source expected
+`Binds to account` and `Account Bound`. So `ITEM_BIND_TO_ACCOUNT` and `ITEM_ACCOUNTBOUND` already
+covered every realm-bound item in the dump, `ITEM_BNETACCOUNTBOUND` does not exist on this client at
+all (the `add` guard swallowed it, as designed), and **item 14's claim that Realmbound "has no
+global" was wrong**. The comment saying so is corrected in place rather than deleted — the guess was
+reasonable and someone will make it again. The two literals stay as belt-and-braces: the unspaced
+spelling, which no global carries, and a hedge against a client without the redefinition.
+
+**Worth generalising: this repo cannot read Ascension's globals, only its behaviour.** Any future
+work that leans on a stock `ITEM_*` / `LOCALE_*` string should print it back before trusting it.
+
+**2. A marker now has to START a line.** The dump caught a live false positive: Personal Bank's
+flavour text, *"...You can put soulbound items into bank."*, matched. That item was bound anyway so
+the verdict was right by luck, but the same sentence on a tradeable item would have hidden it with
+no visible cause. Every genuine binding line across all 99 items is the marker and nothing else, so
+matching is anchored to the start of the trimmed line. The line-1 name skip becomes a second guard
+rather than the only one.
+
+**3. The reported item needed a second source.** Item 22523's tooltip *in the bag* is one line long
+— just its name, no bind line to match. A slot scan cannot find what the slot does not have. New
+`Atr_Sell_ItemDefIsBound(link)`: `SetHyperlink` draws the item's DEFINITION, and on 3.3.5 that
+settles it, because a bind-on-pickup item binds when looted — if it is in your bags it is bound
+whatever the slot tooltip says. **That question is cacheable by link** (it is a property of the
+item, like quality) which is the only reason it can afford to run, and it cannot false-positive on
+BoE because "Binds when equipped" is not a marker. It keeps the same rule `Atr_Sell_ItemIsGrey`
+keeps: never remember a verdict read off a tooltip that had not arrived.
+
+`/atrbound` now prints the item's own tooltip whenever the slot's said nothing, so the two sources
+can be compared. **If 22523's definition also carries no bind line, this realm does not mark it
+bound and the db page is stale** — the auction house will take it and there is nothing to fix. The
+next dump answers that without another round trip, which is the point of the command.
+
+`bound-scan-smoke.lua` grew to 48 assertions: the real Ascension strings, the real flavour-text line,
+and both tooltip sources. It gained a ~30-line tooltip stub — the one place this suite is allowed to
+grow, because the new function caches by link and that is the exact shape of every bug item 12
+describes.
+
+`luac5.1 -p` clean; all eleven suites pass. **Not verified in game.**
