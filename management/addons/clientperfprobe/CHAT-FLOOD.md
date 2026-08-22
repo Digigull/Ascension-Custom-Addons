@@ -52,7 +52,10 @@ outright:
 | `FSK-EVT` | 31 | beacons |
 | `BBLC25C` | 188 | real payloads |
 
-`FSK` and `FSK-EVT` are FrostSeek's (`github.com/ayro-CMD/FrostSeek`). All three carry
+`FSK` and `FSK-EVT` are FrostSeek's (`github.com/ayro-CMD/FrostSeek`), confirmed in its
+source — `CHANNEL = "FSK"` in `Modules/Network/Network.lua` and
+`EVENT_CHANNEL = "FSK-EVT"` in `Modules/Community/Community.lua`, over a "serverless
+FrostNet protocol with heartbeat keepalives", which is what a 29-byte message is. All three carry
 many distinct senders — `snd=48` on two of them, and `cap=1` says the probe's
 distinct-sender cap was hit, so 48 is a floor and `top=` is only the loudest of the first
 48 it tracked. Many senders each contributing a little is **peer-to-peer addon sync**:
@@ -110,9 +113,40 @@ before an A/B means anything. Two captures 11 minutes apart disagreed by 32 % wi
 nothing changing in between. Wait five minutes, or read the trend across three captures —
 never conclude from the one taken straight after the change.
 
-`BBLC25C` is the largest single consumer and its owner was never identified — it is not
-FrostSeek's. Leaving it is safe and reversible, so it does not need identifying first,
-but if something stops working that channel is the first place to look.
+### What `BBLC25C` is
+
+Checked against FrostSeek's source rather than guessed. It appears there three times —
+in `Modules/LFG/LFG.lua`'s `CHANNEL_BLACKLIST` and twice in `Modules/LFG/LFM.lua` — and
+every one is a **blacklist**: channels FrostSeek recognises as *other addons'* data
+channels and excludes from its LFG/LFM scanning. FrostSeek never joins it. Its own
+channels are only two, `FSK` (`Modules/Network/Network.lua`) and `FSK-EVT`
+(`Modules/Community/Community.lua`), which matches the README and the 29–31 byte
+heartbeats measured.
+
+So `BBLC25C` belongs to a **third-party LFG addon in the same ecosystem**. FrostSeek's
+blacklists name its peers: `BLFG`, `HGE`, `BBLC25C`, plus a generic
+`^[A-Z][A-Z]%d+[~:]` protocol-prefix matcher and an explicit `^LC[123]` one — and
+`BBLC25C` contains that `LC`. The owning addon is **not identified**: the name is not
+documented anywhere publicly reachable, and no addon in this client's list claims it.
+
+What *is* established, and it is the more useful half:
+
+**Nothing on this client owned it.** The capture after leaving was taken following a
+full addon-load cascade — all 21 addons loaded, `L` rows for every one — and `BBLC25C`
+did not reappear in `GetChannelList`. Nothing re-joined it. The membership was a
+leftover: joined once by an addon since removed or disabled, and persisted in the saved
+chat config ever since.
+
+That makes it the purest possible case of the pattern this whole document is about:
+**46 messages a second, 188 bytes each, for an addon that was not even installed.** Not
+a busy channel, not a misbehaving addon — pure residue, invisible, and costing more than
+the two channels whose addon the owner actually uses. It is exactly what `v=COST` exists
+to catch, and it is why `j=1 disp=0` is worth a verdict of its own rather than two fields
+a reader has to combine.
+
+Leaving it was safe and reversible (`/join BBLC25C` restores it). If something ever does
+stop working, that channel is the first place to look — but nothing on this client reads
+it, so nothing should.
 
 ## Pointing the finger without being asked (0.2.4)
 
