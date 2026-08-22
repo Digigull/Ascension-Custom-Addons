@@ -3,7 +3,7 @@
 Find out *what* is causing client stutter before trying to fix it. Per-addon and
 per-event frame-time spike attribution, with a copy/paste report.
 
-**Version 0.2.4 · Interface 30300 (WotLK 3.3.5 / Ascension)**
+**Version 0.2.5 · Interface 30300 (WotLK 3.3.5 / Ascension)**
 
 ## What it does
 

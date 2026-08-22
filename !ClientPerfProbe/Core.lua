@@ -14,7 +14,7 @@
 local ADDON, ns = ...
 
 local Core = {}
-local VERSION = "0.2.4"
+local VERSION = "0.2.5"
 
 -- defaults (persisted into ClientPerfProbeDB.settings)
 local DEFAULTS = {

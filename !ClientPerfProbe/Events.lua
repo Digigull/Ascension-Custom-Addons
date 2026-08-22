@@ -162,7 +162,13 @@ function Chat:record(name, id, sender, bytes)
     -- bytes arrives as a number from the caller's #message; a tonumber() call here
     -- would be a wasted C call on a path that runs at the flood rate.
     c.bytes = c.bytes + ((type(bytes) == "number") and bytes or 0)
-    if c.id == nil then c.id = tonumber(id) end
+    -- Keep the LATEST id, not the first. Channel indices are not stable: leaving three
+    -- channels renumbered every survivor (Ascension 2->1, Newcomers 3->2, Zone 4->3,
+    -- Trade 5->4, LookingForGroup 6->5 in a live capture). A first-sight-only id would
+    -- go stale the moment you /leave something mid-window and could then mis-match the
+    -- freshly-read GetChannelList, flipping j=. The comparison is a cheap number test
+    -- and tonumber only runs on an actual change, so this stays lean at flood rates.
+    if id ~= nil and id ~= c.id then c.id = tonumber(id) or c.id end
     self.total = self.total + 1
 
     if type(sender) == "string" and sender ~= "" then
@@ -586,6 +592,14 @@ if _SELFTEST then
 
         -- limit trims the ranked list
         eq(#ch:ranked(10, 1), 1, "ranked honours the limit")
+
+        -- channel indices renumber when you leave a channel; the row must follow
+        local moved = ns.ChatCounter.new()
+        moved:record("Trade", 5, "A", 10)
+        eq(moved:ranked(1)[1].id, 5, "first sighting takes the id")
+        moved:record("Trade", 4, "B", 10)
+        eq(moved:ranked(1)[1].id, 4, "a renumbered channel takes the NEW id, not the first")
+        eq(moved:ranked(1)[1].count, 2, "and it is still the same channel, not a new row")
 
         -- a message with no usable channel name is still counted, never dropped
         local anon = ns.ChatCounter.new()

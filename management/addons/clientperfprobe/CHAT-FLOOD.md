@@ -5,10 +5,10 @@ were **99.6 %** of it; leaving them took `CHAT_MSG_CHANNEL` from **107.6/s to 0.
 The addon whose channels they are was already disabled and it changed nothing, because
 **unticking a channel does not leave it** — that is the finding worth keeping.
 
-One claim made along the way did **not** survive its own test: that the chat traffic was
-essentially the whole inbound bandwidth. It was not, or `GetNetStats` had not settled.
-The correction is under "What the fix did NOT do" and the original wording is struck
-rather than quietly deleted.
+Bandwidth: **20.7 → 12.5 KB/s, 40 % of inbound removed.** That figure took three captures
+to establish because `GetNetStats` is a rolling average and had not settled; the two
+intermediate conclusions drawn from it were both wrong and are kept below rather than
+quietly deleted, because the settling trap is the reusable lesson.
 
 This came out of the sampler investigation (`SAMPLER-COST.md`) as a *separate* issue. It
 is not what caused the 5-second spike grid, and the two should not be conflated.
@@ -59,42 +59,10 @@ distinct-sender cap was hit, so 48 is a floor and `top=` is only the loudest of 
 every player running the addon broadcasts to the channel and every other player receives
 it. Not one spammer, not a server broadcast.
 
-Message bodies came to 10.3 KB/s against `in=20.7 KB/s` measured. **The inference drawn
-from that at the time — that chat was essentially the entire inbound stream — was
-wrong**, and the `/leave` test below disproved it. See "What the fix did not do".
-
-## The actual root cause
-
-**Disabling the addon does not leave its channels, and neither does unticking them.**
-
-The owner had already disabled FrostSeek and unticked `FSK`, `FSK-EVT` and `BBLC25C` in
-the channel list. All three still delivered 61 messages a second, and `j=1` on every row
-confirms the client was still joined. The tickbox in that list controls whether a channel
-is **drawn in a chat window** — not whether you are a member. Channel membership lives in
-the client's saved chat config and persists across the addon being disabled, across
-`/reload`, and across logout.
-
-So while unticked and with the addon gone, you still pay:
-
-- the bandwidth (~20 KB/s here),
-- one `CHAT_MSG_CHANNEL` event per message, dispatched to **every** frame registered for
-  it — every chat addon, every filter, and the probe's own `RegisterAllEvents` frame,
-- at 107/s, forever, for messages nothing on your client will ever show you.
-
-0.2.2's `disp=` field exists for exactly this: `j=1` with `disp=0` and a high `n=` is
-"joined, invisible, and costing you every message".
-
-## The fix
-
-```
-/leave FSK
-/leave FSK-EVT
-/leave BBLC25C
-```
-
-Expected: `CHAT_MSG_CHANNEL` drops from ~107/s to well under 1/s, and inbound from
-~20 KB/s to near nothing while idle. Reversible with `/join <name>`; re-enabling
-FrostSeek will rejoin its own two by itself.
+Message bodies came to 10.3 KB/s against `in=20.7 KB/s` measured. The inference drawn
+from that at the time — that chat was essentially the *entire* inbound stream — was too
+strong: it measured out at **40 %**. See "And what it did to bandwidth" below, which also
+covers the two wrong readings taken on the way there.
 
 ### What the fix did, measured
 
@@ -110,29 +78,37 @@ C^r=2^chan=Newcomers^id=3^n=8^ps=0.1^...^j=1^disp=0
 entirely. That is real CPU removed: one `CHAT_MSG_CHANNEL` dispatch per message to every
 frame registered for it, 107 times a second, now gone.
 
-### What the fix did NOT do — a correction
+### And what it did to bandwidth — after two wrong readings
 
-Inbound bandwidth barely moved: **20.7 → 18.3 KB/s, a 12 % drop.** Removing 107.1 msg/s
-whose bodies alone measured 10.3 KB/s should have taken inbound to near zero if the
-earlier reading had been right. It took 2.4 KB/s — about 22 bytes per message removed,
-against a measured mean body of 98 bytes. The numbers contradict each other, so the
-"chat is essentially all of your download" claim does not survive its own test and has
-been struck from the section above.
+This took three captures to get right, and both intermediate conclusions were wrong.
 
-Two candidates, untested:
+| | `in=` | chat | |
+| --- | --- | --- | --- |
+| before `/leave` | 20.7 KB/s | 107.6/s | |
+| 65 s after | 18.3 KB/s | 0.5/s | *"barely moved - so chat was never the bandwidth"* |
+| 11 min after | **12.5 KB/s** | 0.7/s | still falling |
 
-1. **`GetNetStats` had not settled.** It returns a rolling average, and the addon's own
-   notes already warn it is "too coarse to pin one frame — read it ACROSS captures". A
-   65 s window right after the change may still be carrying the old traffic. A re-read
-   five minutes later settles this and costs nothing.
-2. **~18 KB/s of inbound is something else entirely** and chat was only ever ~2 KB/s of
-   it. In which case there is a second, larger consumer nobody has looked for, and the
-   180 bytes/message arithmetic in the original analysis was a coincidence of numbers
-   rather than a measurement.
+**`GetNetStats` was simply still settling.** It returns a rolling average, and the
+addon's own notes already warned it is "too coarse to pin one frame — read it ACROSS
+captures". The 65 s reading was taken before the average caught up, and the correction
+written from it — that chat was never the bandwidth and some larger consumer must be
+hiding — was premature. There is no hidden second consumer.
 
-Until one of those is checked, the honest statement is: **leaving the channels removed
-107 chat events a second, and its effect on bandwidth is unmeasured.** The event
-reduction stands on its own — it was always the larger cost.
+Settled figures: **20.7 → 12.5 KB/s, 8.2 KB/s removed, 40 % of inbound.** The remaining
+~12.5 KB/s standing in a capital city is ordinary world state.
+
+The original claim was still too strong, though. Chat was **40 % of inbound, not
+essentially all of it**, and the 180 bytes/message arithmetic that suggested otherwise
+was a coincidence. Note also that message *text* measured 10.3 KB/s while inbound fell
+only 8.2 — text exceeding the wire drop is expected rather than contradictory: `kbps=`
+is the length of the Lua message string, decompressed, and 3.3.5 compresses traffic that
+repetitive addon payloads compress very well. `kbps=` is a relative weight between
+channels, not a bandwidth figure, and the glossary now says so.
+
+**The lesson, which is the reusable part:** a rolling-average API needs a settling period
+before an A/B means anything. Two captures 11 minutes apart disagreed by 32 % with
+nothing changing in between. Wait five minutes, or read the trend across three captures —
+never conclude from the one taken straight after the change.
 
 `BBLC25C` is the largest single consumer and its owner was never identified — it is not
 FrostSeek's. Leaving it is safe and reversible, so it does not need identifying first,
@@ -187,6 +163,12 @@ now outranks a chronic tax.
 - Joined channels match by **ID** (`GetChannelList`); displayed channels match by
   **name** (`GetChatWindowChannels` gives nothing else). If those ever diverge on this
   server a `j=0` would be a false positive — confirm with `/chatlist`.
+- **Channel IDs are not stable.** Leaving the three offenders renumbered every survivor
+  (Ascension 2→1, Newcomers 3→2, Zone 4→3, Trade 5→4, LookingForGroup 6→5). `Chat:record`
+  therefore keeps the *latest* id seen for a channel, not the first: a first-sight-only
+  id goes stale the moment you `/leave` something mid-window and can then mis-match a
+  freshly-read `GetChannelList`, flipping `j=`. Both sides being read at the same moment
+  is what makes ID matching safe; persisting an ID across a capture is not. Self-tested.
 - **Message text is never stored**, only channel, sender, count and byte total. The
   report is a blob pasted in public.
 
