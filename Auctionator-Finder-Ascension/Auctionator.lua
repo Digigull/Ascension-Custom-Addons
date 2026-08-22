@@ -1902,48 +1902,95 @@ function Atr_SellIgnore_ButtonEnsure()
     return b;
 end
 
-local itemSellableCache = {};
-function Atr_IsItemSellableOnAH(bag, slot, link, quality)
-    if (GetPlayerMapPosition("player") == nil) then
-        return true; -- Assume sellable during zone transitions
-    end
-    if (not link) then return false; end
-    if (itemSellableCache[link]) then return itemSellableCache[link]; end
-    if (quality ~= nil and quality == 0) then
-        itemSellableCache[link] = false;
-        return false;
-    end
+-----------------------------------------
+-- Can this bag slot be auctioned?
+--
+-- Two separate questions, and they were one cache until 2026-08-22, which is
+-- the bug the owner reported as "soulbound items are mixed in here and there".
+--
+--   QUALITY is a property of the ITEM.  A link-keyed cache is exactly right for
+--   it: grey is grey in every bag slot that link ever occupies.
+--
+--   BOUNDNESS IS NOT A PROPERTY OF THE ITEM.  An item link carries no trace of
+--   whether the copy in front of you is bound -- a BoE you have worn and one
+--   still in its wrapper share a link to the character. Caching the tooltip
+--   scan under the link therefore handed whichever copy happened to be read
+--   first as the verdict for every other one, and since bag order decides which
+--   that is, the same soulbound item was filtered on one login and shown on the
+--   next.  A verdict that flips with bag order is not a filter.
+--
+-- So the bind scan is per bag SLOT and uncached.  Nothing is lost: every caller
+-- walks each slot exactly once per build, so the cache never had a second read
+-- to serve -- it only ever served the WRONG slot.
+-----------------------------------------
+
+local itemGreyCache = {};
+
+function Atr_Sell_ItemIsGrey(link, quality)
+    if (not link) then return true; end
+    if (itemGreyCache[link] ~= nil) then return itemGreyCache[link]; end
+
     if (quality == nil) then
-        local _, _, itemQuality = GetItemInfo(link);
-        if (itemQuality ~= nil and itemQuality == 0) then
-            itemSellableCache[link] = false;
-            return false;
+        -- The colour prefix answers this without GetItemInfo having to be warm,
+        -- which it is not for an item the client has not seen this session.
+        local prefix = string.lower(string.sub(link, 1, 10));
+        if (prefix == "|cff9d9d9d") then
+            itemGreyCache[link] = true;
+            return true;
         end
-        local prefix = link and string.sub(link, 1, 10) or nil;
-        if (prefix and string.lower(prefix) == "|cff9d9d9d") then
-            itemSellableCache[link] = false;
-            return false;
-        end
+        quality = select(3, GetItemInfo(link));
     end
-    if (AtrScanningTooltip and AtrScanningTooltip.SetBagItem) then
-        AtrScanningTooltip:ClearLines();
-        AtrScanningTooltip:SetBagItem(bag, slot);
-        local num = AtrScanningTooltip:NumLines() or 0;
-        for i = 1, num do
-            local fs = _G["AtrScanningTooltipTextLeft"..i];
-            local t = fs and fs:GetText();
-            if (t) then
-                if ((ITEM_SOULBOUND and t:find(ITEM_SOULBOUND, 1, true)) or
-                    (ITEM_BIND_ON_PICKUP and t:find(ITEM_BIND_ON_PICKUP, 1, true)) or
-                    (ITEM_BIND_QUEST and t:find(ITEM_BIND_QUEST, 1, true))) then
-                    itemSellableCache[link] = false;
-                    return false;
-                end
+
+    -- Still unknown: answer "not grey" for now but do NOT cache it, or a cold
+    -- item cache would be frozen into the browser for the rest of the session.
+    if (quality == nil) then return false; end
+
+    local grey = (quality == 0);
+    itemGreyCache[link] = grey;
+    return grey;
+end
+
+-- Soulbound / bind-on-pickup / quest-bound, read off the tooltip for ONE bag
+-- slot.  Never cache this by link -- see the block comment above.
+function Atr_Sell_ItemIsBound(bag, slot)
+    if (not AtrScanningTooltip or not AtrScanningTooltip.SetBagItem) then return false; end
+
+    AtrScanningTooltip:ClearLines();
+    AtrScanningTooltip:SetBagItem(bag, slot);
+
+    local num = AtrScanningTooltip:NumLines() or 0;
+    for i = 1, num do
+        local fs = _G["AtrScanningTooltipTextLeft"..i];
+        local t = fs and fs:GetText();
+        if (t) then
+            if ((ITEM_SOULBOUND and t:find(ITEM_SOULBOUND, 1, true)) or
+                (ITEM_BIND_ON_PICKUP and t:find(ITEM_BIND_ON_PICKUP, 1, true)) or
+                (ITEM_BIND_QUEST and t:find(ITEM_BIND_QUEST, 1, true))) then
+                return true;
             end
         end
     end
-    itemSellableCache[link] = true;
-    return true;
+
+    return false;
+end
+
+-- Returns TWO values: sellable, and -- because the inventory browser wants to
+-- bucket bound items rather than drop them -- whether the refusal was because
+-- the item is bound.  One tooltip scan answers both; asking the two questions
+-- separately would scan every bound slot twice per build.  Callers that only
+-- want the first answer ignore the second, as they always did.
+function Atr_IsItemSellableOnAH(bag, slot, link, quality)
+    if (GetPlayerMapPosition("player") == nil) then
+        return true, false; -- Assume sellable during zone transitions
+    end
+    if (not link) then return false, false; end
+
+    -- Cheap test first: the tooltip scan is the expensive half and a grey item
+    -- never needs it.  Grey is not "bound", it is "not worth showing".
+    if (Atr_Sell_ItemIsGrey(link, quality)) then return false, false; end
+
+    local bound = Atr_Sell_ItemIsBound(bag, slot);
+    return (not bound), bound;
 end
 
 local function Atr_LoadBagSlotToSellPane(bagID, slotID)
@@ -1987,20 +2034,41 @@ local function Atr_SB_Item_OnLeave(self)
 end
 
 local function Atr_SB_Item_OnClick(self, button)
-    if (self.bagID and self.slotID) then
-        -- Support both left and right click inside the SELL inventory browser only
-        if (button == "LeftButton" or button == "RightButton") then
-            -- A click on a tile in the Ignore bucket takes the item back out of
-            -- the ignore list first, then places it exactly as any other tile
-            -- would: into the sell slot, and back under its real category on the
-            -- rebuild that follows.
-            local wasIgnored = self.ignored and self.itemLink
-                                and Atr_SellIgnore_Set(self.itemLink, false);
+    if (not self.bagID or not self.slotID) then return; end
 
-            Atr_LoadBagSlotToSellPane(self.bagID, self.slotID);
+    -- A tile in the Soulbound bucket is there to be SEEN, not sold: it is shown
+    -- so the browser accounts for everything in the bags, and neither click does
+    -- anything with it.  The sell slot would refuse the item and the batch
+    -- cannot post it, so doing nothing is the honest response.
+    if (self.soulbound) then return; end
 
-            if (wasIgnored) then Atr_SellIgnore_Refresh(); end
+    -- RIGHT-CLICK QUEUES IT (owner's request, 2026-08-22).  Right-click used to
+    -- be a second copy of the left click, so no behaviour is lost here.  A
+    -- second right-click on a queued tile takes it back out again -- the same
+    -- gesture both ways, which is what makes the green wash on the tile
+    -- readable as a toggle rather than as a state you have to hunt for.
+    if (button == "RightButton") then
+        local changed;
+        if (Atr_BP_Contains and Atr_BP_Contains(self.bagID, self.slotID)) then
+            changed = Atr_BP_RemoveSlot and Atr_BP_RemoveSlot(self.bagID, self.slotID);
+        else
+            changed = Atr_BP_Add and Atr_BP_Add(self.bagID, self.slotID, self.itemLink);
         end
+        if (changed) then Atr_SB_Build(); end       -- its tail repaints the batch
+        return;
+    end
+
+    if (button == "LeftButton") then
+        -- A click on a tile in the Ignore bucket takes the item back out of
+        -- the ignore list first, then places it exactly as any other tile
+        -- would: into the sell slot, and back under its real category on the
+        -- rebuild that follows.
+        local wasIgnored = self.ignored and self.itemLink
+                            and Atr_SellIgnore_Set(self.itemLink, false);
+
+        Atr_LoadBagSlotToSellPane(self.bagID, self.slotID);
+
+        if (wasIgnored) then Atr_SellIgnore_Refresh(); end
     end
 end
 
@@ -2052,6 +2120,7 @@ function Atr_SB_Build()
 
     local categories = {};   -- categories[cat] = { count, methods = { [m] = { count, items } } }
     local notProfit  = { count = 0, items = {} };   -- filtered-out items, rendered last
+    local soulbound  = { count = 0, items = {} };   -- cannot be auctioned at all
     local ignored    = { count = 0, items = {} };   -- Ignore bucket, rendered dead last
 
     for bag = 0, NUM_BAG_SLOTS do
@@ -2059,37 +2128,65 @@ function Atr_SB_Build()
         for slot = 1, numSlots do
             local texture, itemCount, locked, quality, readable, lootable, itemLink = GetContainerItemInfo(bag, slot);
             local link = itemLink or GetContainerItemLink(bag, slot);
-            if (link and Atr_IsItemSellableOnAH(bag, slot, link, quality)) then
+
+            -- SOULBOUND ITEMS ARE KEPT, NOT DROPPED (owner's request,
+            -- 2026-08-22): "let's keep all soulbound items at the bottom, they
+            -- are mixed in here and there".  They used to be filtered out here
+            -- and leaked through anyway, because the bind verdict was cached
+            -- under the item link -- see Atr_Sell_ItemIsBound.  With that fixed
+            -- they would all have vanished instead, which is not what was
+            -- asked for: the browser is meant to account for what is in the
+            -- bags.  So they are collected into a bucket of their own at the
+            -- very bottom, never mixed into a selling category.
+            --
+            -- Grey trash stays filtered.  It is not sellable AND not
+            -- interesting, which is the pair that earns an item its exclusion.
+            local sellable, bound = false, false;
+            if (link) then
+                sellable, bound = Atr_IsItemSellableOnAH(bag, slot, link, quality);
+            end
+
+            if (link and (sellable or bound)) then
                 local name, _, _, _, _, sType, sSubType, _, _, icon = GetItemInfo(link);
                 local classIdx = sType and Atr_ItemType2AuctionClass(sType) or 0;
                 if (classIdx) then
                     local cat = sType or ZT("Other");
-                    local method, profit = Atr_SB_BestMethod(link, name);
                     local tile = { bag=bag, slot=slot, icon=texture or icon, count=itemCount or 1, link=link };
-                    -- An ignored item leaves its normal category entirely and drops
-                    -- into the Ignore bucket at the very bottom, skipping the method
-                    -- split and the min. profit filter alike.  Clicking it there puts
-                    -- it back (see Atr_SB_Item_OnClick).
-                    if (Atr_SellIgnore_IsIgnored(link)) then
-                        tile.ignored = true;
-                        table.insert(ignored.items, tile);
-                        ignored.count = ignored.count + (itemCount or 1);
-                    -- Profit Margin filters: a priced item that fails an enabled
-                    -- filter is not worth listing, so it drops into the "Not
-                    -- Profitable" bucket instead of its normal category.  The two
-                    -- filters are independent -- failing EITHER is enough.  Items
-                    -- with unknown data (unpriced, or a craft cost we can't total)
-                    -- are always left alone: a scan/harvest has to fill them first.
-                    elseif (Atr_SB_FailsMarginFilter(link, name, profit)) then
-                        table.insert(notProfit.items, tile);
-                        notProfit.count = notProfit.count + (itemCount or 1);
+
+                    if (bound) then
+                        -- No method split and no margin filter: both are
+                        -- questions about how best to SELL this, and the answer
+                        -- for a bound item is "you cannot".
+                        tile.soulbound = true;
+                        table.insert(soulbound.items, tile);
+                        soulbound.count = soulbound.count + (itemCount or 1);
                     else
-                        if (not categories[cat]) then categories[cat] = { count = 0, methods = {} }; end
-                        local mc = categories[cat].methods;
-                        if (not mc[method]) then mc[method] = { count = 0, items = {} }; end
-                        table.insert(mc[method].items, tile);
-                        mc[method].count = mc[method].count + (itemCount or 1);
-                        categories[cat].count = categories[cat].count + (itemCount or 1);
+                        local method, profit = Atr_SB_BestMethod(link, name);
+                        -- An ignored item leaves its normal category entirely and
+                        -- drops into the Ignore bucket at the very bottom, skipping
+                        -- the method split and the min. profit filter alike.
+                        -- Clicking it there puts it back (Atr_SB_Item_OnClick).
+                        if (Atr_SellIgnore_IsIgnored(link)) then
+                            tile.ignored = true;
+                            table.insert(ignored.items, tile);
+                            ignored.count = ignored.count + (itemCount or 1);
+                        -- Profit Margin filters: a priced item that fails an enabled
+                        -- filter is not worth listing, so it drops into the "Not
+                        -- Profitable" bucket instead of its normal category.  The two
+                        -- filters are independent -- failing EITHER is enough.  Items
+                        -- with unknown data (unpriced, or a craft cost we can't total)
+                        -- are always left alone: a scan/harvest has to fill them first.
+                        elseif (Atr_SB_FailsMarginFilter(link, name, profit)) then
+                            table.insert(notProfit.items, tile);
+                            notProfit.count = notProfit.count + (itemCount or 1);
+                        else
+                            if (not categories[cat]) then categories[cat] = { count = 0, methods = {} }; end
+                            local mc = categories[cat].methods;
+                            if (not mc[method]) then mc[method] = { count = 0, items = {} }; end
+                            table.insert(mc[method].items, tile);
+                            mc[method].count = mc[method].count + (itemCount or 1);
+                            categories[cat].count = categories[cat].count + (itemCount or 1);
+                        end
                     end
                 end
             end
@@ -2143,10 +2240,11 @@ function Atr_SB_Build()
             local btn = Atr_SB_AddWidget(CreateFrame("Button", nil, Atr_SB_Content));
             btn:SetSize(TILE, TILE);
             btn:SetPoint("TOPLEFT", BASEX + col*(TILE+GAP), rowStartY);
-            btn.bagID    = it.bag;
-            btn.slotID   = it.slot;
-            btn.itemLink = it.link;
-            btn.ignored  = it.ignored;
+            btn.bagID     = it.bag;
+            btn.slotID    = it.slot;
+            btn.itemLink  = it.link;
+            btn.ignored   = it.ignored;
+            btn.soulbound = it.soulbound;
             btn:RegisterForClicks("LeftButtonUp", "RightButtonUp");
             btn:SetScript("OnClick", Atr_SB_Item_OnClick);
             btn:SetScript("OnEnter", Atr_SB_Item_OnEnter);
@@ -2155,6 +2253,19 @@ function Atr_SB_Build()
             local tex = btn:CreateTexture(nil, "BACKGROUND");
             tex:SetAllPoints(btn);
             tex:SetTexture(it.icon);
+
+            -- Dim the bucket that cannot be sold, so "at the bottom" is not the
+            -- only thing separating it from the categories that can.
+            if (it.soulbound) then tex:SetVertexColor(0.45, 0.45, 0.45); end
+
+            -- Already in the batch: a green wash over the tile.  Without it a
+            -- right-click that queued something and one that did nothing look
+            -- identical, and the queue is off in the other column.
+            if (Atr_BP_Contains and Atr_BP_Contains(it.bag, it.slot)) then
+                local q = btn:CreateTexture(nil, "OVERLAY");
+                q:SetAllPoints(btn);
+                q:SetTexture(0.1, 0.9, 0.1, 0.30);
+            end
 
             local cnt = btn:CreateFontString(nil, "OVERLAY", "NumberFontNormal");
             cnt:SetPoint("BOTTOMRIGHT", -2, 2);
@@ -2201,6 +2312,17 @@ function Atr_SB_Build()
         contentHeight = contentHeight + 4;
     end
 
+    -- "Soulbound" sorts under everything you could actually list: gear you have
+    -- worn, quest items, anything bound to the character.  It is shown rather
+    -- than filtered (owner's request, 2026-08-22) but it never mixes into a
+    -- selling category, and its tiles do nothing when clicked.
+    if (#soulbound.items > 0) then
+        addHeader(string.format("%s (%d)", ITEM_SOULBOUND or "Soulbound", soulbound.count));
+        renderTiles(soulbound.items);
+        y = y - 4;
+        contentHeight = contentHeight + 4;
+    end
+
     -- "Ignore" always sorts dead last: items the seller parked here with the
     -- Ignore button.  Clicking a tile here takes it back out (Atr_SB_Item_OnClick).
     if (#ignored.items > 0) then
@@ -2211,6 +2333,12 @@ function Atr_SB_Build()
     end
 
     Atr_SB_Content:SetHeight(math.max(10, contentHeight));
+
+    -- The batch column reads the same bags and marks the same tiles, so it is
+    -- repainted from here rather than from each of this function's callers.
+    -- Atr_BP_Build never calls back into this one, so there is no loop.
+    if (Atr_BP_Build) then Atr_BP_Build(); end
+
     if (Atr_SellBrowser and gSB_Visible) then Atr_Sell_EnsureBrowser(); end
 end
 
@@ -2566,6 +2694,25 @@ ATR_SELL_LIST_H = 74;       -- results scroll height; 4 rows at 16px
                             -- Down from 6: the inventory could not reach the
                             -- Current/Ledger tabs without the results block
                             -- moving down, and those rows are what paid for it.
+
+-- THE INVENTORY BAND, SPLIT IN HALF (owner's request, 2026-08-22).  The band
+-- itself is unchanged -- panel x -26 out to 598, 194 tall, the whole of the old
+-- results area -- but the inventory now takes the left half of it and the new
+-- Batch Post column (AuctionatorBatchPost.lua) takes the right.
+--
+-- The gap between the two is not padding: a UIPanelScrollFrameTemplate hangs its
+-- scroll bar 6..22px PAST its own right edge, outside the width you set, so the
+-- inventory's bar lives in it.  Narrow the gap and the bar lands on the batch
+-- list.
+--
+-- These six are the only place the split is decided.  Both columns and the
+-- batch column's two buttons measure off them.
+ATR_SELL_BROWSER_Y = -82;   -- top edge of both columns, panel-relative
+ATR_SELL_BROWSER_H = 194;   -- height of both columns
+ATR_SELL_INV_X = -26;
+ATR_SELL_INV_W = 290;
+ATR_SELL_BP_X  = 298;       -- inventory right edge is 264; its bar reaches 286
+ATR_SELL_BP_W  = 276;       -- right edge 574, its own bar out to 596
 
 -- Results-block vertical offsets in the expanded SELL layout (panel-relative).
 -- Raised together from -290 / -335 so the Current/Ledger tabs sit level with
@@ -2946,17 +3093,31 @@ function Atr_ApplySellExpandedLayout()
     -- that would be tuned.
     Atr_Sell_HeaderApply();
 
-    ---- 3. inventory: flush to the divider, up into the old results area ----
+    ---- 3. inventory (left half) + Batch Post (right half) ----
 
+    -- The inventory used to have the whole band.  It has the left half of it
+    -- now; ATR_SELL_INV_* and ATR_SELL_BP_* above carry the arithmetic and the
+    -- reason the gap between them is the width it is.
     if (Atr_SellBrowser) then
         Atr_SellBrowser:ClearAllPoints();
-        Atr_SellBrowser:SetPoint ("TOPLEFT", panel, "TOPLEFT", -26, -82);
-        Atr_SellBrowser:SetWidth  (624);
-        Atr_SellBrowser:SetHeight (194);
-        if (Atr_SB_Content) then Atr_SB_Content:SetWidth (600); end
+        Atr_SellBrowser:SetPoint ("TOPLEFT", panel, "TOPLEFT", ATR_SELL_INV_X, ATR_SELL_BROWSER_Y);
+        Atr_SellBrowser:SetWidth  (ATR_SELL_INV_W);
+        Atr_SellBrowser:SetHeight (ATR_SELL_BROWSER_H);
+        if (Atr_SB_Content) then Atr_SB_Content:SetWidth (ATR_SELL_INV_W - 24); end
         gSB_Visible = true;
         Atr_SellBrowser:Show();
         if (Atr_SB_Build) then Atr_SB_Build(); end
+    end
+
+    -- The right half.  Its panel, its rows, its buttons and the post driver all
+    -- live in AuctionatorBatchPost.lua; this call and Atr_BP_Unplace in the
+    -- reset path below are the whole of the coupling.  The panel is placed 16px
+    -- ABOVE the band because it carries its own title row -- the list itself
+    -- lines up with the inventory to the pixel.
+    if (Atr_BP_Layout) then
+        Atr_BP_Layout (ATR_SELL_BP_X, ATR_SELL_BROWSER_Y + 16,
+                       ATR_SELL_BP_W, ATR_SELL_BROWSER_H,
+                       ATR_SELL_INV_X + 2, ATR_SELL_BROWSER_Y + 3, ATR_SELL_INV_W);
     end
 
     ---- 4. results area takes the height the inventory gave up ----
@@ -3033,6 +3194,11 @@ function Atr_ResetSellExpandedLayout()
     end
     if (Atr_SB_ProfitMargin) then Atr_SB_ProfitMargin:Hide(); end
     if (Atr_ProfitMarginPopup) then Atr_ProfitMarginPopup:Hide(); end
+
+    -- The other half of the contract with the batch column: its panel, label and
+    -- buttons are children of Atr_Main_Panel, so nothing hides them on the way
+    -- to the Buy tab unless this does.  It stops a run in progress too.
+    if (Atr_BP_Unplace) then Atr_BP_Unplace(); end
 
     if (Atr_SellControls_TexName) then Atr_SellControls_TexName:Show(); end
     if (Atr_SellDropZone) then Atr_SellDropZone:Hide(); end

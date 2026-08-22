@@ -149,6 +149,16 @@ dance.
 > Only touch World 1 when the change is *to* an upstream tab — which, in the backlog, is item 1
 > and nothing else.
 
+**How far that rule stretches when the request IS about a World 1 tab: Batch Post (item 12,
+2026-08-22).** The owner asked for half of the SELL tab's inventory band, so World 2 was not
+available. What was: `AuctionatorBatchPost.lua` owns the panel, its rows, its buttons, the queue
+and the post driver, all built in Lua, and `Auctionator.lua` calls in **twice** — `Atr_BP_Layout`
+from `Atr_ApplySellExpandedLayout`, `Atr_BP_Unplace` from `Atr_ResetSellExpandedLayout`. That pair
+is the whole coupling, and the second half of it is not optional: the new widgets are children of
+`Atr_Main_Panel`, so nothing hides them on the way to the Buy tab unless the reset path does.
+**Copy that shape** for anything else that has to live on an upstream tab —
+`management/addons/auctionator/BATCH-POST.md` §1.
+
 ### Outside both worlds — the farm window (item 34)
 
 `AuctionatorFarmList.lua` is the one piece of UI here that is in **neither** world: a window and a
