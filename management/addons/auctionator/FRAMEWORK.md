@@ -524,6 +524,14 @@ Row in `AuctionatorFinderOptions.lua` (`:66` builds the checkbutton, `:118` load
 saves), persisted into `AUCTIONATOR_FINDER_SETTINGS`. No `.toc` change — that variable is
 already declared.
 
+**Anything else that wants a spot on the Scanning panel goes through the same function.** That
+file owns the layout of everything below y -110 there, and not all of it is a Finder setting any
+more: the Ledger's Clear button is built by `AuctionatorLedger.lua`
+(`Atr_Ledger_BuildOptionsButton`) and *placed* by `Fdr_Options_Ensure`, which hands it a panel and
+a y offset. Keep that split — the owning file decides what a control does, the options file decides
+where it sits. Two files picking absolute offsets on one panel is how widgets end up on top of each
+other, and nothing checks.
+
 ---
 
 ## 9. What is missing
