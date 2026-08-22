@@ -180,11 +180,13 @@ local ATR_HIST_OUTLIER_MIN = 4;		-- ... and you cannot name an outlier in a book
 
 -- Memoised per name per DAY.  Two of the callers make this a hot path and
 -- neither is obviously one: the Analysis view asks for every row on every
--- redraw, and Atr_ShowRecTooltip is re-run EVERY FRAME while the sell tooltip is
--- up (see its comment).  A decode allocates a table per sample, so uncached that
--- is a few thousand short-lived tables a second for a number that changes once a
--- day.  The entry is dropped when that name is written to, and the stored day
--- makes a day roll drop it by itself.
+-- redraw, and Atr_ShowRecTooltip asks again on every idle tick for as long as
+-- the sell tooltip is up -- it composes the sentence before deciding whether the
+-- tooltip needs redrawing at all, so the ask outlives the redraw it used to
+-- accompany (see its comment).  A decode allocates a table per sample, so
+-- uncached that is hundreds of short-lived tables a second for a number that
+-- changes once a day.  The entry is dropped when that name is written to, and
+-- the stored day makes a day roll drop it by itself.
 local gHist_DeltaCache = {};
 
 -- ===========================================================================

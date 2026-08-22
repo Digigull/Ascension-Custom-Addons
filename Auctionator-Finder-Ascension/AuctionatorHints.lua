@@ -324,9 +324,20 @@ end
 --     name-level price it has always been and is refreshed on every full scan.
 ATR_PV_ANY = "?";		-- reserved slot: a price for the name, variant unknown
 
+-- Bumped by every write below.  A tooltip that is being HELD OPEN has no other
+-- way to notice that a scan has just landed a new number under its nose: the
+-- SELL tab's drop box re-checks its own content on each idle tick and only
+-- redraws when something changed (see Atr_ShowRecTooltip), and "the database
+-- moved" is the half of that it cannot see from its own arguments.  A counter
+-- rather than a per-name stamp on purpose -- the reader wants one cheap compare,
+-- and a redraw it did not strictly need costs nothing.
+ATR_PRICE_REV = 0;
+
 function Atr_PriceStore (db, name, price, variantKey)
 
 	if (type (db) ~= "table" or name == nil or type (price) ~= "number") then return; end
+
+	ATR_PRICE_REV = ATR_PRICE_REV + 1;
 
 	local cur = db[name];
 

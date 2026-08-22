@@ -387,6 +387,36 @@ and a `name`**, every ledger row carries both, and every observed watched item c
 most lookups cost nothing and need no capture. Only what cannot be answered that way is learned
 from a live link and saved (BACKLOG item 27).
 
+### The sell tooltip is the one tooltip that is *held open*
+
+`Atr_ShowRecTooltip` (`Auctionator.lua`) draws the tooltip for the SELL tab's drop box, and
+`Atr_Idle` re-runs it **on every idle tick (0.4 s) for as long as the pointer sits there** — that
+is how a price landing mid-hover reaches a tooltip already on screen. Nothing else in the addon
+re-drives a tooltip with the mouse held still.
+
+It used to rebuild unconditionally, and that was a bug with a visible symptom. `SetOwner` *clears*
+the tooltip, so each tick threw the whole thing away and drew it again from nothing. Anything a
+third party appends **after** `OnTooltipSetItem` was wiped 2.5 times a second and re-applied a
+frame later — a flicker, and only ever on this one tooltip. The owner hit it with BiS Scanner,
+which annotates auction-house tooltips one frame late on purpose so it can read a Finder row's
+repainted listing lines.
+
+So the redraw is now conditional on a **signature** of everything the drawn tooltip depends on
+that can change with the pointer parked: item link, stack size, owner frame, `ATR_PRICE_REV`
+(bumped by every `Atr_PriceStore` write, so a completing scan still lands), the Alt/Shift/Ctrl
+state the price and Qty lines are gated on, and the history sentence. Everything else in that
+tooltip is fixed for the life of a hover.
+
+**If you add a line to this tooltip whose text can change while it is up, add its input to that
+signature** — otherwise it will be composed once and then sit there stale. And note the sentence
+is composed *before* the redraw decision, because it is part of the signature; that is why
+`Atr_Hist_Delta`'s per-name-per-day memo still matters (`AuctionatorHistory.lua`).
+
+The other half of the same fix lives in the Scanner: it now defers its parse only for owners named
+`Atr_Finder_Row*` — the only frames in the game that repaint true stat lines after the event —
+instead of for everything parented under `AuctionFrame`. A deferred annotation costs one rendered
+frame without it, which is invisible on a tooltip drawn once and a flicker on one that is redrawn.
+
 ### Localization
 
 `ZT()` (`AuctionatorLocalize.lua:32`) is the upstream wrapper. The Finder cluster uses `FT()`,
