@@ -190,6 +190,14 @@ L["Loot Won Comparison"] = true
 L["Loot Won Counter"] = true
 L["Loot Won Counter_Desc"] = [=[Set how many times we have won loot on this rule
 (Saves when you press enter)]=]
+-- Mount / Pet filter (Modules/MountPet.lua) and the choices in its dropdown.
+-- "Mount or Pet" rather than "Any" on purpose: this module's first choice means
+-- "either kind", not "do not filter" -- see the note on module.Choices.
+L["Mount / Pet"] = true
+L["Selected rule will only match mounts and companion pets."] = true
+L["Mount or Pet"] = true
+L["Mount"] = true
+L["Pet"] = true
 L["None"] = true
 L["Normal"] = true
 L["Not"] = true
@@ -395,11 +403,33 @@ L["RollAdvisor_HighValue"] = "High Value"
 -- The preview popup uses a REAL item (Thunderfury, id 19019) so it exercises the
 -- icon and tooltip path; its name comes from the client, not from here.
 
--- The two rules a profile with no rules of its own starts with
+-- The three rules a profile with no rules of its own starts with
 -- (Core/Constants.lua DefaultRules). Plain rule descriptions: they are copied
 -- into the profile once and are editable from the rules page afterwards.
 L["DefaultRule_NotUsable"] = "Not Usable"
 L["DefaultRule_CatchAll"] = "Catch All"
+L["DefaultRule_MountPet"] = "Mounts & Pets"
+
+-- Putting a deleted starter rule back (General options, beside Clean Rules; the
+-- button calls PasslootBiS:RestoreDefaultRules). Both seeds are one-shot by design,
+-- so this button is the ONLY way back from deleting one -- which is what the
+-- description has to get across in the two lines the options panel gives it.
+L["Restore Starter Rules"] = true
+L["RestoreRules_Desc"] = [=[Puts back any of the starter rules -- Mounts & Pets, Not Usable, Catch All -- that this profile no longer has, each at its original place in the order.
+
+Only ever adds. Rules you made yourself are untouched, and a starter rule you still have is left exactly as you have edited it.
+
+A starter rule you RENAMED counts as missing, so restoring adds a fresh copy alongside it.
+
+To silence a rule without losing it, turn it off instead: right-click it in the list, or right-click the minimap button.]=]
+L["RestoreRules_Restored"] = "Restored: %rules%"
+L["RestoreRules_None"] = "Nothing to restore -- every starter rule is already in this profile."
+-- Rule list (Core/MainGUI.lua): a rule turned off is greyed and marked with this.
+-- Keep it SHORT -- the description column is the one that gives way when the options
+-- panel is narrow.
+L["RuleList_Off"] = "(off)"
+-- The on/off row on a rule's right-click menu. Ticked means the rule is live.
+L["Rule Enabled"] = true
 
 -- Advisor status panel on the rules page (Core/AdvisorStatus.lua). Kept SHORT:
 -- the panel lives in the narrow column beside the rule list, so anything longer

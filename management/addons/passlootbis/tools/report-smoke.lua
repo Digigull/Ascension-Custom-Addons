@@ -98,11 +98,27 @@ function addon:UnusableReason()
   if not (reds and #reds > 0) then return nil end
   return table.concat(reds, " | ")
 end
+-- The Mount / Pet filter, reached the same way. Stubbed to a MOUNT, again because
+-- that is the branch worth printing: the "Mounts & Pets" rule Needs on this answer,
+-- so the line has to carry which signal produced it. Classify's real logic is
+-- checked on its own by mountpet-smoke.lua.
+local mountPetModule = {}
+function mountPetModule:MatchLabel(id)
+  return id == 2 and "Mount" or id == 3 and "Pet" or "neither"
+end
+function mountPetModule:Classify(itemObj)
+  if not itemObj then error("Mount / Pet Classify got no item") end
+  return 2, "subclass"
+end
 function addon:GetModule(name, silent)
   if name == "Usable" then return usableModule end
+  if name == "Mount / Pet" then return mountPetModule end
   if silent then return nil end
   error("no such module: " .. tostring(name))
 end
+-- Core/DebugReport.lua builds the item object itself for that line (the filter reads
+-- itemObj.subclass, which the bare link the usable line gets by does not carry).
+function addon:InitItem(link) return { link = link, id = 412491, subclass = "Mounts" } end
 
 _G.LibStub = function(n) return {
   GetAddon = function() return addon end,
@@ -125,7 +141,7 @@ local ok2, r2 = pcall(addon.BuildDebugReport, addon, nil)
 if not ok2 then print("ERROR: " .. tostring(r2)); os.exit(1) end
 print(r2)
 
--- Degenerate: no scanner, no API, no lists, no Usable module. The report must
+-- Degenerate: no scanner, no API, no lists, no Usable / Mount-Pet module. The report must
 -- still build -- every one of these is absent in some real install, and a nil-index
 -- here turns "tell me what went wrong" into a second thing that went wrong.
 addon.API = nil
@@ -140,7 +156,8 @@ print("\n================ degenerate (no scanner/API/lists) ================\n")
 print(r3)
 
 -- Degenerate WITH an item to test: the item section is the one that reaches for the
--- Usable module, so the no-module fallback only gets exercised if a link is passed.
+-- Usable and Mount / Pet modules, so those no-module fallbacks only get exercised if
+-- a link is passed.
 local ok4, r4 = pcall(addon.BuildDebugReport, addon, LINK)
 if not ok4 then print("DEGENERATE ITEM ERROR: " .. tostring(r4)); os.exit(1) end
 print("\n================ degenerate + item test ================\n")

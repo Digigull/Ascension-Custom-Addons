@@ -129,16 +129,23 @@ local function InitRuleMenu(_, level)
 		return
 	end
 
-	for _, rule in ipairs(rules) do
+	for index, rule in ipairs(rules) do
 		info = UIDropDownMenu_CreateInfo()
 		info.text = rule.Desc
 		info.isNotRadio = true          -- checkbox, not a radio dot
 		info.keepShownOnClick = true    -- let the user flip several without reopening
 		info.checked = not rule.Disabled -- ticked == enabled
-		-- 3.3.5 passes the NEW visual state as the 4th arg after auto-toggling.
-		info.func = function(_, _, _, checked)
-			rule.Disabled = (not checked) and true or nil
-			PasslootBiS:Rules_RuleList_OnScroll()
+		-- Flipped through the shared setter (PasslootBiS:ToggleRuleDisabled) rather than
+		-- here: the same tick now also sits on the rule's own right-click menu on the
+		-- rules page, and turning a rule off has to reset the evaluation cache as well
+		-- as repaint the list. Two copies of that would drift.
+		--
+		-- The STORED flag decides, not the 4th arg 3.3.5 passes (the new visual state
+		-- after its auto-toggle). The two agree -- the visual was drawn from that same
+		-- flag when the menu opened -- and reading the flag keeps this identical to the
+		-- other entry point.
+		info.func = function()
+			PasslootBiS:ToggleRuleDisabled(index)
 		end
 		UIDropDownMenu_AddButton(info, level)
 	end

@@ -71,6 +71,12 @@ local defaults = {
 		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
 		-- user who then deletes them does NOT get them back on the next login.
 		["DefaultRulesSeeded"] = false,
+		-- Same idea, one rule later: the "Mounts & Pets" starter rule (Constants.lua
+		-- PasslootBiS.MountPetRule) shipped after this addon already had users, and
+		-- DefaultRulesSeeded is long since set on their profiles -- so without a flag of
+		-- its own the rule would only ever reach a brand-new profile. Flipped by
+		-- SeedMountPetRule(), which likewise hands it out exactly once.
+		["MountPetRuleSeeded"] = false,
 		["Modules"] = {},
 		-- Per-item manager metadata captured from imported PLBIS1 strings' additive
 		-- `mgr` block (protocol §3.5), keyed by BiS list name (the rule Desc without
@@ -395,6 +401,19 @@ PasslootBiS.OptionsTable = {
 					["func"] = "CleanRules",
 					["confirm"] = true,
 					["confirmText"] = L["CLEAN RULES DESC"],
+				},
+				-- The way back from deleting a starter rule. Nothing else can hand one
+				-- back: both seeds (SeedDefaultRules, SeedMountPetRule) are one-shot by
+				-- design, so without this a deleted "Mounts & Pets" was gone for the life
+				-- of the profile. No confirm -- it only ever ADDS rules, and it says in
+				-- chat which ones (or that none were missing), since a button that looks
+				-- inert is worse than one that asks first.
+				["RestoreDefaultRules"] = {
+					["name"] = L["Restore Starter Rules"],
+					["desc"] = L["RestoreRules_Desc"],
+					["type"] = "execute",
+					["order"] = 70,
+					["func"] = "RestoreDefaultRules",
 				},
 			},
 		},
@@ -1908,10 +1927,13 @@ function PasslootBiS:OnProfileChanged()
 	self.CurrentOptionFilter = { nil, 0 } -- Frame, line #
 	self:LoadModules()
 	self:SendMessage("PasslootBiS_OnProfileChanged")
-	-- A profile that has never held a rule gets the starter pair (Not Usable >
-	-- Greed, Catch All > Greed). Must run BEFORE CheckRuleTables so the seeded
-	-- rules go through the same DefaultTemplate fill-in as any other rule.
+	-- A profile that has never held a rule gets the starter set (Mounts & Pets >
+	-- Need, Not Usable > Greed, Catch All > Greed). Must run BEFORE CheckRuleTables
+	-- so the seeded rules go through the same DefaultTemplate fill-in as any other
+	-- rule.
 	self:SeedDefaultRules()
+	-- ...and a profile that predates the "Mounts & Pets" rule gets that one on its own.
+	self:SeedMountPetRule()
 	-- Now we check our rules to see if all variables are set.
 	-- We could check profile variables, but some modules need more than just setting defaults, they need to act on them.
 	self:CheckRuleTables()
@@ -2086,12 +2108,13 @@ end
 -- Why this is profile-wide and not another per-rule filter. The addon HAS a
 -- per-rule filter for it (Modules/ConfirmBoP.lua's "Confirm BoP") and it works --
 -- but it only fires when the rule that matched has it ticked, and none of the
--- rules a normal setup actually rolls with do. The two seeded starter rules
--- ("Not Usable > Greed", "Catch All > Greed", Core/Constants.lua DefaultRules)
--- carry no filters beyond their match condition, and neither do BiS-imported
--- rules. So on live boss loot -- which is BoP, which is why this looks like an
--- "epic items" problem -- the rule matched, the roll was cast, and then the
--- confirm sat there unanswered because the matched rule had no Confirm BoP tick.
+-- rules a normal setup actually rolls with do. The seeded starter rules
+-- ("Mounts & Pets > Need", "Not Usable > Greed", "Catch All > Greed",
+-- Core/Constants.lua DefaultRules) carry no filters beyond their match condition,
+-- and neither do BiS-imported rules. So on live boss loot -- which is BoP, which is
+-- why this looks like an "epic items" problem -- the rule matched, the roll was cast,
+-- and then the confirm sat there unanswered because the matched rule had no Confirm
+-- BoP tick.
 -- A setting nobody's rules opt into is a setting that does not work.
 --
 -- Disenchant (rollType 3) is deliberately NOT auto-confirmed here. Rolling DE on
@@ -2491,6 +2514,143 @@ function PasslootBiS:SeedDefaultRules()
 	for _, Rule in ipairs(self.DefaultRules or {}) do
 		table.insert(Profile.Rules, self:CopyTable(Rule))
 	end
+end
+
+-- Hand an EXISTING profile the "Mounts & Pets" starter rule, once.
+--
+-- SeedDefaultRules above only ever fires on a profile with no rules at all, and only
+-- once per profile -- both deliberate, and both mean a rule added to DefaultRules
+-- after release reaches nobody who already plays with this addon. That is the whole
+-- case this rule exists for: the auto-greed on mounts and pets is what the shipped
+-- configuration does today, on every install out there.
+--
+-- Same two guards as SeedDefaultRules, for the same reasons:
+--   * the flag is set even when we DON'T seed, so this runs exactly once per profile.
+--     Delete the rule and it stays deleted -- deliberately, and the reason the
+--     options page has a "Restore Starter Rules" button (RestoreDefaultRules below):
+--     one-shot seeding means an accidental delete would otherwise be permanent.
+--   * a profile that already has a rule using the MountPet filter is left alone --
+--     a fresh profile (SeedDefaultRules just gave it the rule as part of the starter
+--     set) and anyone who built their own mount rule before this shipped.
+-- Inserted at the FRONT, because a rule matched after "Not Usable" or "Catch All" is
+-- a rule that never matches: both of those claim a mount first (Constants.lua).
+-- Called from OnProfileChanged before CheckRuleTables, like the seed above, so the
+-- rule gets the same DefaultTemplate fill-in as any other; PartitionRules then places
+-- it among the other Before Advisor rules.
+function PasslootBiS:SeedMountPetRule()
+	local Profile = self.db.profile
+	Profile.Rules = Profile.Rules or {}
+	if (Profile.MountPetRuleSeeded) then
+		return
+	end
+	Profile.MountPetRuleSeeded = true
+	if (not self.MountPetRule) then
+		return
+	end
+	for _, Rule in ipairs(Profile.Rules) do
+		if (Rule.MountPet) then
+			return
+		end
+	end
+	table.insert(Profile.Rules, 1, self:CopyTable(self.MountPetRule))
+end
+
+-- Put back any starter rule the profile no longer has. The options page's
+-- "Restore Starter Rules" button (the General tab, beside Clean Rules).
+--
+-- The two seeds above are deliberately one-shot -- delete a starter rule and it stays
+-- deleted, which is right for a rule you meant to get rid of and useless for one you
+-- deleted by accident, since nothing else in the addon can ever hand it back. This is
+-- the way back, and it is a BUTTON rather than an automatic repair for the same
+-- reason the seeds are one-shot: putting a rule back is the user's decision, not ours.
+--
+-- Identified by Desc, which is how a BiS list's rules are found too (baseFromDesc).
+-- That means a starter rule you RENAMED reads as missing and restoring adds a second
+-- copy -- the alternative, matching on the filter a rule uses, is worse: half a dozen
+-- perfectly ordinary hand-made rules use a Usable or CanIRoll filter and would each
+-- suppress the restore of a rule that really is gone.
+--
+-- Each missing rule goes back in its DefaultRules position RELATIVE TO THE OTHERS:
+-- before the first later default the profile still has, or at the end if there is
+-- none. Order is the whole design of that set (Core/Constants.lua) -- "Catch All"
+-- matches everything, so anything restored below it would never be reached, and
+-- "Mounts & Pets" has to sit above the greed rules or it never matches either.
+-- Returns the number restored so the caller can say what it did.
+function PasslootBiS:RestoreDefaultRules()
+	local Rules = self.db.profile.Rules
+	local Defaults = self.DefaultRules or {}
+	local Restored = {}
+	-- Hold the SELECTED rule itself, not its number: an insert above it shifts it
+	-- down, so the index we came in with names a different rule by the time the
+	-- repaint asks which one to keep highlighted.
+	local Selected = (self.CurrentRule > 0) and Rules[self.CurrentRule] or nil
+
+	local function indexOfDesc(Desc)
+		for Key, Rule in ipairs(Rules) do
+			if (Rule.Desc == Desc) then
+				return Key
+			end
+		end
+		return nil
+	end
+
+	for Key, Default in ipairs(Defaults) do
+		if (not indexOfDesc(Default.Desc)) then
+			-- Where the next surviving default sits; everything after it in the
+			-- starter order belongs below this one.
+			local Where = #Rules + 1
+			for Later = Key + 1, #Defaults do
+				local At = indexOfDesc(Defaults[Later].Desc)
+				if (At) then
+					Where = At
+					break
+				end
+			end
+			table.insert(Rules, Where, self:CopyTable(Default))
+			Restored[#Restored + 1] = Default.Desc
+		end
+	end
+
+	if (#Restored == 0) then
+		self:Print(L["RestoreRules_None"])
+		return 0
+	end
+	-- Same three steps a seeded rule gets on a profile change: fill in whatever the
+	-- stored rule does not set, put Before Advisor rules back at the front, repaint.
+	self:CheckRuleTables()
+	self.CurrentRule = 0
+	if (Selected) then
+		for Key, Rule in ipairs(Rules) do
+			if (Rule == Selected) then
+				self.CurrentRule = Key
+				break
+			end
+		end
+	end
+	self.CurrentRule = self:PartitionRules(nil, (self.CurrentRule > 0) and self.CurrentRule or nil) or 0
+	self:ResetCache() -- cached decisions predate the rules we just put back
+	self:Rules_RuleList_OnScroll()
+	self:DisplayCurrentRule()
+	self:Print(string.gsub(L["RestoreRules_Restored"], "%%rules%%", table.concat(Restored, ", ")))
+	return #Restored
+end
+
+-- Flip one rule's Disabled flag -- the same flag the minimap button's right-click
+-- menu sets (Core/MinimapButton.lua), reachable from the rule's own right-click menu
+-- on the rules page. A disabled rule is skipped whole by the roll loop, so this is
+-- the answer to "I want this rule gone for now" that does not lose the rule.
+function PasslootBiS:ToggleRuleDisabled(RuleNum)
+	local Rule = RuleNum and self.db.profile.Rules[RuleNum]
+	if (not Rule) then
+		return
+	end
+	Rule.Disabled = (not Rule.Disabled) and true or nil
+	-- The evaluation cache holds a decision per item link for CacheExpires seconds,
+	-- and that decision was reached with this rule in its old state -- so an item
+	-- already seen this session would keep answering from the rule the user just
+	-- turned off. Same reason a profile change resets it (Core/Cache.lua).
+	self:ResetCache()
+	self:Rules_RuleList_OnScroll()
 end
 
 -- Keep a rules array PARTITIONED: every rule ticked "Before Advisor" first, then

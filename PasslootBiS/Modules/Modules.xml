@@ -15,6 +15,7 @@
 	<Script file="ItemPrice.lua"/>
 	<Script file="LearnedItem.lua"/>
 	<Script file="LootWon.lua"/>
+	<Script file="MountPet.lua"/>
 	<Script file="MysticEnchant.lua"/>
 	<Script file="MythicItemLevel.lua"/>
 	<Script file="PlayerClass.lua"/>

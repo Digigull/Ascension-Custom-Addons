@@ -38,11 +38,39 @@ client for scaled instances.
 On top of the stock modules (item level, quality, equip slot, bind type, zone,
 class, usable, …) this fork adds:
 
+- **Mount / Pet** — match mounts and companion pets, whatever subclass the server
+  filed them under (it falls back to the item's own "summon this mount" Use: line)
 - **Mystic Enchant** — match only unlearned mystic enchants
 - **Vanity Unlock** — match only unlearned vanity items
 - **Wardrobe Unlock** — match only unlearned wardrobe appearances
 - **Mythic Plus Level** — match on Mythic difficulty tier
 - **Item Price** — match against vendor value
+
+### Starter rules
+
+A profile with no rules of its own is given three, tried top-down:
+
+| # | Rule | Roll |
+|---|---|---|
+| 1 | **Mounts & Pets** — a mount or companion pet you have not collected | **Need** (Greed where Need is not allowed) |
+| 2 | **Not Usable** — the tooltip carries a red requirement line | Greed |
+| 3 | **Catch All** — anything else | Greed |
+
+Rule 1 exists because the other two auto-greed a chase item, and a mount you have not
+got the riding skill for is *unusable*, so it was rule 2 that claimed it — the addon
+greeded the drop of the run because you could not ride it yet. Need is the pick-up
+group convention, so that is the default. It is an ordinary rule: edit it, reorder
+it, or get rid of it. Installs that predate it are given it once.
+
+Two ways to get rid of one, and the reversible one is worth knowing about:
+
+- **Turn it off** — right-click the rule in the list (or the minimap button) and
+  untick it. The rule stays where it is, greyed and marked `(off)`, and is skipped
+  entirely while rolling.
+- **Remove it** — gone for good, since the starter rules are only ever handed out
+  once. **Restore Starter Rules** on the General options page puts back any that are
+  missing, each at its original place in the order; it only ever adds, and never
+  touches a rule you still have or one you made yourself.
 
 ### Roll advisor API
 
