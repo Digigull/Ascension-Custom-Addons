@@ -1052,3 +1052,49 @@ Two findings worth carrying forward without opening that doc:
 
 `luac5.1 -p` clean; XML parses; all nine offline suites still pass. **Not verified in game** — the
 four things worth looking at first are listed at the end of `BATCH-POST.md`.
+
+---
+
+## 13. Batch Post should scan the live price at post time — DONE
+
+**Asked (owner, 2026-08-23, after the first in-game session on item 12):** *"Let's have it scan the
+current prices at the batch post time. Maybe have a progress bar, prices can change quickly."*
+
+**Built 2026-08-23.** Written up in `management/addons/auctionator/BATCH-POST.md` §3; item 12's
+entry above still describes the column itself.
+
+The three decisions worth having here rather than in the doc:
+
+- **Interleaved, not two phases.** One `Atr_Finder_StartNameScan` per distinct NAME, taken out
+  immediately before the first entry of that name is posted. Scan-everything-then-post-everything
+  costs identical wall clock but leaves the first item listing at a price read minutes earlier —
+  which is the staleness the request is about. Interleaved, the gap is one 0.25 s tick.
+- **It reads `F.GetResults()` raw, not the price database.** Scan records carry `rec.owner` and the
+  database throws it away, so the batch can now drop *your own* listings before taking the minimum.
+  That retires the limitation item 12 shipped with and documented — batch-posting the same item
+  twice no longer walks your own price down. It also means the live price does not depend on the
+  Finder's "Prices" option being on, which only governs whether the scan is *stored*.
+- **Scanned-and-nothing-listed is not the same as could-not-scan.** With no competing listing there
+  is nothing to undercut, so that case posts at the stored cascade price *without* the trim; a
+  failed scan posts at the same price *with* it, i.e. item 12's behaviour, and says so in chat.
+  "Only your own listed" lands in the first case, so a re-run matches your price instead of
+  undercutting it. `Atr_BP_EffectiveUnit` is the one place all three are decided.
+
+A run is now minutes, so the column's title row becomes a progress bar for the duration; an item
+out for a scan fills up to 0.8 of its own slice off the tick counter, so the bar keeps moving
+through the slow half instead of freezing exactly when the run is busiest.
+
+`Atr_Finder_CancelSearch` gained a third notify — `Atr_BP_ScanCancelled`, beside the one it already
+sends `Atr_SB_ScanCancel` — because the per-name callback rides `gFdr_OnFinish`, which a cancel
+clears. A 45s per-scan timeout backs that up for any path routing through neither hook.
+
+New suite `management/addons/auctionator/tools/batch-price-smoke.lua`, 25 assertions, passed first
+run: per-unit division, lowest-wins in every result order, own-listing exclusion, unknown-owner
+handling, same-name variant separation, and `Atr_BP_EffectiveUnit`'s three cases. Justified by
+precedent rather than by the house default — variant matching has escaped this addon three times
+(items 12, 15, 16) and this does variant matching *and* owner filtering over an order nobody
+controls.
+
+`luac5.1 -p` clean; XML parses; all ten suites pass. **Not verified in game** — the five things
+worth looking at first are at the end of `BATCH-POST.md`, and the first of them is whether the
+scan→post→scan chain advances at all, which is the one thing offline work cannot check.

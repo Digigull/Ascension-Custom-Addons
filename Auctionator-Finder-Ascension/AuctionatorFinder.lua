@@ -2576,6 +2576,13 @@ function Atr_Finder_CancelSearch (showMsg)
 		Atr_SB_ScanCancel ();
 	end
 
+	-- And once more for Batch Post, which scans a name immediately before
+	-- listing it and rides the same hook.  It no-ops unless a scan of its own
+	-- is actually out, so this is safe on every cancel.
+	if (Atr_BP_ScanCancelled) then
+		Atr_BP_ScanCancelled ();
+	end
+
 	return pAdd, pUpd;
 end
 

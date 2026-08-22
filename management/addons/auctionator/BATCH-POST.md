@@ -1,16 +1,20 @@
 # Batch Post — the SELL tab's right-hand column
 
-Built 2026-08-22 (BACKLOG item 12). Everything here is read from source or reasoned from it;
-the client cannot be run here, so **nothing below is verified in game.**
+Built 2026-08-22 (BACKLOG item 12); **live price scanning and the progress bar added 2026-08-23
+(item 13)**. Everything here is read from source or reasoned from it; the client cannot be run
+here, so **nothing below is verified in game.**
 
-The request, verbatim: *"On the Auctionator sell tab, divide the inventory area in half and make
-the new (right half) called batch post, add items from inventory section into batch by right
+The original request, verbatim: *"On the Auctionator sell tab, divide the inventory area in half and
+make the new (right half) called batch post, add items from inventory section into batch by right
 clicking them. Press Batch Post button, sells at automatic set price discount, and whatever
 duration is currently set. Also let's keep all soulbound items at the bottom, they are mixed in
 here and there."*
 
-Two separate things, and the second one turned out to be a bug rather than a preference. They are
-written up in that order.
+The follow-up, after the first in-game session: *"Let's have it scan the current prices at the batch
+post time. Maybe have a progress bar, prices can change quickly."*
+
+Three things, then, and the third — the soulbound half — turned out to be a bug rather than a
+preference. They are written up in that order.
 
 ---
 
@@ -24,8 +28,15 @@ written up in that order.
 | `Auctionator.lua`, `Atr_SB_Item_OnClick` | right-click queues / unqueues |
 | `Auctionator.lua`, `Atr_SB_Build` | soulbound bucket, green wash on queued tiles, tail-calls `Atr_BP_Build` |
 | `Auctionator.lua`, `Atr_Sell_ItemIsGrey` / `Atr_Sell_ItemIsBound` | the soulbound fix (§4) |
+| `AuctionatorFinder.lua`, `Atr_Finder_CancelSearch` | calls `Atr_BP_ScanCancelled` (§3) |
+| `management/addons/auctionator/tools/batch-price-smoke.lua` | **new.** 25 assertions over the two pricing functions |
 
 **No new saved variable.** The queue is session-only on purpose — see §3.
+
+The batch file takes `addonTable.Finder` at load (`local addonName, addonTable = ...`), the same
+idiom the four Finder files use. That is what lets it read `F.GetResults()` and `F.GetState()`
+directly, and it works because it loads **last** in the `.toc`, after `AuctionatorFinder.lua`
+publishes that surface (FRAMEWORK.md §3, ordering fact 1).
 
 FRAMEWORK.md §4's rule is "build new UI in World 2", and this is as close to that as a SELL-tab
 feature can get: the panel, its rows, its buttons and the driver are all in one new file and all
@@ -76,33 +87,82 @@ Nothing here calls `SetToplevel` or `Raise` (`DRAG-FREEZE.md`).
 
 ## 3. What the button actually does
 
-### The price
+### The price — scanned live, per item, as the run reaches it
 
-"Automatic set price discount" is read as: the price the SELL tab would have recommended, computed
-without the part that needs a live scan.
+**Changed 2026-08-23 (BACKLOG item 13), and this is now the centre of the feature.** The first
+build priced off the stored database. The owner's follow-up: *"let's have it scan the current
+prices at the batch post time. Maybe have a progress bar, prices can change quickly."*
+
+The run interleaves a scan with each post rather than scanning everything up front:
 
 ```
-buyout per item  = Atr_CalcUndercutPrice (Atr_GetAuctionPrice (name, variantKey))
+for each queued entry, in queue order:
+    if this NAME has not been scanned yet this run:
+        Atr_Finder_StartNameScan (name)          -- one auction query
+        ... wait, then read F.GetResults() ...
+        price EVERY queued entry of that name off those listings
+    post it
+```
+
+**Interleaved, not two phases, and that is the request rather than a detail.** Both orders cost the
+same wall clock. Interleaved, the gap between reading an item's price and listing at that price is
+one 0.25 s tick; batched, the first item posts at a price read minutes earlier — which is exactly
+the staleness the owner asked to remove.
+
+**Scanning by NAME, pricing every entry of that name from the one result set.** A queue holding five
+stacks of Saronite Ore costs one query, not five.
+
+**What it takes out of the results** (`Atr_BP_LiveUnit`): the lowest **per-unit** buyout among
+listings that carry this item's variant key and are **not yours**.
+
+- *Per-unit*: `buyoutPrice / count`. A stack of ten at 1000 undercuts a single at 150.
+- *Variant-keyed*: `Atr_VariantKey(rec.link)` against the queued link's. Same-name variants are
+  genuinely different items on this server and must not price each other (BACKLOG items 12/15/16).
+- ***Not yours*: `rec.owner` is on every scan record, and this is the thing the price database
+  throws away.** Pricing off the database meant undercutting your own standing listing every time
+  you ran a batch twice. That limitation is gone, and it is why the scan reads the raw records
+  rather than waiting for `Fdr_PriceDB_Update` to land them. A listing whose `owner` has not
+  arrived yet counts as somebody else's — that costs at most one undercut step, where the other
+  choice would mean ignoring real competition and listing above the market.
+
+Then the ordinary arithmetic, `Atr_UpdateRecommendation`'s line for line:
+
+```
+buyout per item  = Atr_CalcUndercutPrice (lowest live listing)
 start  per item  = Atr_CalcStartPrice (buyout)          -- AUCTIONATOR_SAVEDVARS.STARTING_DISCOUNT
 stack prices     = both of the above x the stack size actually in the sell slot
 duration         = UIDropDownMenu_GetSelectedValue (Atr_Duration), read once at run start
 ```
 
-That is `Atr_UpdateRecommendation`'s arithmetic line for line. It is variant-keyed for the reason
-`Atr_SB_BestMethod` is (BACKLOG item 4): a name-only read answers the `ATR_PV_ANY` slot, which only
-a full scan writes.
+**Three outcomes, and `Atr_BP_EffectiveUnit` is the single place they are decided:**
 
-**The one honest difference from posting by hand, stated rather than hidden.** The sell box runs a
-fresh query per item and prices against the listings that come back, so it knows which of them are
-*yours* and refuses to undercut those (`basedata.yours`). A batch of thirty items cannot afford
-thirty queries on the throttled channel, so this prices off `Atr_GetAuctionPrice`'s cascade, which
-is name/variant-keyed and carries no owner. **Batch-posting the same item twice without a scan in
-between therefore undercuts your own listing by one step.** `Scan Inventory`, directly under the
-left column, is the fix and is one click away.
+| the scan came back with | the item posts at |
+|---|---|
+| listings that are not yours | the lowest of them, **undercut** |
+| nothing listed (or only your own) | `Atr_GetAuctionPrice`'s cascade, **not** undercut |
+| could not be scanned at all | that same cascade, **undercut** — i.e. the old behaviour |
 
-**An item with no known price is never guessed at.** It stays in the queue, greyed, with "no price"
-where its total would be, and the run skips it. Posting at a made-up price is worse than not
-posting.
+The middle row is the one worth stating. With no competing listing there is nothing to undercut,
+and shaving a step off an uncontested price is pure loss. "Only your own listed" lands here too,
+which means a re-run matches your existing price instead of walking it down.
+
+The bottom row happens when the Finder is not loaded, the query channel is busy, or a scan times
+out. It is always **said in chat**, never silent.
+
+**An item with no price from any of those is never guessed at.** It stays in the queue, greyed,
+with "no price" where its total would be, and the run skips it.
+
+### The progress bar
+
+A run is now minutes rather than seconds — one throttled query per distinct name — so a column that
+just sat there would read as a hang. `Atr_BP_Progress` is a `StatusBar` that takes the title's row
+for the length of a run, so it costs no layout: a run has nothing to say that the title was saying.
+
+Each queue entry is one unit of work. An entry out for a scan fills up to **0.8** of its own unit as
+the query runs, driven off the driver's own tick counter, capped short of the item's full slice so
+it can never run ahead of what actually happened. Without that the bar would freeze at precisely
+the moments the run is doing the most work. The label alternates between
+`Scanning <item>  (n/total)` and `Posting  n/total`.
 
 ### The driver is a ticker, not an event chain
 
@@ -122,7 +182,20 @@ would look exactly like a hang.
 
 The run stops by itself if the auction house closes or the tab changes. Nothing is queued
 server-side, so stopping is free, and a second click on the button cancels — the same gesture
-`Scan Inventory` uses.
+`Scan Inventory` uses. A cancel also kills the name scan that may be in flight.
+
+**The scan can be cancelled from outside, and that had to be wired both ways.** The per-name
+callback rides `gFdr_OnFinish`, which `Atr_Finder_CancelSearch` clears — so a batch waiting on a
+scan would sit there until its own timeout. That path already tells the Sell tab's Scan Inventory
+driver (`Atr_SB_ScanCancel`); it now tells this one too, through `Atr_BP_ScanCancelled`. The
+reverse direction is safe by construction: `Atr_BP_Cancel` nils `gRun` *before* calling
+`Atr_Finder_CancelSearch`, so the callback coming back the other way short-circuits instead of
+recursing.
+
+Behind both of those sits a 45-second per-scan timeout in the driver. It is a backstop against the
+callback being dropped by some path that routes through neither hook, not a per-query budget — the
+Finder has its own paging retries and runaway guard. On a timeout the run says so and falls through
+to the stored price rather than hanging.
 
 ### Three guards worth keeping
 
@@ -240,13 +313,24 @@ nothing look identical, and the queue is off in the other column.
 
 ## 6. What was checked
 
-`luac5.1 -p` clean on both changed files and the new one; `Auctionator.xml` parses. All nine offline
-suites still pass (20 + 14 + 3 + 14 + 27 + 68 + 114 + 25 + 20) — none of them loads `Auctionator.lua`,
-so they are a no-regression check on the rest of the addon rather than cover for this change.
+`luac5.1 -p` clean on every changed file; `Auctionator.xml` parses. All ten offline suites pass.
+
+**`batch-price-smoke.lua` is new, and the house rule says a new harness needs a reason.** The reason
+is precedent: this feature's price now comes out of a raw scan result set by variant key and by
+owner, and same-name variants have escaped this addon three times already — `sell-variant-smoke.lua`
+exists in as many words because "the same symptom has now escaped twice". Both functions are pure
+over an array whose order nobody controls, so the orders are enumerated rather than reasoned about.
+It stubs `GetItemInfo`, `UnitName`, `Atr_VariantKey`, `Atr_CalcUndercutPrice`, `Atr_GetAuctionPrice`
+and one `F.GetResults`, loads the real file with `loadfile` and hands it a fake `addonTable` — no
+frames, no engine, no post. It must not grow past that. All 25 passed first run.
 
 **Nothing here is verified in game.** The parts most worth a look on first run, in order:
 
-1. Does the batch column land where §2 says, and does the inventory's scroll bar clear it?
-2. Does one post really empty the sell slot on this server, i.e. does the driver advance at all?
-3. Do the two buttons sit on the divider rather than under it?
-4. Is the `Soulbound` bucket now complete — nothing bound left up in the selling categories?
+1. Does a run actually advance — scan comes back, item posts, next scan starts? That chain is the
+   whole feature and it is the one thing offline work cannot check.
+2. Does the progress bar creep during a scan rather than only between items, and does the title
+   come back when the run ends?
+3. How long is a realistic queue? One throttled query per distinct name is the floor; if that is
+   painful, the lever is scanning by name *group* rather than per name.
+4. Does the batch column land where §2 says, and does the inventory's scroll bar clear it?
+5. Is the `Soulbound` bucket complete — nothing bound left up in the selling categories?
