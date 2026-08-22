@@ -4147,6 +4147,9 @@ end
 
 -----------------------------------------
 
+-- WHAT THE HELD-OPEN TOOLTIP IS ALREADY SHOWING -- see Atr_ShowRecTooltip.
+gAtr_RecTip_Sig = nil;
+
 function Atr_ShowRecTooltip ()
 	
 	local link = gCurrentPane.activeScan.itemLink;
@@ -4163,8 +4166,8 @@ function Atr_ShowRecTooltip ()
 		-- Owner is whatever the pointer is actually over.  On the SELL tab that is
 		-- the drop box, and the header icon is hidden there; everywhere else it is
 		-- still the header icon.  Resolved on each call, not captured once:
-		-- Atr_Idle re-runs this every frame while the tooltip is up, and SetOwner
-		-- on a hidden frame anchors the tooltip to nothing.
+		-- Atr_Idle re-runs this on every idle tick while the tooltip is up, and
+		-- SetOwner on a hidden frame anchors the tooltip to nothing.
 		--
 		-- IsVisible, not IsShown: the drop box is a child of Atr_SellControls, and
 		-- a shown child of a hidden parent still reports IsShown.
@@ -4173,11 +4176,8 @@ function Atr_ShowRecTooltip ()
 			owner = Atr_SellControls_Tex;
 		end
 
-		GameTooltip:SetOwner(owner, "ANCHOR_RIGHT");
-		GameTooltip:SetHyperlink (link, num);
-
 		-- WHAT THE MARKET HAS DONE LATELY, on the tab where you are about to put
-		-- a price on something (BACKLOG item 31, stage 4).  SetHyperlink above
+		-- a price on something (BACKLOG item 31, stage 4).  SetHyperlink below
 		-- already draws the addon's own money lines including "Auction Nd ago";
 		-- this is the one sentence that is about SELLING, so it is here and not
 		-- in the shared tooltip hook.
@@ -4185,19 +4185,58 @@ function Atr_ShowRecTooltip ()
 		-- SELL only: the same hover serves the BUY tab, where "undercutting it
 		-- prices you into that" is not what you are doing.
 		--
-		-- Atr_Idle re-runs this every frame while the tooltip is up, which is why
-		-- Atr_Hist_Delta memoises per name per day rather than decoding here.
+		-- Composed BEFORE the redraw decision because the sentence is part of what
+		-- the tooltip says, so it has to be part of the signature below.  This runs
+		-- on every idle tick, which is why Atr_Hist_Delta memoises per name per day
+		-- rather than decoding here.
+		local note, nr, ng, nb = nil, nil, nil, nil;
 		if (Atr_IsTabSelected and Atr_IsTabSelected (SELL_TAB) and Atr_Hist_SellNote) then
-
 			local nm = gCurrentPane.activeScan.itemName or gJustPosted_ItemName;
-			local note, r, g, b = nil, nil, nil, nil;
-			if (nm) then note, r, g, b = Atr_Hist_SellNote (nm); end
+			if (nm) then note, nr, ng, nb = Atr_Hist_SellNote (nm); end
+		end
 
-			if (note) then
-				GameTooltip:AddLine (" ");
-				GameTooltip:AddLine (note, r, g, b, true);
-				GameTooltip:Show();			-- the tooltip was already sized by SetHyperlink
-			end
+		-- REDRAW ONLY WHEN THE TOOLTIP WOULD COME OUT DIFFERENT.
+		--
+		-- Atr_Idle re-runs this every idle tick (0.4s) for as long as the pointer
+		-- sits on the box, so a price landing mid-hover reaches the tooltip that is
+		-- on screen right now.  Rebuilding unconditionally was the bug: SetOwner
+		-- CLEARS the tooltip, so every tick threw away everything on it and drew it
+		-- again from nothing.  Anything another addon appends AFTER
+		-- OnTooltipSetItem was therefore wiped two and a half times a second and
+		-- put back a frame later, which reads as a flicker.  BiS Scanner's upgrade
+		-- score is exactly such an addition -- it annotates auction-house tooltips
+		-- one frame late on purpose, so it can read the Finder's repainted listing
+		-- lines -- and this drop box is the only tooltip in the addon that is
+		-- re-driven while the mouse holds still, which is why nothing else blinked.
+		--
+		-- The signature is everything the drawn tooltip depends on that can change
+		-- with the pointer parked: the item and stack size, which frame it hangs
+		-- off, the price database (ATR_PRICE_REV is bumped by every Atr_PriceStore
+		-- write, so a scan completing still lands), the modifier keys the price and
+		-- Qty lines are gated on, and the sentence above.  Anything else in there
+		-- is fixed for the life of a hover.
+		local sig = tostring (link).."\1"..tostring (num).."\1"..tostring (owner)
+					.."\1"..tostring (ATR_PRICE_REV)
+					.."\1"..(IsAltKeyDown() and "a" or "")
+						 ..(IsShiftKeyDown() and "s" or "")
+						 ..(IsControlKeyDown() and "c" or "")
+					.."\1"..tostring (note);
+
+		if (gAtr_RecTip_Sig == sig and GameTooltip:IsShown()
+				and GameTooltip:GetOwner() == owner) then
+			gCurrentPane.tooltipvisible = true;
+			return;						-- already on screen, and identical: leave it alone
+		end
+
+		gAtr_RecTip_Sig = sig;
+
+		GameTooltip:SetOwner(owner, "ANCHOR_RIGHT");
+		GameTooltip:SetHyperlink (link, num);
+
+		if (note) then
+			GameTooltip:AddLine (" ");
+			GameTooltip:AddLine (note, nr, ng, nb, true);
+			GameTooltip:Show();			-- the tooltip was already sized by SetHyperlink
 		end
 
 		gCurrentPane.tooltipvisible = true;
@@ -4210,6 +4249,7 @@ end
 function Atr_HideRecTooltip ()
 	
 	gCurrentPane.tooltipvisible = nil;
+	gAtr_RecTip_Sig = nil;				-- next hover rebuilds, even of the same item
 	GameTooltip:Hide();
 
 end

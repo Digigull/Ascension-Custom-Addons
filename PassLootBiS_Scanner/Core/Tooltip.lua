@@ -325,16 +325,16 @@ local function safeAnnotate(tt)
 	busy = false
 end
 
--- On the auction house, some addons draw the cached (nominal) item body, fire
--- OnTooltipSetItem, and only THEN overwrite the stat lines with the listing's
--- TRUE server values -- e.g. the Auctionator-Ascension-Finder fork's list rows
--- call SetHyperlink (cached) and then replay the captured server tooltip over it.
--- Parsing inside OnTooltipSetItem would read the pre-replay nominal lines. So when
--- the AuctionFrame is open we defer the parse to the next frame, by which point
--- both paths have settled: Blizzard's Browse tab (SetAuctionItem -- already true)
--- and a fork's list (true lines now painted over the cached body). One shared
--- one-shot OnUpdate frame carries the pending tooltip; tooltips elsewhere annotate
--- immediately with no delay.
+-- A Finder row draws the cached (nominal) item body, fires OnTooltipSetItem, and
+-- only THEN overwrites the stat lines with the listing's TRUE server values: the
+-- Auctionator-Ascension-Finder fork's list rows call SetHyperlink (cached) and
+-- then replay the captured server tooltip over it. Parsing inside
+-- OnTooltipSetItem would read the pre-replay nominal lines. So for those rows we
+-- defer the parse to the next frame, by which point the true lines are painted
+-- over the cached body. One shared one-shot OnUpdate frame carries the pending
+-- tooltip; every other tooltip -- Blizzard's Browse listings included, since
+-- SetAuctionItem is already true inside the event -- annotates immediately with
+-- no delay.
 local deferFrame
 local function scheduleDeferred(tt)
 	if not deferFrame then
@@ -353,31 +353,35 @@ local function scheduleDeferred(tt)
 	deferFrame:Show()   -- fires OnUpdate on the next frame, then hides itself
 end
 
--- Is this tooltip owned by the auction-house UI (a Browse listing button, or a
--- fork Finder-list row -- both parented under AuctionFrame)? Only those get the
--- true-lines-after-the-event replay that the one-frame defer exists to catch.
--- A bag/inventory/merchant tooltip hovered WHILE the AH is open is NOT such a
--- tooltip: its stats are already correct synchronously, so deferring it just adds
--- a one-frame width lag that reads as the tooltip "shaking" whenever the client
--- re-renders it. Walk the owner chain to AuctionFrame to tell them apart.
-local function ownedByAuctionUI(tt)
-	local af = rawget(_G, "AuctionFrame")
-	if not (af and af:IsShown()) then return false end
+-- Is this the ONE tooltip that gets its true stat lines painted on after the
+-- event? Exactly one thing in the game does that: a row in the fork's Finder
+-- list, which calls SetHyperlink on the cached item and then replays the
+-- listing's captured server tooltip over the body. Blizzard's own Browse
+-- listings are already true inside the event (SetAuctionItem), and every other
+-- tooltip -- bag, inventory, merchant, the auction house's own sell box --
+-- is correct synchronously.
+--
+-- Deferring anything else is not free: it leaves one rendered frame with no
+-- annotation on it. On a tooltip drawn once that is invisible, but on one a host
+-- REDRAWS while the pointer holds still it is a flicker, once per redraw. The
+-- Auctionator sell box was such a host (it rebuilt its tooltip on a 0.4s idle
+-- tick), which is what this narrowing is for: it now annotates inside the event
+-- like everything else, so no frame of it is ever missing the score.
+--
+-- Owner name rather than a walk up to AuctionFrame, because "parented under the
+-- auction house" was never the property that mattered -- being repainted was.
+local FINDER_ROW_PREFIX = "^Atr_Finder_Row"
+local function needsDeferredParse(tt)
 	local owner = tt.GetOwner and tt:GetOwner()
-	local guard = 0
-	while owner and guard < 60 do
-		if owner == af then return true end
-		owner = owner.GetParent and owner:GetParent() or nil
-		guard = guard + 1
-	end
-	return false
+	local name = owner and owner.GetName and owner:GetName()
+	return (name and name:find(FINDER_ROW_PREFIX)) and true or false
 end
 
 -- Hook the common item tooltips. OnTooltipSetItem fires after the item is drawn.
--- Defer only for auction-house tooltips (see above); annotate inline everywhere
--- else -- including bag items while the AH is open.
+-- Defer only for the repainted Finder rows (see above); annotate inline
+-- everywhere else -- including every other tooltip at the auction house.
 local function onTooltipSetItem(tt)
-	if ownedByAuctionUI(tt) then
+	if needsDeferredParse(tt) then
 		scheduleDeferred(tt)
 	else
 		safeAnnotate(tt)
