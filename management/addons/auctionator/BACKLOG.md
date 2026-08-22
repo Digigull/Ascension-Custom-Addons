@@ -256,6 +256,45 @@ a tooltip saying what it deletes and that it will ask first.
 **Verified:** `luac5.1 -p` clean, the four Auctionator suites still pass. **Not verified in game** —
 the popup's wording at width, and whether (-16, -46) sits where the owner means by "under the X".
 
+### Moved off the tab entirely, 2026-08-22
+
+**Asked (owner):** *"Let's remove clear button from ledger, it could be confused for clear the
+filter box. Put it into options interface instead."*
+
+**The placement above was wrong for a reason the placement above created.** (-16, -46) is the tab's
+top chrome row — and the filter box that landed on the Ledger tab the same day (item 2) sits on that
+same row, a few inches to its left, at (76, -52). A 70px button reading **"Clear"** next to a text
+input is read as *clear the input*. The confirmation does not save it: a player who clicks Clear
+meaning "empty the filter box" and gets **"Delete all 412 ledger rows?"** has been frightened by a
+control that was never for them, and the next such popup is one they have already learned to dismiss.
+
+**So it left the tab rather than moving around on it.** There is no spot on that panel far enough
+from the filter box to fix the reading, and a *record* is not a thing you clear in passing anyway:
+it is a maintenance action, and Interface > AddOns > Auctionator > **Scanning** is where you go
+looking for one.
+
+- The tab keeps nothing but a comment where the button was — the superseded placement and *why* it
+  is superseded, since (-16, -46) was itself a deliberate decision and the next reader will
+  otherwise re-make it.
+- **The button is still built by `AuctionatorLedger.lua`** (`Atr_Ledger_BuildOptionsButton`), which
+  is handed a panel and a y offset by `Fdr_Options_Ensure`. The ledger owns what clearing means —
+  the row count, the popup, the warning; the options file owns *where things sit on that panel*.
+  That split is the point: two files choosing absolute offsets on one shared panel is how rows end
+  up drawn on top of each other, and `AuctionatorFinderOptions.lua` now says in its header that it
+  owns everything below y -110 there.
+- The popup, the row count in the question and the tooltip moved **unchanged**. Item 3's reasoning
+  survives the move intact; only its coordinates did not.
+- Its own **"Trade ledger"** heading at -252, the button at -276, and a visible note under it at
+  -304 saying what is deleted and that nothing brings it back — on the panel, not only in the
+  tooltip, because a consequence nobody hovers to read has not been given.
+- **An empty ledger asks nothing.** `#Ldg_Rows() == 0` says so in chat and skips the popup:
+  "Delete all 0 ledger rows?" is a question with no consequence behind it, and answering Yes to one
+  teaches the habit of answering Yes to the one that has.
+
+**Verified:** `luac5.1 -p` clean on both files; the five Auctionator suites still pass (27 / 68 /
+114 / 25 / 20). **Not verified in game** — that the four y offsets clear each other on the Scanning
+panel at its real height, and that the note's 560px wrap does not run past the panel's edge.
+
 ---
 
 ## 4. Do Buy-tab searches update the price database and the tooltip? — the write: yes. The tooltip: NO, fixed 2026-08-20

@@ -4,6 +4,13 @@
 -- The Finder's rows on Auctionator's Scanning options panel (the "Prices" feed
 -- toggle and friends) plus their event frame.
 --
+-- It also owns the LAYOUT of everything below y -110 on that panel, which is
+-- now more than the Finder's own rows: the Ledger's Clear control is placed
+-- here too (built by AuctionatorLedger.lua, which owns what it does).  Anything
+-- else that wants a spot on this panel goes through Fdr_Options_Ensure for the
+-- same reason -- two files choosing absolute offsets on one panel is how rows
+-- end up drawn on top of each other.
+--
 -- Split out of AuctionatorFinder.lua (was the "scanning options rows" section).
 -- Shares only the Buy<->Finder redirect table through addonTable.Finder.Redir;
 -- everything else is its own state or reached through globals.
@@ -118,6 +125,35 @@ function Fdr_Options_Ensure ()
 		{ FT("Records one price a day per item, from the same scans that already feed the price database, so the addon can tell you what something was worth last week and not just today. The History tab on Buy, Sell and My Auctions reads it, and so do the tooltip and the Analysis tab's Week column."),
 		  FT("It is kept in a SavedVariables file of its own, so a client crash can never take your trade ledger or your learned vendor prices down with a big history. Deleting that file loses only the history, and scanning grows it back."),
 		  FT("Needs the Auctionator-Finder-Ascension-History folder installed beside this addon. In game use /atrhistory.") });
+
+	-- THE LEDGER'S CLEAR CONTROL (owner, 2026-08-22).  Not a Finder scan, and not
+	-- a setting at all -- it is a button, and it is on this panel because on the
+	-- Ledger tab it sat on the same chrome row as that tab's filter box, where
+	-- "Clear" reads as "clear the filter" (AuctionatorLedger.lua's Atr_Ledger_Init
+	-- carries the full reasoning).  Options is where a control you have to go
+	-- looking for belongs, and going looking is the point for this one.
+	--
+	-- Its own heading, and a gap above it, so it cannot be skimmed as a fourth
+	-- row of the group above.  The button is built by the LEDGER: this file owns
+	-- where things sit on this panel, that file owns what clearing means.
+	if (type (Atr_Ledger_BuildOptionsButton) == "function") then
+
+		local lhead = panel:CreateFontString (nil, "ARTWORK", "GameFontNormal");
+		lhead:SetPoint ("TOPLEFT", panel, "TOPLEFT", 18, -252);
+		lhead:SetText (FT("Trade ledger"));
+
+		gFdr_OptRows.ledgerclear = Atr_Ledger_BuildOptionsButton (panel, 20, -276);
+
+		-- Said on the panel, not only in the tooltip: this is the one store here
+		-- that scanning cannot grow back, and a consequence nobody hovers to read
+		-- has not been given.  Anchored below the button rather than beside it so
+		-- the wrap has the panel's whole width and cannot run off the edge.
+		local lnote = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+		lnote:SetPoint ("TOPLEFT", panel, "TOPLEFT", 22, -304);
+		lnote:SetWidth (560);
+		lnote:SetJustifyH ("LEFT");
+		lnote:SetText (FT("Deletes your record of what you actually bought and sold. Every other database here regrows by scanning; this one is a record of what happened, so nothing can bring it back. You will be asked to confirm, with the row count."));
+	end
 
 	return gFdr_OptRows;
 end

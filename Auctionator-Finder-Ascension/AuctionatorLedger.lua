@@ -855,9 +855,12 @@ end
 -- What the table DRAWS, which is not what the ledger HOLDS.
 --
 -- Deliberately not folded into Ldg_Rows, and this is the trap worth naming: the
--- Clear button's confirmation counts rows with #Ldg_Rows(), and Clear deletes
+-- Clear control's confirmation counts rows with #Ldg_Rows(), and Clear deletes
 -- the whole ledger regardless of what is filtered.  A filtered Ldg_Rows would
 -- have made the popup ask "Delete all 3 ledger rows?" while deleting 412.
+-- Still true now that the control is on the options panel rather than this tab
+-- (Atr_Ledger_BuildOptionsButton) -- more so, in fact: from over there the
+-- filter is not even on screen to explain a count that disagreed with it.
 local function Ldg_VisibleRows ()
 
 	if (gLdg_Filter == "") then return Ldg_Rows (); end
@@ -1142,50 +1145,30 @@ function Atr_Ledger_Init ()
 	totals:SetPoint ("BOTTOMLEFT", panel, "BOTTOMLEFT", 20, 34);
 	totals:SetText ("");
 
-	-- TOP RIGHT, UNDER THE CLOSE BUTTON (BACKLOG item 3, owner's placement).  It
-	-- sat at the panel's BOTTOMRIGHT, which on the Analysis tab is where the
-	-- tab-level ACTION button lives (Rescan) -- and Clear is not that kind of
-	-- button.  Up here it is out of the way of the table and reads as chrome,
-	-- which is what a destructive control should look like.
+	-- THERE IS NO CLEAR BUTTON ON THIS TAB ANY MORE (owner, 2026-08-22), and the
+	-- reason is a naming collision rather than anything about the button.
 	--
-	-- The y clears Blizzard's close button (32px from the frame's top) and stops
-	-- above the dark backdrop, which starts at -70.
-	local clear = CreateFrame ("Button", "Atr_Ledger_ClearButton", panel, "UIPanelButtonTemplate");
-	clear:SetSize (70, 22);
-	clear:SetPoint ("TOPRIGHT", panel, "TOPRIGHT", -16, -46);
-	clear:SetText (LZT("Clear"));
-
-	-- ASK FIRST, AND THIS IS THE HALF OF THE ITEM THAT MATTERS.  One click used to
-	-- destroy the ledger outright.  Every other store in this addon regrows by
-	-- scanning -- prices, vendor learning, the recipe book, the market history in
-	-- its own file -- and THIS ONE DOES NOT: it is a record of things that
-	-- happened, and nothing in the client can be asked for them again.
+	-- SUPERSEDED PLACEMENT: it sat at the panel's TOPRIGHT, (-16, -46), under
+	-- Blizzard's close button -- moved there by BACKLOG item 3 from the
+	-- BOTTOMRIGHT, where the Analysis tab keeps a tab-level ACTION button
+	-- (Rescan) and Clear is not that kind of button.  Up in the chrome is still
+	-- the right kind of place for a destructive control; the trouble is what it
+	-- ended up next to.  The filter box is on the SAME chrome row a few inches to
+	-- its left, and a 70px button labelled "Clear" beside a text field reads as
+	-- "clear the filter", not "destroy the trade ledger".  A control that can be
+	-- misread as a convenience one is in the wrong place however carefully it is
+	-- confirmed, and the confirmation only turns the misread into a scare.
 	--
-	-- The count is in the question on purpose.  "Are you sure?" is a noise a
-	-- player clicks through; "delete 412 rows" is a consequence.
-	clear:SetScript ("OnClick", function ()
-		if (StaticPopup_Show) then
-			StaticPopup_Show ("ATR_LEDGER_CLEAR", #Ldg_Rows ());
-		else
-			Atr_Ledger_Clear ();			-- no popup machinery: behave as before
-			Atr_Ledger_Redisplay ();
-		end
-	end);
-
-	clear:SetScript ("OnEnter", function (self)
-		if (GameTooltip) then
-			GameTooltip:SetOwner (self, "ANCHOR_LEFT");
-			GameTooltip:SetText (LZT("Clear the ledger"), 1, 1, 1);
-			GameTooltip:AddLine (LZT("Deletes every recorded buy, sale and posting. This is the one thing here that scanning cannot grow back -- it is a record of what happened, not a cache. You will be asked to confirm."), 0.8, 0.8, 0.8, true);
-			GameTooltip:Show();
-		end
-	end);
-	clear:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+	-- It is now on Auctionator's options -- Interface > AddOns > Auctionator >
+	-- Scanning -- built by Atr_Ledger_BuildOptionsButton below.  The popup, the
+	-- row count in the question and the tooltip all moved with it unchanged: item
+	-- 3's reasoning survives intact, only the coordinates it settled on did not.
 end
 
 if (StaticPopupDialogs) then
 
-	-- %d is filled by StaticPopup_Show's first argument, above.
+	-- %d is filled by StaticPopup_Show's first argument, at the call site in
+	-- Atr_Ledger_BuildOptionsButton below.
 	StaticPopupDialogs["ATR_LEDGER_CLEAR"] = {
 		text		= LZT("Delete all %d ledger rows?\n\nThis is your record of what you actually bought and sold. Scanning cannot bring it back."),
 		button1		= YES,
@@ -1197,6 +1180,69 @@ if (StaticPopupDialogs) then
 		timeout = 0, exclusive = 1, whileDead = 1, hideOnEscape = 1,
 		showAlert = 1,			-- the yellow (!) -- this one deletes something
 	};
+end
+
+
+-- THE CLEAR CONTROL, NOW ON THE OPTIONS PANEL (owner, 2026-08-22: off the tab,
+-- where it could be read as clearing the filter box -- see Atr_Ledger_Init).
+--
+-- Built HERE rather than in AuctionatorFinderOptions.lua so this file keeps
+-- owning what clearing the ledger means: the row count, the popup and the
+-- warning text are all its own, and the options file supplies nothing but a
+-- panel and a y offset.  That file owns the LAYOUT of everything below -110 on
+-- the Scanning panel, which is why the position is passed IN rather than
+-- decided here -- two files picking absolute offsets on one panel is exactly
+-- how rows end up drawn on top of each other.
+--
+-- Returns the button, or nil when there is no panel to build on (a build
+-- without that options panel keeps /atrledger clear as the route).
+function Atr_Ledger_BuildOptionsButton (panel, x, y)
+
+	if (panel == nil or type (CreateFrame) ~= "function") then return nil; end
+
+	local b = CreateFrame ("Button", "Atr_Ledger_OptClearButton", panel, "UIPanelButtonTemplate");
+	b:SetSize (130, 22);
+	b:SetPoint ("TOPLEFT", panel, "TOPLEFT", x or 20, y or -250);
+	b:SetText (LZT("Clear ledger"));
+
+	-- ASK FIRST, AND THIS IS THE HALF OF THE ITEM THAT MATTERS.  One click used to
+	-- destroy the ledger outright.  Every other store in this addon regrows by
+	-- scanning -- prices, vendor learning, the recipe book, the market history in
+	-- its own file -- and THIS ONE DOES NOT: it is a record of things that
+	-- happened, and nothing in the client can be asked for them again.
+	--
+	-- The count is in the question on purpose.  "Are you sure?" is a noise a
+	-- player clicks through; "delete 412 rows" is a consequence.
+	b:SetScript ("OnClick", function ()
+
+		-- An empty ledger asks nothing: "Delete all 0 ledger rows?" is a question
+		-- with no consequence behind it, and answering Yes to one teaches the
+		-- habit of answering Yes to the one that has.
+		local n = #Ldg_Rows ();
+		if (n == 0) then
+			if (zc and zc.msg_atr) then zc.msg_atr (LZT("The ledger is already empty.")); end
+			return;
+		end
+
+		if (StaticPopup_Show) then
+			StaticPopup_Show ("ATR_LEDGER_CLEAR", n);
+		else
+			Atr_Ledger_Clear ();			-- no popup machinery: behave as before
+			Atr_Ledger_Redisplay ();
+		end
+	end);
+
+	b:SetScript ("OnEnter", function (self)
+		if (GameTooltip) then
+			GameTooltip:SetOwner (self, "ANCHOR_TOPLEFT");
+			GameTooltip:SetText (LZT("Clear the ledger"), 1, 1, 1);
+			GameTooltip:AddLine (LZT("Deletes every recorded buy, sale and posting. This is the one thing here that scanning cannot grow back -- it is a record of what happened, not a cache. You will be asked to confirm."), 0.8, 0.8, 0.8, true);
+			GameTooltip:Show();
+		end
+	end);
+	b:SetScript ("OnLeave", function () if (GameTooltip) then GameTooltip:Hide(); end end);
+
+	return b;
 end
 
 -- THE PER-ITEM VIEW (BACKLOG item 8) ---------------------------------------
