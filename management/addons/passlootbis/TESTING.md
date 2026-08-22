@@ -40,6 +40,7 @@ Rounds 1–6. A "round" is one pass through the steps below with a build in the 
 | H. Usable dry run (round 4) | **BUG FOUND** — a Bloodforged variant reported `red line: R4 ` with empty text: a blank line left red by an earlier item. Fixed; see §4 |
 | H. Usable dry run (round 5) | **PASS** — same Bloodforged item after the fix: `usable: yes   (2 Usable)`, no red lines. Forge labels do not trip the colour test |
 | H. Usable dry run (round 6) | **PASS** — `Bloodforged Pyremail Wristguards` (Mail): `usable: no`, `red lines: R3 Mail`. Forged *and* unwearable is still caught, and the index moved R4 → R3 |
+| I. Mounts & pets | **not run** — shipped 2026-08-22, reasoned + checked offline only. The detection has never seen a live roll, and the Restore button / greyed-off line have been read, not clicked |
 
 Two changes came out of round 1, so the steps below are written against them:
 
