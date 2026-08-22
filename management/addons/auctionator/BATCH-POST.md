@@ -27,9 +27,11 @@ preference. They are written up in that order.
 | `Auctionator.lua`, `Atr_ResetSellExpandedLayout` | calls `Atr_BP_Unplace` |
 | `Auctionator.lua`, `Atr_SB_Item_OnClick` | right-click queues / unqueues |
 | `Auctionator.lua`, `Atr_SB_Build` | soulbound bucket, green wash on queued tiles, tail-calls `Atr_BP_Build` |
-| `Auctionator.lua`, `Atr_Sell_ItemIsGrey` / `Atr_Sell_ItemIsBound` | the soulbound fix (§4) |
+| `Auctionator.lua`, `Atr_Sell_ItemIsGrey` / `Atr_Sell_ItemIsBound` / `Atr_Sell_TextIsBinding` | the bound classification (§4) |
+| `Auctionator.lua`, `Atr_Sell_BindDump` | `/atrbound`, the tooltip diagnostic (§4c) |
 | `AuctionatorFinder.lua`, `Atr_Finder_CancelSearch` | calls `Atr_BP_ScanCancelled` (§3) |
 | `management/addons/auctionator/tools/batch-price-smoke.lua` | **new.** 25 assertions over the two pricing functions |
+| `management/addons/auctionator/tools/bound-scan-smoke.lua` | **new.** 32 assertions over the bind marker list |
 
 **No new saved variable.** The queue is session-only on purpose — see §3.
 
@@ -235,7 +237,13 @@ throw.
 
 ---
 
-## 4. The soulbound bug
+## 4. The bound bucket
+
+Two rounds. The first (2026-08-22) fixed a caching bug that made the browser's *existing* soulbound
+filter unreliable. The second (2026-08-23) fixed what that filter was **looking for**, after the
+owner reported bind-on-pickup and "Realmbound" items still reaching the selling categories.
+
+### 4a. Round one: a verdict that flipped with bag order
 
 The owner's second sentence — *"keep all soulbound items at the bottom, they are mixed in here and
 there"* — describes a symptom of a real bug, not a missing preference. Soulbound items were already
@@ -275,18 +283,82 @@ twice per build. Callers that only want the first answer ignore the second, as t
 
 ### And then they are shown, not hidden
 
-With the detection fixed, soulbound items would have vanished completely — which is *not* what was
+With the detection fixed, bound items would have vanished completely — which is *not* what was
 asked for. The browser is meant to account for what is in the bags. So they are kept and collected
-into a **`Soulbound` bucket** rendered under `Not Profitable` and above `Ignore`, with their icons
-dimmed, skipping the method split and the profit-margin filters alike (both are questions about how
-best to sell something, and the answer for a bound item is "you cannot"). Their tiles do nothing
-when clicked, on either button: the sell slot would refuse the item and the batch cannot post it,
-so doing nothing is the honest response.
+into a bucket rendered under `Not Profitable` and above `Ignore`, with their icons dimmed, skipping
+the method split and the profit-margin filters alike (both are questions about how best to sell
+something, and the answer for a bound item is "you cannot"). Their tiles do nothing when clicked,
+on either button: the sell slot would refuse the item and the batch cannot post it, so doing
+nothing is the honest response.
 
 `Ignore` keeps its "dead last" place — it is the bucket the seller filled by hand.
 
 **Grey trash stays filtered.** It is not sellable *and* not interesting, which is the pair that
 earns an item its exclusion.
+
+### 4b. Round two: the filter was looking for the wrong strings
+
+**Owner, 2026-08-23:** *"Also some items have BOP and Realmbound status that should also go to the
+bottom with soulbound items"*, with two item links. Those links answered it, and the answer did not
+need the client:
+
+| | `db.ascension.gg` tooltip | why it leaked |
+|---|---|---|
+| [22523](https://db.ascension.gg/?item=22523) "Insignia of the Dawn" | `Binds when picked up` | see the two structural fixes below |
+| [134985](https://db.ascension.gg/?item=134985) "Personal Bank" | `Binds to account` | **nothing here ever checked that global** |
+
+The second is a plain miss: the test knew `ITEM_SOULBOUND`, `ITEM_BIND_ON_PICKUP` and
+`ITEM_BIND_QUEST`, and account-bound items are not any of those. `ITEM_BIND_TO_ACCOUNT`,
+`ITEM_ACCOUNTBOUND` and `ITEM_BNETACCOUNTBOUND` are on the list now.
+
+"Realmbound" is Ascension's own status and **has no global in 3.3.5 at all**, so it is a literal
+(both spellings, `Realmbound` and `Realm Bound`), and matching is case-insensitive.
+
+Two structural changes came with it, either of which could hide a status the marker list already
+knows:
+
+- **Both tooltip columns are read.** Blizzard puts binding on the left; this is a custom server,
+  and the right-hand column of a two-column tooltip is the cheapest place to bolt a custom status
+  on. A column never read is a status that leaks silently.
+- **The scan starts at line 2.** Line 1 is the item NAME, and an item *called* "Soulbound Keepsake"
+  is not soulbound — it just says so. That false positive would have hidden a **sellable** item,
+  which is the more expensive direction to be wrong in.
+
+**What is deliberately NOT on the list, and this is the whole safety property:** `ITEM_BIND_ON_EQUIP`
+("Binds when equipped") and `ITEM_BIND_ON_USE` ("Binds when used"). Those are the ordinary state of
+most gear worth selling. A looser test — anything containing "bound", say — would empty the browser
+of exactly the items it exists for, silently, and only for the player whose bags hold them.
+`bound-scan-smoke.lua` asserts both negatives; they are the reason it exists.
+
+### 4c. `/atrbound` — reading the tooltips this repo cannot see
+
+An in-game diagnostic is the last resort here, and the reason is stated at the call site: **a custom
+server's tooltip strings are not knowable from outside its client.** Two of the markers above came
+from item pages and one from the owner's own wording; none of that is the client, and an item whose
+status line has never been seen leaks through without a sound. The next one should cost a paste,
+not another round trip.
+
+```
+/atrbound            every item in your bags
+/atrbound insignia   only items whose name contains "insignia"
+```
+
+It prints, per bag slot: the item, the verdict the browser will give it
+(`sellable` / `BOUND - bottom bucket` / `GREY - hidden entirely`), every tooltip line in both
+columns, and `<== MATCHED` against whichever line made it bound. It ends with the marker list
+itself. So an item that says `sellable` but should not shows the line that ought to have matched,
+sitting right there next to a list that does not contain it.
+
+**Output goes to the copy/paste box** (`Atr_An_ShowDebugBox`, reused rather than rebuilt), never to
+chat — chat text cannot be selected on this client, so a printed diagnostic can only come back as a
+screenshot, and a screenshot of eight hundred tooltip lines is not evidence anybody can work from.
+
+### The bucket is called "Bound" now
+
+`Soulbound (n)` was accurate when soulbound was all it held. It now holds bind-on-pickup,
+account-bound and realmbound items too, so the header is **`Bound - not sellable (n)`** — naming
+the predicate rather than one of the several bind kinds under it. The tile field is `bound`, not
+`soulbound`, for the same reason.
 
 ---
 
@@ -298,7 +370,7 @@ earns an item its exclusion.
 | **right-click an inventory tile** | queues it into Batch Post |
 | right-click a queued tile again | takes it back out |
 | click a queued row in the right column | takes it back out |
-| right/left-click a Soulbound tile | nothing |
+| right/left-click a Bound tile | nothing |
 | **Batch Post** | posts the queue; a second click cancels |
 | **Clear** | empties the queue |
 
@@ -313,7 +385,7 @@ nothing look identical, and the queue is off in the other column.
 
 ## 6. What was checked
 
-`luac5.1 -p` clean on every changed file; `Auctionator.xml` parses. All ten offline suites pass.
+`luac5.1 -p` clean on every changed file; `Auctionator.xml` parses. All eleven offline suites pass.
 
 **`batch-price-smoke.lua` is new, and the house rule says a new harness needs a reason.** The reason
 is precedent: this feature's price now comes out of a raw scan result set by variant key and by
@@ -324,13 +396,20 @@ It stubs `GetItemInfo`, `UnitName`, `Atr_VariantKey`, `Atr_CalcUndercutPrice`, `
 and one `F.GetResults`, loads the real file with `loadfile` and hands it a fake `addonTable` — no
 frames, no engine, no post. It must not grow past that. All 25 passed first run.
 
+`bound-scan-smoke.lua` is also new. It loads the **real** `Auctionator.lua` — that file runs under
+bare lua5.1 with only `time` and `date` stubbed — so it drives the actual matcher rather than a
+transcription of the marker list, which would be worth nothing. 32 assertions; one failed on the
+first run and it was the test's own fault (it reused a link the grey cache had already judged,
+which is correct behaviour and is now asserted as such).
+
 **Nothing here is verified in game.** The parts most worth a look on first run, in order:
 
-1. Does a run actually advance — scan comes back, item posts, next scan starts? That chain is the
+1. **`/atrbound` first, before anything else.** If a bound item still reads `sellable`, its block
+   in that dump contains the line that should have matched, and adding it is a one-line change.
+2. Does a run actually advance — scan comes back, item posts, next scan starts? That chain is the
    whole feature and it is the one thing offline work cannot check.
-2. Does the progress bar creep during a scan rather than only between items, and does the title
+3. Does the progress bar creep during a scan rather than only between items, and does the title
    come back when the run ends?
-3. How long is a realistic queue? One throttled query per distinct name is the floor; if that is
+4. How long is a realistic queue? One throttled query per distinct name is the floor; if that is
    painful, the lever is scanning by name *group* rather than per name.
-4. Does the batch column land where §2 says, and does the inventory's scroll bar clear it?
-5. Is the `Soulbound` bucket complete — nothing bound left up in the selling categories?
+5. Does the batch column land where §2 says, and does the inventory's scroll bar clear it?

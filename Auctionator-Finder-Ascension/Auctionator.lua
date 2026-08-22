@@ -1950,8 +1950,89 @@ function Atr_Sell_ItemIsGrey(link, quality)
     return grey;
 end
 
--- Soulbound / bind-on-pickup / quest-bound, read off the tooltip for ONE bag
--- slot.  Never cache this by link -- see the block comment above.
+-----------------------------------------
+-- Which tooltip lines mean "this cannot be auctioned"
+--
+-- An explicit list of strings, matched plain and case-insensitively.  Never a
+-- pattern, and never a loose test like "contains the word bound", because the
+-- SAFETY PROPERTY HERE IS ENTIRELY ABOUT WHAT IS *NOT* ON THE LIST:
+--
+--     "Binds when equipped"  and  "Binds when used"  are the ordinary state of
+--     most gear worth selling.  A test loose enough to catch them would empty
+--     the inventory browser of exactly the items it exists for.
+--
+-- The list grew on 2026-08-23 after the owner reported bind-on-pickup and
+-- "Realmbound" items still reaching the selling categories.  Where each of the
+-- new entries came from, because none of them came from reading this client:
+--
+--   * ITEM_BIND_TO_ACCOUNT / ITEM_ACCOUNTBOUND -- db.ascension.gg item 134985
+--     ("Personal Bank") renders "Binds to account", and nothing here looked at
+--     either of those two globals.  That one is a plain miss.
+--   * "Realmbound" is Ascension's own status.  There is no global for it in
+--     3.3.5 at all, so it has to be a literal.
+--
+-- Anything still leaking is a string nobody here has seen.  /atrbound below is
+-- how the next one gets identified in one round trip instead of three.
+-----------------------------------------
+
+local gBindMarkers      = nil;      -- lowercased, for matching
+local gBindMarkersShown = nil;      -- as written, for the diagnostic
+
+local function Atr_Sell_BindMarkers()
+
+    if (gBindMarkers) then return gBindMarkers, gBindMarkersShown; end
+
+    gBindMarkers, gBindMarkersShown = {}, {};
+
+    -- Added one at a time rather than from a table constructor: a nil in the
+    -- middle of one of those truncates ipairs and would silently drop every
+    -- marker after it, which is the trap ATR_SELL_GEOM documents.  Several of
+    -- these globals do not exist on every client.
+    local function add (str)
+        if (type (str) == "string" and str ~= "") then
+            table.insert (gBindMarkers, string.lower (str));
+            table.insert (gBindMarkersShown, str);
+        end
+    end
+
+    -- From the client, so they follow the locale.
+    add (ITEM_SOULBOUND);           -- "Soulbound"
+    add (ITEM_BIND_ON_PICKUP);      -- "Binds when picked up"
+    add (ITEM_BIND_QUEST);          -- "Quest Item"
+    add (ITEM_BIND_TO_ACCOUNT);     -- "Binds to account"
+    add (ITEM_ACCOUNTBOUND);        -- "Account Bound"
+    add (ITEM_BNETACCOUNTBOUND);    -- "Binds to Battle.net account"
+
+    -- Ascension's own.  No global exists to read these from, so they are
+    -- literals and they are enUS-only -- which is the cost of a custom status
+    -- and is why /atrbound prints this list back.
+    add ("Realmbound");
+    add ("Realm Bound");
+
+    return gBindMarkers, gBindMarkersShown;
+end
+
+-- Does ONE tooltip line say the item is bound?  Global so bound-scan-smoke.lua
+-- can drive it: the list above is the kind of thing that is right until the day
+-- somebody adds "Binds when equipped" to it and quietly hides every BoE in the
+-- game, and that is worth pinning.
+function Atr_Sell_TextIsBinding (text)
+
+    if (type (text) ~= "string" or text == "") then return false; end
+
+    local lower   = string.lower (text);
+    local markers = Atr_Sell_BindMarkers();
+
+    for i = 1, #markers do
+        if (string.find (lower, markers[i], 1, true)) then return true; end
+    end
+
+    return false;
+end
+
+-- Soulbound / bind-on-pickup / quest-bound / account-bound / realmbound, read
+-- off the tooltip for ONE bag slot.  Never cache this by link -- see the block
+-- comment further up.
 function Atr_Sell_ItemIsBound(bag, slot)
     if (not AtrScanningTooltip or not AtrScanningTooltip.SetBagItem) then return false; end
 
@@ -1959,19 +2040,138 @@ function Atr_Sell_ItemIsBound(bag, slot)
     AtrScanningTooltip:SetBagItem(bag, slot);
 
     local num = AtrScanningTooltip:NumLines() or 0;
-    for i = 1, num do
-        local fs = _G["AtrScanningTooltipTextLeft"..i];
-        local t = fs and fs:GetText();
-        if (t) then
-            if ((ITEM_SOULBOUND and t:find(ITEM_SOULBOUND, 1, true)) or
-                (ITEM_BIND_ON_PICKUP and t:find(ITEM_BIND_ON_PICKUP, 1, true)) or
-                (ITEM_BIND_QUEST and t:find(ITEM_BIND_QUEST, 1, true))) then
-                return true;
+
+    -- FROM LINE 2.  Line 1 is the item NAME, and an item *called* "Soulbound
+    -- Keepsake" is not soulbound -- it just says so.  Nothing on the marker
+    -- list can legitimately appear in a name, so skipping the name line costs
+    -- nothing and closes a false positive that would hide a sellable item.
+    for i = 2, num do
+
+        local l = _G["AtrScanningTooltipTextLeft"..i];
+        if (Atr_Sell_TextIsBinding (l and l:GetText())) then return true; end
+
+        -- The RIGHT column too.  Blizzard puts binding on the left, but this is
+        -- a custom server, and the right-hand column of a two-column tooltip is
+        -- the cheapest place to bolt a custom status on.  A column we never read
+        -- is a status that leaks silently through this filter, which is exactly
+        -- the bug being fixed here.
+        local r = _G["AtrScanningTooltipTextRight"..i];
+        if (Atr_Sell_TextIsBinding (r and r:GetText())) then return true; end
+    end
+
+    return false;
+end
+
+-----------------------------------------
+-- /atrbound -- what the tooltips ACTUALLY say, in a window you can copy out of
+--
+-- An in-game diagnostic is the last resort here, and the repo asks for the
+-- reason to be stated at the call site.  It is this: a custom server's tooltip
+-- strings are not knowable from outside its client.  Two of the markers above
+-- were recovered from db.ascension.gg item pages and one from the owner's own
+-- wording; none of that is the client, and an item whose status line has never
+-- been seen leaks through this filter without a sound.  This command turns the
+-- next one into a paste rather than another round of guessing.
+--
+-- Output goes to the copy/paste box, NEVER to chat.  Chat text cannot be
+-- selected on this client, so a printed diagnostic can only come back as a
+-- screenshot, and a screenshot of eight hundred tooltip lines is not evidence
+-- anybody can work from (repo CLAUDE.md).
+--
+--   /atrbound            every item in your bags
+--   /atrbound insignia   only items whose name contains "insignia"
+-----------------------------------------
+
+function Atr_Sell_BindDump (filter)
+
+    if (type (filter) == "string") then
+        filter = string.lower ((string.gsub (filter, "^%s*(.-)%s*$", "%1")));
+        if (filter == "") then filter = nil; end
+    else
+        filter = nil;
+    end
+
+    local out = {};
+    local function put (line) table.insert (out, line); end
+
+    put ("Auctionator -- bind scan of your bags.");
+    put ("Verdict is what the SELL tab's inventory browser does with each item.");
+    put ("A line marked <== MATCHED is why something reads as bound.");
+    put ("");
+
+    local shown, bound = 0, 0;
+
+    for bag = 0, NUM_BAG_SLOTS do
+        for slot = 1, (GetContainerNumSlots (bag) or 0) do
+
+            local link = GetContainerItemLink (bag, slot);
+            local name = link and (GetItemInfo (link) or link);
+
+            if (name and (filter == nil or string.find (string.lower (name), filter, 1, true))) then
+
+                local isGrey  = Atr_Sell_ItemIsGrey (link, nil);
+                local isBound = (not isGrey) and Atr_Sell_ItemIsBound (bag, slot);
+
+                local verdict = "sellable";
+                if (isGrey) then
+                    verdict = "GREY - hidden entirely";
+                elseif (isBound) then
+                    verdict = "BOUND - bottom bucket";
+                    bound = bound + 1;
+                end
+
+                put (string.format ("[%d:%d] %s   ->   %s", bag, slot, name, verdict));
+
+                if (AtrScanningTooltip and AtrScanningTooltip.SetBagItem) then
+                    AtrScanningTooltip:ClearLines();
+                    AtrScanningTooltip:SetBagItem (bag, slot);
+
+                    for i = 1, (AtrScanningTooltip:NumLines() or 0) do
+                        local l = _G["AtrScanningTooltipTextLeft"..i];
+                        local r = _G["AtrScanningTooltipTextRight"..i];
+                        local lt = l and l:GetText();
+                        local rt = r and r:GetText();
+
+                        -- i > 1 mirrors the real scan: line 1 is the name and is
+                        -- never tested, so it must never be marked as matching.
+                        if (lt and lt ~= "") then
+                            put (string.format ("    %2dL  %s%s", i, lt,
+                                 (i > 1 and Atr_Sell_TextIsBinding (lt)) and "   <== MATCHED" or ""));
+                        end
+                        if (rt and rt ~= "") then
+                            put (string.format ("    %2dR  %s%s", i, rt,
+                                 (i > 1 and Atr_Sell_TextIsBinding (rt)) and "   <== MATCHED" or ""));
+                        end
+                    end
+                end
+
+                put ("");
+                shown = shown + 1;
             end
         end
     end
 
-    return false;
+    local _, markers = Atr_Sell_BindMarkers();
+
+    put (string.format ("%d item(s) listed, %d read as bound.", shown, bound));
+    put ("Markers checked (case-insensitive, matched anywhere from line 2 on):");
+    put ("    " .. table.concat (markers, "  |  "));
+    put ("");
+    put ("If something above says 'sellable' but should not be, the line that");
+    put ("should have matched is in its block and is not on the marker list.");
+
+    if (type (Atr_An_ShowDebugBox) == "function") then
+        Atr_An_ShowDebugBox ("Auctionator bind scan  --  already selected, press Ctrl+C to copy",
+                             table.concat (out, "\n"));
+    elseif (DEFAULT_CHAT_FRAME) then
+        -- Deliberately does NOT dump to chat: see the header.
+        DEFAULT_CHAT_FRAME:AddMessage ("|cffffcc00Auctionator:|r the copy/paste window is unavailable, so there is nowhere to put this.");
+    end
+end
+
+if (SlashCmdList) then
+    SLASH_ATRBOUND1 = "/atrbound";
+    SlashCmdList["ATRBOUND"] = function (msg) Atr_Sell_BindDump (msg); end
 end
 
 -- Returns TWO values: sellable, and -- because the inventory browser wants to
@@ -2036,11 +2236,11 @@ end
 local function Atr_SB_Item_OnClick(self, button)
     if (not self.bagID or not self.slotID) then return; end
 
-    -- A tile in the Soulbound bucket is there to be SEEN, not sold: it is shown
-    -- so the browser accounts for everything in the bags, and neither click does
+    -- A tile in the Bound bucket is there to be SEEN, not sold: it is shown so
+    -- the browser accounts for everything in the bags, and neither click does
     -- anything with it.  The sell slot would refuse the item and the batch
     -- cannot post it, so doing nothing is the honest response.
-    if (self.soulbound) then return; end
+    if (self.bound) then return; end
 
     -- RIGHT-CLICK QUEUES IT (owner's request, 2026-08-22).  Right-click used to
     -- be a second copy of the left click, so no behaviour is lost here.  A
@@ -2120,7 +2320,7 @@ function Atr_SB_Build()
 
     local categories = {};   -- categories[cat] = { count, methods = { [m] = { count, items } } }
     local notProfit  = { count = 0, items = {} };   -- filtered-out items, rendered last
-    local soulbound  = { count = 0, items = {} };   -- cannot be auctioned at all
+    local boundItems = { count = 0, items = {} };   -- cannot be auctioned at all
     local ignored    = { count = 0, items = {} };   -- Ignore bucket, rendered dead last
 
     for bag = 0, NUM_BAG_SLOTS do
@@ -2129,15 +2329,21 @@ function Atr_SB_Build()
             local texture, itemCount, locked, quality, readable, lootable, itemLink = GetContainerItemInfo(bag, slot);
             local link = itemLink or GetContainerItemLink(bag, slot);
 
-            -- SOULBOUND ITEMS ARE KEPT, NOT DROPPED (owner's request,
-            -- 2026-08-22): "let's keep all soulbound items at the bottom, they
-            -- are mixed in here and there".  They used to be filtered out here
-            -- and leaked through anyway, because the bind verdict was cached
-            -- under the item link -- see Atr_Sell_ItemIsBound.  With that fixed
-            -- they would all have vanished instead, which is not what was
-            -- asked for: the browser is meant to account for what is in the
-            -- bags.  So they are collected into a bucket of their own at the
-            -- very bottom, never mixed into a selling category.
+            -- BOUND ITEMS ARE KEPT, NOT DROPPED (owner's request, 2026-08-22:
+            -- "let's keep all soulbound items at the bottom, they are mixed in
+            -- here and there").  They used to be filtered out here and leaked
+            -- through anyway, because the bind verdict was cached under the item
+            -- link -- see Atr_Sell_ItemIsBound.  With that fixed they would all
+            -- have vanished instead, which is not what was asked for: the
+            -- browser is meant to account for what is in the bags.  So they are
+            -- collected into a bucket of their own at the very bottom, never
+            -- mixed into a selling category.
+            --
+            -- "Bound" rather than "Soulbound" since 2026-08-23: the bucket also
+            -- holds bind-on-pickup, account-bound and Ascension's Realmbound
+            -- items, which the owner reported still reaching the selling
+            -- categories.  Atr_Sell_BindMarkers is the list; /atrbound prints
+            -- what any given item's tooltip actually says.
             --
             -- Grey trash stays filtered.  It is not sellable AND not
             -- interesting, which is the pair that earns an item its exclusion.
@@ -2157,9 +2363,9 @@ function Atr_SB_Build()
                         -- No method split and no margin filter: both are
                         -- questions about how best to SELL this, and the answer
                         -- for a bound item is "you cannot".
-                        tile.soulbound = true;
-                        table.insert(soulbound.items, tile);
-                        soulbound.count = soulbound.count + (itemCount or 1);
+                        tile.bound = true;
+                        table.insert(boundItems.items, tile);
+                        boundItems.count = boundItems.count + (itemCount or 1);
                     else
                         local method, profit = Atr_SB_BestMethod(link, name);
                         -- An ignored item leaves its normal category entirely and
@@ -2244,7 +2450,7 @@ function Atr_SB_Build()
             btn.slotID    = it.slot;
             btn.itemLink  = it.link;
             btn.ignored   = it.ignored;
-            btn.soulbound = it.soulbound;
+            btn.bound     = it.bound;
             btn:RegisterForClicks("LeftButtonUp", "RightButtonUp");
             btn:SetScript("OnClick", Atr_SB_Item_OnClick);
             btn:SetScript("OnEnter", Atr_SB_Item_OnEnter);
@@ -2256,7 +2462,7 @@ function Atr_SB_Build()
 
             -- Dim the bucket that cannot be sold, so "at the bottom" is not the
             -- only thing separating it from the categories that can.
-            if (it.soulbound) then tex:SetVertexColor(0.45, 0.45, 0.45); end
+            if (it.bound) then tex:SetVertexColor(0.45, 0.45, 0.45); end
 
             -- Already in the batch: a green wash over the tile.  Without it a
             -- right-click that queued something and one that did nothing look
@@ -2312,13 +2518,15 @@ function Atr_SB_Build()
         contentHeight = contentHeight + 4;
     end
 
-    -- "Soulbound" sorts under everything you could actually list: gear you have
-    -- worn, quest items, anything bound to the character.  It is shown rather
-    -- than filtered (owner's request, 2026-08-22) but it never mixes into a
-    -- selling category, and its tiles do nothing when clicked.
-    if (#soulbound.items > 0) then
-        addHeader(string.format("%s (%d)", ITEM_SOULBOUND or "Soulbound", soulbound.count));
-        renderTiles(soulbound.items);
+    -- "Bound" sorts under everything you could actually list: gear you have
+    -- worn, quest items, account-bound and realmbound items -- anything the
+    -- auction house will refuse.  Shown rather than filtered (owner's request,
+    -- 2026-08-22) but never mixed into a selling category, and its tiles do
+    -- nothing when clicked.  The header says WHY they are down here rather than
+    -- naming one of the several bind kinds it now holds.
+    if (#boundItems.items > 0) then
+        addHeader(string.format("Bound - not sellable (%d)", boundItems.count));
+        renderTiles(boundItems.items);
         y = y - 4;
         contentHeight = contentHeight + 4;
     end
