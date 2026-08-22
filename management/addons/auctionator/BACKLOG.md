@@ -1335,6 +1335,11 @@ of the tab's own boxes. It filters on **required level**, which on this realm is
 versions of an item differ along — so on gear it picks a real slice rather than just shortening the
 scan.
 
+> **Amended the same day** (owner: *"remove the level range inputs for all but the weapon and armor
+> checkbox lines"*). The boxes now exist on the two gear rows only, and `Fdr_FS_Levels` returns
+> nothing for any other class so a stored range from an older settings file cannot narrow a scan
+> silently. The dialog keeps its 520 width. See `FULL-SCAN-GEAR.md` §5.
+
 **4. Two things that fell out.** A third and sharper scaled test (`trueIlvl ~= base ilvl`) catches a
 lone listing whose required level happens to match its base one — which used to reach the name-keyed
 DB. And both status lines report `%d gear prices by version`, without which a gear run reads as a
