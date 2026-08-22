@@ -1,8 +1,14 @@
 # The Ironforge chat flood — solved
 
-**Status:** solved in game, 2026-08. Three addon data channels account for **99.6 %** of
-it. The addon whose channels they are was already disabled and it changed nothing,
-because **unticking a channel does not leave it**. That is the finding worth keeping.
+**Status:** solved in game, 2026-08, and the fix is measured. Three addon data channels
+were **99.6 %** of it; leaving them took `CHAT_MSG_CHANNEL` from **107.6/s to 0.5/s**.
+The addon whose channels they are was already disabled and it changed nothing, because
+**unticking a channel does not leave it** — that is the finding worth keeping.
+
+One claim made along the way did **not** survive its own test: that the chat traffic was
+essentially the whole inbound bandwidth. It was not, or `GetNetStats` had not settled.
+The correction is under "What the fix did NOT do" and the original wording is struck
+rather than quietly deleted.
 
 This came out of the sampler investigation (`SAMPLER-COST.md`) as a *separate* issue. It
 is not what caused the 5-second spike grid, and the two should not be conflated.
@@ -53,10 +59,9 @@ distinct-sender cap was hit, so 48 is a floor and `top=` is only the loudest of 
 every player running the addon broadcasts to the channel and every other player receives
 it. Not one spammer, not a server broadcast.
 
-Payload is about half the wire cost: 10.3 KB/s of message bodies against
-`in=20.7 KB/s` measured, i.e. ~99 bytes of per-message protocol overhead (sender GUID,
-channel name, flags) on top of each body. So the chat traffic really is essentially the
-entire inbound stream, with the overhead accounted for rather than hand-waved.
+Message bodies came to 10.3 KB/s against `in=20.7 KB/s` measured. **The inference drawn
+from that at the time — that chat was essentially the entire inbound stream — was
+wrong**, and the `/leave` test below disproved it. See "What the fix did not do".
 
 ## The actual root cause
 
@@ -91,9 +96,79 @@ Expected: `CHAT_MSG_CHANNEL` drops from ~107/s to well under 1/s, and inbound fr
 ~20 KB/s to near nothing while idle. Reversible with `/join <name>`; re-enabling
 FrostSeek will rejoin its own two by itself.
 
+### What the fix did, measured
+
+A 65 s capture immediately after leaving all three:
+
+```
+R^ev=CHAT_MSG_CHANNEL^n=31^ps=0.5
+C^r=1^chan=Ascension^id=2^n=15^ps=0.2^...^j=1^disp=1
+C^r=2^chan=Newcomers^id=3^n=8^ps=0.1^...^j=1^disp=0
+```
+
+**107.6/s → 0.5/s, a 215× reduction**, and the three channels are gone from the list
+entirely. That is real CPU removed: one `CHAT_MSG_CHANNEL` dispatch per message to every
+frame registered for it, 107 times a second, now gone.
+
+### What the fix did NOT do — a correction
+
+Inbound bandwidth barely moved: **20.7 → 18.3 KB/s, a 12 % drop.** Removing 107.1 msg/s
+whose bodies alone measured 10.3 KB/s should have taken inbound to near zero if the
+earlier reading had been right. It took 2.4 KB/s — about 22 bytes per message removed,
+against a measured mean body of 98 bytes. The numbers contradict each other, so the
+"chat is essentially all of your download" claim does not survive its own test and has
+been struck from the section above.
+
+Two candidates, untested:
+
+1. **`GetNetStats` had not settled.** It returns a rolling average, and the addon's own
+   notes already warn it is "too coarse to pin one frame — read it ACROSS captures". A
+   65 s window right after the change may still be carrying the old traffic. A re-read
+   five minutes later settles this and costs nothing.
+2. **~18 KB/s of inbound is something else entirely** and chat was only ever ~2 KB/s of
+   it. In which case there is a second, larger consumer nobody has looked for, and the
+   180 bytes/message arithmetic in the original analysis was a coincidence of numbers
+   rather than a measurement.
+
+Until one of those is checked, the honest statement is: **leaving the channels removed
+107 chat events a second, and its effect on bandwidth is unmeasured.** The event
+reduction stands on its own — it was always the larger cost.
+
 `BBLC25C` is the largest single consumer and its owner was never identified — it is not
 FrostSeek's. Leaving it is safe and reversible, so it does not need identifying first,
 but if something stops working that channel is the first place to look.
+
+## Pointing the finger without being asked (0.2.4)
+
+Reading four fields and doing the arithmetic is work nobody should repeat every capture,
+so the row now states its own conclusion as `v=`:
+
+```
+C^r=1^chan=BBLC25C^id=8^n=9335^ps=46.2^...^j=1^disp=0^v=COST
+C^r=4^chan=Ascension^id=2^n=64^ps=0.3^...^j=1^disp=1^v=QUIET
+```
+
+- `COST` — at or over `Report.CHAT_BUSY_PS` **and** `disp=0`. Loud and invisible: you
+  receive every message, every addon registered on `CHAT_MSG_CHANNEL` processes it, and
+  nothing ever shows it to you. `/leave` it.
+- `BUSY` — same volume but displayed. Your call; still named rather than hidden.
+- `QUIET` — under the line.
+- `?` — loud, but `GetChatWindowChannels` is unavailable so `COST` cannot be *claimed*.
+  Same discipline as the spike classifier: no verdict the inputs do not support.
+
+`CHAT_BUSY_PS = 5.0/s` is tuned from this capture, not guessed. The three machine
+channels ran at 46.2/31.4/29.5/s; every channel humans talked in sat at 0.0–0.3/s and
+totalled 0.44/s. The line clears the busiest human channel by ~15× and sits ~6× under
+the quietest machine one, so it has wide margin in both directions. Re-tune from a
+capture if a realm ever has genuinely busy chat — do not adjust it on a hunch.
+
+The minimap notifier also raises a **watch** at `Storm.CHAT_FLOOD_PS = 20` msg/s, so a
+flood surfaces without anyone asking for a report. It deliberately does *not* name the
+channel: that needs `GetChannelList` + `GetChatWindowChannels`, which is report-path
+work, not something to put on a ~1 s tick. The notifier says a flood exists and sends
+you to `/cpp`; the `C` rows do the naming. It also does not blink — only a taint storm
+blinks — and it ranks *below* the spike checks, because an acute stutter you are feeling
+now outranks a chronic tax.
 
 ## Notes for anyone editing the instrument
 

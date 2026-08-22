@@ -17,7 +17,7 @@
        MemSum : WM|kb=<estTotal>|tbls=<visited>|roots=<n>|cap=<0/1>|shown=<n>
        MemTop : W|r=..|name=<global>|kb=<estKB>|tbls=<tableCount>
        Rate   : R|ev=<name>|n=<count>|ps=<perSec>
-       Chan   : C|r=..|chan=<name>|id=<n>|n=<count>|ps=<perSec>|kbps=<KB/s>|snd=<distinct>[|cap=1][|top=<sender>|topn=<n>][|j=<0/1>][|disp=<0/1>]
+       Chan   : C|r=..|chan=<name>|id=<n>|n=<count>|ps=<perSec>|kbps=<KB/s>|snd=<distinct>[|cap=1][|top=<sender>|topn=<n>][|j=<0/1>][|disp=<0/1>]|v=<COST|BUSY|QUIET|?>
        Footer : END|lines=<n>
 
      CLASSIFICATION is an explicit, rule-based HEURISTIC suspect tag, never a
@@ -47,6 +47,15 @@ Report.MAX_EVENTS    = 15
 Report.MAX_LOADADDONS = 20
 Report.MAX_BLOCKED   = 10
 Report.MAX_CHANNELS  = 8     -- per-channel chat rows (the C rate breakdown)
+
+-- A chat channel at/above this rate is MACHINE traffic, not conversation. Tuned from
+-- the live Ironforge capture, not a story (ground rule 1): the three addon data
+-- channels found there ran at 46.2, 31.4 and 29.5/s, while every channel humans
+-- actually talk in — Ascension, Newcomers, Trade, LookingForGroup — sat at 0.0-0.3/s
+-- and totalled 0.44/s between them. 5/s is ~15x above the busiest human channel
+-- measured and ~6x below the quietest machine one, so the gap is wide in both
+-- directions. Re-tune from a capture if a realm ever has genuinely busy chat.
+Report.CHAT_BUSY_PS  = 5.0
 Report.MAX_MEM       = 12    -- top-N memory globals in the /cpp mem walk
 Report.PAGE_LINES    = 120     -- rows per page before pagination kicks in
 
@@ -340,6 +349,49 @@ function Report.classify(spike)
 end
 
 --------------------------------------------------------------------------------
+-- classifyChannel(ch) -> code, reason   (the C row's v= verdict)
+--
+-- The point of pointing the finger. A C row already carries the rate, the bandwidth
+-- and whether the channel is joined/displayed, but reading four fields and doing the
+-- arithmetic is work the owner should not have to repeat every capture. This states
+-- the conclusion:
+--
+--   COST  busy AND not drawn in any chat window — you receive every message, every
+--         addon registered on CHAT_MSG_CHANNEL processes it, and nothing ever shows
+--         it to you. The actionable one: /leave it.
+--   BUSY  busy and displayed — you asked for this, but it is still the loudest thing
+--         your client handles, so it is named rather than hidden.
+--   QUIET joined, little or no traffic. Harmless; listed for completeness.
+--   ?     no verdict: the rate is high but we cannot tell whether it is displayed
+--         (GetChatWindowChannels unavailable), so COST cannot be claimed.
+--
+-- Same discipline as classify(): a rule-based tag over measured fields, never a
+-- guess, and "?" when the inputs do not support a call.
+function Report.classifyChannel(ch)
+    ch = ch or {}
+    local ps = tonumber(ch.perSec) or 0
+    if ps < Report.CHAT_BUSY_PS then
+        return "QUIET", "below the machine-traffic line"
+    end
+    if ch.displayed == nil then
+        return "?", "busy, but cannot tell whether it is displayed"
+    end
+    if ch.displayed == false then
+        return "COST", string.format("%.1f msg/s you never see", ps)
+    end
+    return "BUSY", string.format("%.1f msg/s, displayed", ps)
+end
+
+-- channelLabel(code) -> friendly name for the at-a-glance window. Pure mapping.
+function Report.channelLabel(code)
+    code = code or "?"
+    if code == "COST"  then return "Costing you, never shown" end
+    if code == "BUSY"  then return "Busy channel you read" end
+    if code == "QUIET" then return "Quiet" end
+    return "Unknown (cannot tell if shown)"
+end
+
+--------------------------------------------------------------------------------
 -- suspectLabel(code) -> a friendly human name for a suspect code (for the UI).
 -- The wire keeps the terse code (sus=OPEN:vendor); the at-a-glance window shows
 -- this. Pure string mapping, no state.
@@ -481,6 +533,10 @@ Report.GLOSSARY = {
       tech = "IsMouseButtonDown('LeftButton') sampled on the spike frame. Feature-detected (not in the API dump); when absent the field is simply omitted. Drives the Window-drag label when no measured cause owns the frame, and is reported as complementary context (mouse=held) otherwise." },
     -- Not a per-spike field: a report-level row about the MEASUREMENT, so it belongs
     -- with the how-to-read entries rather than in the spike-column list.
+    { group = "How to read this", field = "v", code = "COST",
+      term = "Channel verdict",
+      plain = "The conclusion of the channel row, so you do not have to do the arithmetic yourself. 'Costing you, never shown' means that channel is pouring messages into your client at machine speed and nothing on screen ever displays them - leave it with /leave <name> and the cost goes away. 'Busy channel you read' means the same volume, but you can actually see it, so it is your call. 'Quiet' is anything below the machine-traffic line.",
+      tech = "Report.classifyChannel over the C row's own fields. COST = perSec >= CHAT_BUSY_PS (5.0/s) and displayed == false; BUSY = at or over the line and displayed; QUIET = under it; '?' when the rate is high but GetChatWindowChannels is unavailable, so COST cannot be claimed. The threshold is tuned from a live capture, not guessed: the three addon data channels found ran at 46.2, 31.4 and 29.5/s while every channel humans talked in sat at 0.0-0.3/s and totalled 0.44/s, so 5/s clears the busiest human channel by ~15x and sits ~6x under the quietest machine one." },
     { group = "How to read this", field = "C",
       term = "Which channel the chat flood is in",
       plain = "In a city, chat is usually the single busiest thing your client handles - so when the event list shows chat at the top, these rows say WHICH channel it is, who is loudest in it, and how much of your download it is eating. The last column is the one that matters: j=1 means you joined that channel yourself, j=0 means traffic is arriving from a channel you did NOT join, which means an addon joined it for you. A channel you are in that said nothing still gets a row, because a quiet data channel is exactly the thing worth spotting.",
@@ -862,6 +918,8 @@ function Report.build(data)
             -- disp= is the actionable half of the pair. j=1 disp=0 with a high n= is
             -- the money row: joined, invisible, and costing you every message.
             if ch.displayed ~= nil then row[#row + 1] = "disp=" .. (ch.displayed and "1" or "0") end
+            -- the verdict, last so it reads as the conclusion of the row it follows
+            row[#row + 1] = "v=" .. Report.classifyChannel(ch)
             body[#body + 1] = table.concat(row, SEP)
         end
     end
@@ -1075,10 +1133,31 @@ if _SELFTEST then
         { name = "xtensionxtooltip2", id = 9, count = 0, perSec = 0,
           kbPerSec = 0, senders = 0, joined = true },
     } })
-    has(chatOut.text, "C^r=1^chan=Trade - City^id=2^n=14231^ps=109.3^kbps=18.9^snd=3^top=Someone^topn=13990^j=0^disp=0",
+    has(chatOut.text, "C^r=1^chan=Trade - City^id=2^n=14231^ps=109.3^kbps=18.9^snd=3^top=Someone^topn=13990^j=0^disp=0^v=COST",
         "build names the flooding channel, its loudest sender, and that it is unjoined")
-    has(chatOut.text, "C^r=3^chan=xtensionxtooltip2^id=9^n=0", "a silent joined channel still gets a row")
     assert(not chatOut.text:find("top=?", 1, true), "a silent channel prints no loudest sender")
+
+    -- classifyChannel: the verdict that points the finger. COST is the actionable
+    -- one and must need BOTH halves - loud AND invisible.
+    eq(Report.classifyChannel({ perSec = 46.2, displayed = false }), "COST",
+        "loud and never shown => COST")
+    eq(Report.classifyChannel({ perSec = 46.2, displayed = true }), "BUSY",
+        "loud but you read it => BUSY, not COST")
+    eq(Report.classifyChannel({ perSec = 0.3, displayed = false }), "QUIET",
+        "an unread channel that says nothing is not a cost")
+    eq(Report.classifyChannel({ perSec = 46.2 }), "?",
+        "loud but display state unknown => no verdict, never a guessed COST")
+    eq(Report.classifyChannel({ perSec = Report.CHAT_BUSY_PS, displayed = false }), "COST",
+        "the busy line is inclusive")
+    eq(Report.classifyChannel(nil), "QUIET", "nil input degrades quietly")
+    -- the human channels from the live capture must NOT be flagged
+    eq(Report.classifyChannel({ perSec = 0.44, displayed = true }), "QUIET",
+        "real conversation stays under the line")
+    eq(Report.channelLabel("COST"), "Costing you, never shown", "friendly label for COST")
+
+    -- and it reaches the wire as the last field on the row it concludes
+    has(chatOut.text, "^disp=0^v=COST", "the verdict closes the row")
+    has(chatOut.text, "chan=xtensionxtooltip2^id=9^n=0", "a silent joined channel still gets a row")
 
     -- j= must be ABSENT (not guessed) when GetChannelList gave us nothing
     local noList = Report.build({ meta = { version = "1" },
@@ -1121,6 +1200,9 @@ if _SELFTEST then
             assert(byCode[code], "glossary missing an entry for classifier code " .. code)
         end
         assert(byCode["OPEN:vendor"], "glossary missing the OPEN: family entry")
+        -- the channel verdict family shares one entry (it explains all four codes),
+        -- keyed on the actionable one so a rename cannot silently orphan it
+        assert(byCode["COST"], "glossary missing the channel-verdict entry")
     end
 
     -- build: a frame-open spike lands OPEN:<tag> in the wire sus= field

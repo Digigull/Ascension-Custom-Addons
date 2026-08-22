@@ -14,7 +14,7 @@
 local ADDON, ns = ...
 
 local Core = {}
-local VERSION = "0.2.3"
+local VERSION = "0.2.4"
 
 -- defaults (persisted into ClientPerfProbeDB.settings)
 local DEFAULTS = {
@@ -349,6 +349,7 @@ end
 -- Instantaneous blocked-event rate (ADDON_ACTION_BLOCKED/_FORBIDDEN per second),
 -- diffed across storm samples the way the driver diffs CLEU. Lean: one counter read.
 local lastBlocked, lastBlockedT
+local lastChat, lastChatT
 local function stormInputs()
     local now = safe(GetTime) or 0
     local total = ns.Events and ns.Events.blockedTotal() or 0
@@ -357,8 +358,21 @@ local function stormInputs()
         ps = (total - (lastBlocked or 0)) / (now - lastBlockedT)
     end
     lastBlocked, lastBlockedT = total, now
+
+    -- Live CHAT_MSG_CHANNEL rate, diffed exactly like the blocked counter: ONE counter
+    -- read, no API calls. Deliberately not the per-channel breakdown — naming the
+    -- channel needs GetChannelList + GetChatWindowChannels, which is report-path work,
+    -- not something to put on a ~1s tick. The notifier says "there is a flood"; the
+    -- C rows say which channel and whether you can even see it.
+    local chatTotal = ns.Events and ns.Events.chatTotal and ns.Events.chatTotal() or 0
+    local chatPS = 0
+    if lastChatT and now > lastChatT then
+        chatPS = (chatTotal - (lastChat or 0)) / (now - lastChatT)
+    end
+    lastChat, lastChatT = chatTotal, now
+
     local count, worst = recentSpikeStats(8, ns.Storm and ns.Storm.SPIKE_NOTABLE_MS or 100)
-    return { blockedPS = ps, spikeCount = count, worstMs = worst }
+    return { blockedPS = ps, spikeCount = count, worstMs = worst, chatPS = chatPS }
 end
 
 -- wipe captured spikes + counters (shared by /cpp clear and the UI Clear button).
@@ -371,6 +385,7 @@ local function doClear()
     lastStream = 0
     probeCost = { n = 0, over = 0, max = 0, last = 0 }
     lastBlocked, lastBlockedT = nil, nil
+    lastChat, lastChatT = nil, nil
 end
 
 -- time-scoped clear: drop only spikes captured within the last `minutes`, keeping

@@ -3,7 +3,7 @@
 Find out *what* is causing client stutter before trying to fix it. Per-addon and
 per-event frame-time spike attribution, with a copy/paste report.
 
-**Version 0.2.3 · Interface 30300 (WotLK 3.3.5 / Ascension)**
+**Version 0.2.4 · Interface 30300 (WotLK 3.3.5 / Ascension)**
 
 ## What it does
 
@@ -71,7 +71,11 @@ marked `old=1` so a report is never misread.
   it** — you stay joined, the server keeps sending, and every addon registered on
   `CHAT_MSG_CHANNEL` keeps paying, for messages nothing will ever show you. That is what
   the live capture found: three addon data channels at 107 msg/s, 99.6% of all chat
-  traffic, all unticked, one of them belonging to an addon that was already disabled. Message text is never stored — the report is a blob
+  traffic, all unticked, one of them belonging to an addon that was already disabled.
+  Leaving them took `CHAT_MSG_CHANNEL` from 107.6/s to 0.5/s. Each row states its own
+  conclusion as `v=` (`COST` = loud and never shown — leave it; `BUSY` = loud but you
+  read it; `QUIET`; `?` = loud but the display state is unknown, so no verdict), and
+  the minimap notifier raises a watch on a flood so it surfaces without you asking. Message text is never stored — the report is a blob
   you paste in public. Background: `management/addons/clientperfprobe/CHAT-FLOOD.md`.
 
 - **What the probe costs you.** Answering "which addon moved memory" means calling
