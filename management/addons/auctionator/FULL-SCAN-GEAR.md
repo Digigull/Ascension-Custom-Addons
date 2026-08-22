@@ -1,4 +1,4 @@
-# Weapons and Armor in the Full Scan, and a level range per category
+# Weapons and Armor in the Full Scan, and a level range on those two rows
 
 Owner's question, 2026-08-22: *"With the Auctionator addon, are we at a point that we can add
 Weapon and Armor to the Full scan categories? If we are maybe we add a level range to each
@@ -109,15 +109,29 @@ A harvested row carries the server's own item level, so there is now a third tes
 `trueIlvl ~= rec.ilvl`. It is the sharpest of the three and it only costs what the harvest already
 paid for.
 
-## 5. The level range
+## 5. The level range — Weapons and Armor only
 
 `AUCTIONATOR_FINDER_SETTINGS.fullScanLevels[tostring(ci)] = { min = n, max = n }`
 
+**It shipped on every row and was cut back to the two gear rows the same day** (owner's request,
+2026-08-22). The reasoning it was built on is a gear argument end to end — required level is the
+axis the *scaled versions* of one item differ along — and on Trade Goods or Recipes the pair was a
+control with nothing behind it: a category you either scan or don't. So the boxes are built inside
+`if (e.gear)` in `Fdr_FS_BuildPicker`, the per-column "Levels" caption is created only over a column
+that actually has boxes, and every other row is a checkbox and nothing else.
+
+`Fdr_FS_Levels` returns `nil, nil` for any non-gear class **whatever the store holds**. That matters
+for an older settings file, or a hand-edited one: a stored range for Consumables would otherwise
+narrow a scan whose picker row shows no such thing, which is the "picker showing a range it will not
+scan" failure the other way round. `Fdr_FS_SetLevels` still writes whatever it is given — nothing
+calls it for a non-gear class any more, and a live setter is the cheaper shape if the boxes ever
+come back.
+
 * **Blank is the default and stores nothing** — an empty pair deletes its row rather than writing
   two zeroes, so the settings file stays the size of what you actually chose.
-* **Stored under the CHECKBOX's class index**, and applied to every class that checkbox scans. The
-  merged Miscellaneous row therefore ranges Projectile and Quiver too: one visible control, one
-  meaning.
+* **Stored under the CHECKBOX's class index**, and applied to every class that checkbox scans.
+  Neither gear row is a merge host, so today that is one class each; the mechanism is unchanged and
+  a merged row would still mean one visible control, one meaning.
 * **`Fdr_FS_Levels` returns a backwards range the right way round.** The server answers 80–70 with
   nothing at all, which reads in game as "the scan is broken" and is a miserable thing to debug
   from a status line.
@@ -146,10 +160,12 @@ the variant store took them. The number is distinct variants learned, not listin
 
 ## 7. Layout
 
-The picker gained a min/max pair on every row, which does not fit in the 405 points the old
-`Atr_FullScanHTML` blob occupied. `Atr_FullScanFrame` is **520x455**, was 460x420; the picker panel
-is 465 wide with columns 232 apart and the boxes at a fixed x within each column, so they line up
-down the column however long the labels are. Nothing clips a child frame in 3.3.5, so the old
+The picker gained a min/max pair, which does not fit in the 405 points the old `Atr_FullScanHTML`
+blob occupied. `Atr_FullScanFrame` is **520x455**, was 460x420; the picker panel is 465 wide with
+columns 232 apart and the boxes at a fixed x within each column, so they line up down the column
+however long the labels are. **The width stays now that only the gear rows carry boxes** — the pair
+is rarer, not gone, and it still needs the room; narrowing the dialog again would only move the
+boxes back on top of the labels. Nothing clips a child frame in 3.3.5, so the old
 overflow would have been invisible in code and obvious in game.
 
 The picker is still **built once** and reused (`gFS_Built`) — see `SELL-TAB-COST.md` on why a window

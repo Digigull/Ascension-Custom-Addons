@@ -37,7 +37,7 @@ local FT = F and F.FT;
 -- the item-count readout, the last-scan line, a status line and a Done
 -- button.  Only Atr_FullScanHTML (the explanation blob, 405x300 at 27,-175)
 -- is hidden, and the category picker is built in Lua in that space (a little
--- wider now: the dialog grew to 520 to fit a level range on every row).
+-- wider now: the dialog grew to 520 to fit the gear rows' level range).
 --
 -- GEAR IS IN, AS OF 2026-08-22, AND THE OLD REASONING IS WORTH KEEPING.
 --
@@ -64,10 +64,11 @@ local FT = F and F.FT;
 -- rest), which is correct and was always safe.
 --
 -- IT IS STILL THE LONGEST SWEEP THERE IS, which is why the two gear rows are the
--- only ones that start UNTICKED and why every row now carries a level range: the
+-- only ones that start UNTICKED and the only ones that carry a level range: the
 -- server filters on required level, and on this realm that is the very axis the
 -- scale-variants differ along.  "Armor 70-80" is both a short scan and a
--- meaningful slice; "Armor, everything" is neither.
+-- meaningful slice; "Armor, everything" is neither.  Every other category is
+-- scanned whole, so those rows are a checkbox and nothing else.
 --
 -- MEMORY: categories run ONE AT A TIME and the price feed flushes after
 -- each.  A single Trade Goods sweep on this realm is ~37k records; holding
@@ -209,7 +210,17 @@ end
 -- returned the right way round rather than refused: the server answers a
 -- backwards range with nothing at all, which reads in game as "the scan is
 -- broken" and is a miserable thing to debug from a status line.
+--
+-- ONLY THE TWO GEAR CLASSES HAVE A RANGE.  The picker used to put a pair of
+-- boxes on every row; it now puts them on Weapons and Armor only, because
+-- required level is the axis the SCALED versions of one item differ along and
+-- that is a gear-shaped idea -- on Trade Goods or Recipes the pair was a
+-- control with nothing behind it.  A stored range for any other class (an
+-- older settings file, or a hand-edited one) is therefore ignored rather than
+-- silently narrowing a scan whose picker row shows no such thing.
 function Fdr_FS_Levels (ci)
+
+	if (not Fdr_FS_IsGearClass (ci)) then return nil, nil; end
 
 	local e = Fdr_FS_LevelStore()[tostring (ci)];
 	if (type (e) ~= "table") then return nil, nil; end
@@ -460,9 +471,11 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Column geometry.  Two columns of rows, each row: checkbox + label on the
--- left, a min/max pair on the right at a FIXED x so the boxes line up down the
--- column however long the labels are.  The dialog was widened to 520 to pay for
--- the pair (Auctionator.xml); at 405 the boxes sat on top of "Miscellaneous".
+-- left, and on the two GEAR rows a min/max pair on the right at a FIXED x so
+-- the boxes line up down the column however long the labels are.  The dialog
+-- was widened to 520 to pay for the pair (Auctionator.xml); at 405 the boxes
+-- sat on top of "Miscellaneous".  The width stays: the pair is rarer now, not
+-- gone, and it still needs the room.
 local FS_COL_W		= 232;		-- distance between the two columns
 local FS_ROW_H		= 22;
 local FS_LVL_X		= 132;		-- min box, relative to its column
@@ -470,10 +483,11 @@ local FS_LVL_DASH	= 167;
 local FS_LVL_X2		= 177;		-- max box
 local FS_LVL_W		= 30;
 
--- One min/max pair.  Both boxes write straight through to Fdr_FS_SetLevels on
--- every keystroke rather than on focus loss: pressing Start Scanning is a click
--- elsewhere, and a box that only commits on OnEditFocusLost has a real chance of
--- being read one keystroke stale by the very button the user pressed next.
+-- One min/max pair, built for the gear rows only (see the call site).  Both
+-- boxes write straight through to Fdr_FS_SetLevels on every keystroke rather
+-- than on focus loss: pressing Start Scanning is a click elsewhere, and a box
+-- that only commits on OnEditFocusLost has a real chance of being read one
+-- keystroke stale by the very button the user pressed next.
 local function Fdr_FS_MakeLevelBox (panel, e, x, y, which)
 
 	local box = CreateFrame ("EditBox", "Atr_FS_Lvl"..which..e.ci, panel, "InputBoxTemplate");
@@ -506,7 +520,7 @@ local function Fdr_FS_MakeLevelBox (panel, e, x, y, which)
 		box:SetScript ("OnEnter", function (self)
 				GameTooltip:SetOwner (self, "ANCHOR_TOPLEFT");
 				GameTooltip:SetText (FT("Required level"), 1, 1, 1);
-				GameTooltip:AddLine (FT("Only scan listings inside this required-level range. Leave both blank to scan the whole category. On gear this is the axis the scaled versions of an item differ along, so a range both shortens the scan and picks a real slice of the market."), nil, nil, nil, true);
+				GameTooltip:AddLine (FT("Only scan listings inside this required-level range. Leave both blank to scan the whole class. Required level is the axis the scaled versions of an item differ along, so a range both shortens the longest sweep there is and picks a real slice of the market."), nil, nil, nil, true);
 				GameTooltip:Show();
 			end);
 		box:SetScript ("OnLeave", function () GameTooltip:Hide(); end);
@@ -537,12 +551,21 @@ function Fdr_FS_BuildPicker ()
 	local perCol = math.ceil (#all / 2);
 	if (perCol < 1) then perCol = 1; end
 
-	-- one "Levels" caption per column, over that column's boxes
+	-- One "Levels" caption per column, over that column's boxes -- and only over
+	-- a column that HAS boxes.  Only the two gear rows carry a pair now, so a
+	-- caption over a column of bare checkboxes would be labelling nothing.
+	local hasBoxes = {};
+	for i = 1, #all do
+		if (all[i].gear) then hasBoxes[math.floor ((i - 1) / perCol)] = true; end
+	end
+
 	local c;
 	for c = 0, 1 do
-		local cap = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
-		cap:SetPoint ("TOPLEFT", c * FS_COL_W + FS_LVL_X, -2);
-		cap:SetText ("|cff909090"..FT("Levels").."|r");
+		if (hasBoxes[c]) then
+			local cap = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+			cap:SetPoint ("TOPLEFT", c * FS_COL_W + FS_LVL_X, -2);
+			cap:SetText ("|cff909090"..FT("Levels").."|r");
+		end
 	end
 
 	local col, row = 0, 0;
@@ -598,13 +621,22 @@ function Fdr_FS_BuildPicker ()
 			cb:SetScript ("OnLeave", function () GameTooltip:Hide(); end);
 		end
 
-		Fdr_FS_MakeLevelBox (panel, e, col * FS_COL_W + FS_LVL_X, y - 1, "Min");
+		-- The range is a GEAR control, not a general one.  Required level is the
+		-- axis the scaled versions of one item differ along, so on Weapons and
+		-- Armor a range both shortens the longest sweep there is and picks a real
+		-- slice of the market; on Trade Goods or Recipes it was a pair of boxes
+		-- offering to narrow a scan nobody wanted narrowed.  Every other row is
+		-- the checkbox alone (owner's request, 2026-08-22).
+		if (e.gear) then
 
-		local dash = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
-		dash:SetPoint ("TOPLEFT", col * FS_COL_W + FS_LVL_DASH, y - 5);
-		dash:SetText ("-");
+			Fdr_FS_MakeLevelBox (panel, e, col * FS_COL_W + FS_LVL_X, y - 1, "Min");
 
-		Fdr_FS_MakeLevelBox (panel, e, col * FS_COL_W + FS_LVL_X2, y - 1, "Max");
+			local dash = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+			dash:SetPoint ("TOPLEFT", col * FS_COL_W + FS_LVL_DASH, y - 5);
+			dash:SetText ("-");
+
+			Fdr_FS_MakeLevelBox (panel, e, col * FS_COL_W + FS_LVL_X2, y - 1, "Max");
+		end
 
 		row = row + 1;
 		if (row >= perCol) then row = 0; col = col + 1; end
@@ -627,7 +659,7 @@ function Fdr_FS_BuildPicker ()
 	why:SetPoint ("TOPLEFT", 0, yBase - 30);
 	why:SetWidth (455);
 	why:SetJustifyH ("LEFT");
-	why:SetText ("|cffffcc00"..FT("Levels are the required level; blank scans the whole category.").."|r  "
+	why:SetText ("|cffffcc00"..FT("Weapons and Armor take a required-level range; blank scans the whole class.").."|r  "
 				..FT("Weapons and Armor start unticked because a whole-class sweep is the longest "
 					.."scan there is - give them a range. Their prices are filed under each scaled "
 					.."version of an item (item level and required level), not under its name, so a "
@@ -658,6 +690,8 @@ function Fdr_FS_SyncPicker ()
 		local cb = _G["Atr_FS_Cat"..ci];
 		if (cb) then cb:SetChecked (Fdr_FS_IsSelected (ci) and true or nil); end
 
+		-- only the gear rows have boxes to put back in step; the lookups are
+		-- guarded anyway, so this stays correct if that ever changes again
 		local lo, hi = Fdr_FS_Levels (ci);
 		local mn = _G["Atr_FS_LvlMin"..ci];
 		local mx = _G["Atr_FS_LvlMax"..ci];
