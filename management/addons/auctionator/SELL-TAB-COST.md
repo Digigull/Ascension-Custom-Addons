@@ -153,7 +153,105 @@ per second against whatever this realm's flood policy allows.
 
 ---
 
-## 4. Files touched
+## 4. What the second report said, and the page ceiling that came out of it
+
+The owner merged §2 and §3 and came back with two more probe exports (2026-08-23): **no
+disconnect**, over a 46 s window and then a 189 s one in which they deliberately clicked a lot.
+
+**The pooling is visible in the data.** In the 189 s window `GLOBAL_MOUSE_DOWN` went from 14 to 39
+— twenty-five more clicks — and **not one new click frame crossed the 50 ms threshold.** The only
+mouse-flavoured spike in either export is `i=2` at 75.7 ms / 335 KB, the very first click after the
+auction house opened, which is the pool being filled for the session. Before the fix, every rebuild
+was that first build.
+
+**What is left is nineteen frames of 304.1–306.5 ms, every one of them on
+`AUCTION_ITEM_LIST_UPDATE`.** Two things about that shape are worth writing down, because they are
+what rules out most explanations:
+
+- **A 0.8% spread over nineteen different items.** Real work over varying data does not do that.
+- **`dh` of 5–48 KB on a 305 ms frame.** Lua that runs for a third of a second building tables and
+  strings allocates megabytes, not kilobytes.
+
+So the residual spike is not the widget churn §2 fixed, and it is probably not allocation-heavy Lua
+at all — it is either the client's own per-page work or Lua reaching into something expensive in C
+a fixed number of times per page. **It has not been identified.** Do not let a later reader assume
+it was.
+
+### The number that did come out of it: 448 pages for 25 items
+
+`AUCTION_ITEM_LIST_UPDATE` fired **448 times against about 25 items** dropped in the sell slot
+(`NEW_AUCTION_UPDATE` = 25, `ITEM_LOCKED`/`ITEM_UNLOCKED` = 21 each). Roughly **eighteen auction
+pages to price one item.**
+
+The cause is in `AtrSearch`, and it is a plain omission: **the pane search has never had a page
+ceiling.** It pages until the server hands back a short page, bounded only by "more than 3000
+results on page one" and a duplicate-page counter — an effective limit of sixty pages.
+`QueryAuctionItems` matches the name as a **substring** server-side, so listing something whose
+name is contained in a lot of other names walks the server through page after page of items that
+are not yours, and throws all of them away. The Finder engine has had `Fdr_PageCeiling` for exactly
+this since it was written; the pane search was simply never given one.
+
+### Why it is a dial and not a constant
+
+Capping costs something real. The recommendation undercuts the lowest listing the search **saw**,
+so a search cut short can price you **above** the market — the cheapest copy of your item may be on
+page twelve. How much that matters depends on the item and on how busy the realm is, which is a
+judgement the seller makes and the source cannot. So it is a control on the tab, not a number in a
+file (owner's request, 2026-08-23).
+
+**"Pages per Scan"**, in the inventory window's top-right corner: a header, an input box, `Set` and
+`Max`. It lives in the band `Atr_ApplySellExpandedLayout` §2 empties, anchored to `Atr_SellBrowser`'s
+TOPRIGHT rather than to a panel offset so it keeps that corner if `ATR_SELL_INV_W` or
+`ATR_SELL_BROWSER_Y` is ever retuned. Laid out right-to-left from its own bottom-right so the block
+stays flush with the column edge whatever the buttons measure.
+
+| | |
+|---|---|
+| `Atr_PageCap_Get()` | the ceiling in force, in pages. **0 means none.** Read live from the saved table, not cached — it is read once per auction page, and a cached copy would need invalidating from two buttons and `VARIABLES_LOADED` |
+| `Atr_PageCap_Store(v)` | validates and saves. Anything that is not 1..59 — blank, `max`, `0`, a word, or a number past the point where the engine's own 3000-listing guard fires first — stores as "no ceiling" |
+| `Atr_PageCap_Text()` | `"Max"` for 0, else the number |
+| `AUCTIONATOR_FINDER_SETTINGS.panePageCap` | where it lives. **Absent is not zero:** absent means untouched and the default applies; an explicit 0 is the player having pressed `Max` and has to survive a reload |
+
+**Default 10** — 500 listings, more than any ordinary item needs. That does change pricing behaviour
+on first load, which is why the cap is never silent about having fired.
+
+Three details that are decisions rather than typing:
+
+- **The box is not `SetNumeric`.** It has to be able to say `Max`, which is the whole point of the
+  button beside it, and a numeric `EditBox` cannot hold letters. `Atr_PageCap_Store` validates
+  instead — so a typo reads as `Max` rather than as a zero-page ceiling.
+- **No apply on focus loss**, unlike the Analysis tab's batch box (which has no button of its own).
+  A half-typed `1` becoming a one-page ceiling because the mouse moved is worse than nothing.
+- **The tooltip is on the three widgets, not on their container.** A mouse-enabled parent receives
+  `OnLeave` as the pointer crosses onto its child and 3.3.5 does not order that against the child's
+  `OnEnter`, so a container tooltip blinks out half the times you reach for the box.
+
+### Where the ceiling applies
+
+| | |
+|---|---|
+| the pane search (`AtrSearch`) — Sell, Buy, More | **capped.** `AnalyzeResultsPage`, after `anComplete` is set |
+| `Atr_Finder_StartNameScan` — Scan Inventory, and a Batch Post run's per-name price scan | **capped.** `Fdr_PageCeiling`, gated on the new `gFdr_NameScan` flag. Same substring problem, and Scan Inventory pays it once per distinct bag item, which is where the paging is heaviest of all |
+| a Finder **tab** sweep | **not capped.** That is the player asking for a whole category on purpose; it already warns before a large one, and cutting it short would gut the tab |
+
+**Two things a truncated search must do, and both are load-bearing:**
+
+1. **`self.anComplete` is set from the short-page test BEFORE the ceiling is applied.** A capped
+   search has not seen the whole book, so the Analysis feed must not observe it — reading a
+   truncated set as complete would report every listing on the pages we chose not to fetch as
+   *sold*. This is the same rule §17 of the analysis work already states; the ceiling just gives it
+   a second way to be violated.
+2. **It says so in chat**, naming the item and the ceiling. A recommendation off a partial book can
+   be above the market, and the player has to be able to connect that to the setting that caused
+   it. A cap the player cannot see firing is a cap that quietly loses them gold.
+
+   The Finder-side cap is quieter: it already renders "page ceiling reached - results incomplete"
+   in the Finder's own status line, and a per-name chat line during a sixty-item batch run would be
+   noise. That is a deliberate asymmetry, not an oversight.
+
+---
+
+## 5. Files touched
 
 | | |
 |---|---|
@@ -161,6 +259,12 @@ per second against whatever this realm's flood policy allows.
 | `AuctionatorPane.lua` | `Atr_Pane_ChannelBusy`, `searchPending`, `AtrPane:ResumePendingSearch` |
 | `AuctionatorFinder.lua` | `Atr_Finder_ChannelBusy` |
 | `AuctionatorBatchPost.lua` | `Atr_BP_GoClicked` asks `Atr_Sell_QueryBusy` |
+| `Auctionator.lua` (§4) | `ATR_PAGECAP_*`, `Atr_PageCap_Get`/`Store`/`Text`/`Refresh`/`Ensure`; placement in the apply path, hide in the reset path |
+| `AuctionatorScan.lua` (§4) | the ceiling in `AtrSearch:AnalyzeResultsPage`; `capHit` cleared in `Init` |
+| `AuctionatorFinder.lua` (§4) | `gFdr_NameScan`, and `Fdr_PageCeiling` honouring the cap for name scans only |
 
-`luac5.1 -p` clean; all eleven offline suites pass. Nothing here is verified in game — the pooling
-and the memo are reasoned from the frame lifetime rules, and §3 is a mechanism, as it says.
+`luac5.1 -p` clean; all eleven offline suites pass. Nothing here is verified in game — §2 is
+reasoned from the frame lifetime rules, §3 is a mechanism as it says, and §4's ceiling is arithmetic
+against a page counter. The 305 ms frame in §4 is **unexplained**, and the next thing to do about it
+is to establish whether it survives with Auctionator disabled, which splits the search in half in
+one visit to the auction house.
