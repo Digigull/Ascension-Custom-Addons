@@ -67,6 +67,11 @@ end
 
 function Attrib.lastRanked() return lastRanked end
 
+-- Has a baseline been taken yet? Until it has, sample() reports every addon at a
+-- zero delta, which reads as "nothing moved" when it means "nothing to compare to".
+-- The report's P row carries this so a first-scan page of zeros is never misread.
+function Attrib.hasBaseline() return haveBaseline end
+
 -- Attribution capability actually observed live: "none" is the Ascension case
 -- (per-addon memory reads back 0). Drives the report header's attr= field so a
 -- pasted capture is honest about why offender rows are empty.

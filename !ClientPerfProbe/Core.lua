@@ -14,13 +14,18 @@
 local ADDON, ns = ...
 
 local Core = {}
-local VERSION = "0.2.0"
+local VERSION = "0.2.1"
 
 -- defaults (persisted into ClientPerfProbeDB.settings)
 local DEFAULTS = {
     thresholdMs = 50,     -- ~3 dropped frames at 60fps; tune from data
     capacity    = 200,    -- spike ring buffer size
-    sampleSec   = 5,      -- Attrib interval (full addon scan is expensive)
+    -- Attrib interval. This was 5s and that was WRONG: the scan walks the whole
+    -- Lua heap (UpdateAddOnMemoryUsage), which on a played-in session measured
+    -- ~50ms — so the probe put a ~50ms stall on the frame loop every 5 seconds and
+    -- then recorded it as an unattributed spike. See runSampler() and
+    -- management/addons/clientperfprobe/SAMPLER-COST.md.
+    sampleSec   = 30,     -- 0 disables the interval scan entirely (/cpp sample)
 }
 
 local db                  -- ClientPerfProbeDB
@@ -35,6 +40,10 @@ local lastHeap            -- collectgarbage("count") at previous frame
 local lastCleu = 0        -- Events.cleuCount() at previous frame
 local lastStream = 0      -- Events.streamCount() at previous frame (for spike str=)
 local sampleAccum = 0     -- seconds accumulated toward the next Attrib.sample()
+local probeCost = { n = 0, over = 0, max = 0, last = 0 }
+                          -- the SAMPLER'S OWN measured cost (the P report row).
+                          -- The probe's one genuinely expensive per-frame-ish job;
+                          -- it used to be invisible and mis-billed to the client.
 local spikeSeq = 0        -- monotonic spike index
 local lastEnterWorld      -- GetTime() at the most recent zone-in (PLAYER_ENTERING_WORLD
                           -- / LOADING_SCREEN_DISABLED). A spike within a few seconds of
@@ -137,6 +146,48 @@ local function currentMeta()
     }
 end
 
+-- Is anything actually READING the per-addon attribution right now? Only the
+-- at-a-glance window renders it live; the copy/paste report is built on demand.
+local function attribHasLiveConsumer()
+    return (ns.UI and ns.UI.IsShown and ns.UI.IsShown()) and true or false
+end
+
+-- Run the per-addon attribution scan and CHARGE ITS COST TO OURSELVES.
+--
+-- Attrib.sample() calls UpdateAddOnMemoryUsage(), which walks the whole Lua heap to
+-- attribute memory per addon. On a played-in session (106MB heap, 22 addons) that
+-- walk measured ~50ms. The old driver stamped lastClock BEFORE running it, so the
+-- cost landed in the NEXT frame's dt and the probe recorded its own scan as an
+-- unattributed spike — a whole live capture came back as a perfect 5-second grid of
+-- sus=? frames at 50.3-56.3ms that were the measurement itself. Full write-up:
+-- management/addons/clientperfprobe/SAMPLER-COST.md.
+--
+-- So: time the scan, re-baseline the frame clock and heap AFTER it so it cannot
+-- masquerade as a client stall, and account for it in the P report row. The probe
+-- still pays a visible price for this data — it just no longer bills the client.
+local function runSampler(thr)
+    if not (ns.Attrib and type(debugprofilestop) == "function") then return end
+    thr = thr or (db and db.settings.thresholdMs) or DEFAULTS.thresholdMs
+
+    local t0 = debugprofilestop()
+    ns.Attrib.sample()
+    local ms = debugprofilestop() - t0
+
+    -- window the resulting offender deltas cover = time since the PREVIOUS scan
+    local nowT = safe(GetTime) or 0
+    probeCost.since = (probeCost.at and nowT > probeCost.at) and (nowT - probeCost.at) or nil
+    probeCost.at    = nowT
+    probeCost.last  = ms
+    probeCost.n     = probeCost.n + 1
+    if ms > (probeCost.max or 0) then probeCost.max = ms end
+    if ms > thr then probeCost.over = probeCost.over + 1 end
+
+    -- Re-baseline AFTER the scan. Without this the driver measures the measurer:
+    -- the next frame's dt would carry our walk, and its dh our string churn.
+    lastClock = debugprofilestop()
+    lastHeap  = safe(collectgarbage, "count") or lastHeap
+end
+
 -- assemble a full Report.build() input from live state.
 local function buildReportData(includeMatrix)
     local rates = ns.Events and ns.Events.snapshotRates() or {}
@@ -147,8 +198,26 @@ local function buildReportData(includeMatrix)
         rates     = rates,
         gc        = lastGC,
         mem       = lastMem,
+        -- the measurement's own cost (P row) — never hide what the probe spends
+        probe     = {
+            interval = (db and db.settings.sampleSec) or DEFAULTS.sampleSec,
+            live     = attribHasLiveConsumer(),
+            last     = probeCost.last,
+            max      = probeCost.max,
+            n        = probeCost.n,
+            over     = probeCost.over,
+            since    = probeCost.since,
+        },
         blocked   = ns.Events and ns.Events.blockedRanked(ns.Report.MAX_BLOCKED) or nil,
     }
+    -- Are the O rows above a baseline rather than real deltas? The first scan of a
+    -- session (or after /cpp clear) only establishes one, so it reports every addon
+    -- at zero. That used to be invisible because the 5s interval took the baseline
+    -- seconds after login; now the scan is on demand, so SAY SO rather than let a
+    -- page of zeros read as "no addon moved memory".
+    if ns.Attrib and ns.Attrib.hasBaseline then
+        data.probe.baseline = not ns.Attrib.hasBaseline()
+    end
     if loadProf and loadProf:hasData() then
         data.load = {
             summary = loadProf:summary(),
@@ -228,8 +297,19 @@ local function persistReport(report)
     end
 end
 
+-- Freshen the per-addon attribution for an EXPLICIT report. The interval scan only
+-- runs while the at-a-glance window is reading it (see onUpdate), so with that window
+-- closed the offender rows would be stale — take one scan here instead. Deliberately
+-- NOT inside buildReportData(): the at-a-glance window calls that from a 5s poll, and
+-- putting a full-heap walk back on a 5s timer is the exact bug this release fixes.
+local function refreshAttribution()
+    if attribHasLiveConsumer() then return end   -- the interval scan already owns it
+    runSampler()
+end
+
 local function openExport(includeMatrix)
     if not (ns.Report and ns.ExportWindow) then return end
+    refreshAttribution()
     local report = ns.Report.build(buildReportData(includeMatrix))
     persistReport(report)
     ns.ExportWindow.Show(report)
@@ -284,6 +364,7 @@ local function doClear()
     spikeSeq = 0
     lastCleu = 0
     lastStream = 0
+    probeCost = { n = 0, over = 0, max = 0, last = 0 }
     lastBlocked, lastBlockedT = nil, nil
 end
 
@@ -364,14 +445,25 @@ local function onUpdate(_, elapsed)
     local dt = now - lastClock
     lastClock = now
 
-    -- interval attribution sampler (full addon scan — kept off the hot path)
-    sampleAccum = sampleAccum + (elapsed or 0)
-    if sampleAccum >= (db and db.settings.sampleSec or DEFAULTS.sampleSec) then
-        sampleAccum = 0
-        if ns.Attrib then ns.Attrib.sample() end
+    local thr = (db and db.settings.thresholdMs) or DEFAULTS.thresholdMs
+
+    -- Interval attribution sampler. Two rules, both learned the hard way:
+    --   1. Only run it while something is READING it (the at-a-glance window).
+    --      With the window closed the report takes its own scan on demand, so an
+    --      interval scan while you play is pure self-inflicted cost.
+    --   2. Never let it land in the next frame's dt — runSampler() re-baselines
+    --      the clock after the walk. Skipping that is what made the probe report
+    --      its own 5-second scan as a stall for the whole of 0.2.0.
+    -- sampleSec = 0 turns the interval scan off outright (/cpp sample 0).
+    local interval = (db and db.settings.sampleSec) or DEFAULTS.sampleSec
+    if interval > 0 then
+        sampleAccum = sampleAccum + (elapsed or 0)
+        if sampleAccum >= interval then
+            sampleAccum = 0
+            if attribHasLiveConsumer() then runSampler(thr) end
+        end
     end
 
-    local thr = (db and db.settings.thresholdMs) or DEFAULTS.thresholdMs
     if dt <= thr then
         -- still keep heap/cleu/stream baselines fresh for the next comparison
         lastHeap = safe(collectgarbage, "count") or lastHeap
@@ -432,6 +524,8 @@ local function usage()
     msg("  |cffffff00/cpp stat|r — quick summary in chat")
     msg("  |cffffff00/cpp thr <ms>|r — set spike threshold (now " ..
         tostring(db and db.settings.thresholdMs) .. "ms)")
+    msg("  |cffffff00/cpp sample <sec>|r — per-addon scan interval, 0 = off (now " ..
+        tostring(db and db.settings.sampleSec) .. "s; costs what the |cffffff00P|r row says)")
     msg("  |cffffff00/cpp gc|r — force one full GC and measure the pause (sizes cause B)")
     msg("  |cffffff00/cpp mem|r — bounded _G walk: rank the top memory globals (on-contract memtables)")
     msg("  |cffffff00/cpp backdrop <Frame>|r — read a window's backdrop (compare a laggy one vs Details/WA)")
@@ -507,6 +601,21 @@ local function handler(input)
         end
         local res = ns.BackdropTest.describe(rest)
         for _, l in ipairs(res.lines) do msg(l) end
+    elseif cmd == "sample" then
+        local v = tonumber(rest)
+        if v and v >= 0 then
+            db.settings.sampleSec = v
+            sampleAccum = 0
+            if v == 0 then
+                msg("per-addon attribution scan |cffff8800off|r — the report still scans once when you open it.")
+            else
+                msg(("attribution scan interval set to %gs (only runs while the at-a-glance window is open)."):format(v))
+            end
+        else
+            msg("usage: /cpp sample <sec>  (0 = off; current " ..
+                tostring(db.settings.sampleSec) .. "s)")
+            msg("the scan walks the whole Lua heap — see the |cffffff00P|r row for what it costs you.")
+        end
     elseif cmd == "thr" then
         local v = tonumber(rest)
         if v and v > 0 then
@@ -517,6 +626,7 @@ local function handler(input)
         end
     elseif cmd == "save" then
         if ns.Report then
+            refreshAttribution()
             persistReport(ns.Report.build(buildReportData(true)))
             msg("report saved to SavedVariables. Now |cffffff00/reload|r, then attach:")
             msg("  |cffddddddWTF/Account/<ACCOUNT>/SavedVariables/ClientPerfProbe.lua|r")
@@ -561,6 +671,13 @@ local function initDB()
     db.settings.prewarmTargets = nil
     db.settings.profileArming  = nil
     db.settings.profileLocked  = nil
+    -- MIGRATION: sampleSec defaulted to 5, which put a full-heap UpdateAddOnMemoryUsage
+    -- walk on the frame loop every 5 seconds and had the probe record the result as an
+    -- unattributed ~50ms spike (management/addons/clientperfprobe/SAMPLER-COST.md).
+    -- Move an existing DB off it. Unambiguous today because /cpp sample did not exist
+    -- when that value was written, so nobody can have chosen 5 deliberately — delete
+    -- this once no live DB predates the command.
+    if db.settings.sampleSec == 5 then db.settings.sampleSec = DEFAULTS.sampleSec end
     -- Stamp this session's load time. The spike ring persists across /reload (ground
     -- rule 6: so /cpp save can flush it to disk), which means a capture taken without
     -- a /cpp clear mixes THIS session's spikes with restored ones from a prior play
