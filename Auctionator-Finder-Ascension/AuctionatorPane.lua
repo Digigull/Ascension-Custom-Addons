@@ -49,6 +49,29 @@ end
 
 -----------------------------------------
 
+-- Is the shared auction query channel spoken for?
+--
+-- Three things can hold it and they are not the same thing:
+--
+--   * Atr_Finder_ChannelBusy  -- the Finder engine has a query out RIGHT NOW.
+--   * Atr_BP_Running          -- a Batch Post run is going.  It holds the
+--   * Atr_SB_ScanRunning      -- Scan Inventory is going.     channel one NAME
+--                                at a time, so the engine is genuinely idle in
+--                                the gaps; taking it there would cost the run's
+--                                next item its live price.
+--
+-- A run outlasts the engine's own busy flag, which is why both are asked.
+local function Atr_Pane_ChannelBusy ()
+
+	if (Atr_Finder_ChannelBusy and Atr_Finder_ChannelBusy()) then return true; end
+	if (Atr_BP_Running       and Atr_BP_Running())       then return true; end
+	if (Atr_SB_ScanRunning   and Atr_SB_ScanRunning())   then return true; end
+
+	return false;
+end
+
+-----------------------------------------
+
 function AtrPane:DoSearch (searchText, exact, rescanThreshold, callback)
 
 	self.currIndex			= nil;
@@ -63,6 +86,10 @@ function AtrPane:DoSearch (searchText, exact, rescanThreshold, callback)
 	self.itemLedgerRev		= nil;
 	
 	self.SS_hilite_itemName	= searchText;		-- by name for search summary
+
+	-- A new search supersedes one that never got the channel.  Cleared before
+	-- anything below can set it again.
+	self.searchPending		= false;
 	
 	Atr_ClearBuyState();
 
@@ -81,11 +108,31 @@ function AtrPane:DoSearch (searchText, exact, rescanThreshold, callback)
 	local cacheHit = false;
 	
 	if (searchText ~= "") then
-		if (self.activeScan.whenScanned == 0) then		-- check whenScanned so we don't rescan cache hits
-			self.activeSearch:Start();
-		else
+		if (self.activeScan.whenScanned ~= 0) then		-- check whenScanned so we don't rescan cache hits
 			self.UINeedsUpdate = true;
 			cacheHit = true;
+
+		-- WAIT FOR THE QUERY CHANNEL RATHER THAN RACING IT.
+		--
+		-- There is one auction query channel and its answers are anonymous:
+		-- AUCTION_ITEM_LIST_UPDATE says a batch arrived, never whose it is.
+		-- Two drivers paging at once each read the other's pages, call them
+		-- duplicates and re-query -- Atr_Finder_ChannelBusy's comment has the
+		-- full account, and the failure it ends in is a disconnect, not a
+		-- wrong number on screen.
+		--
+		-- The SELL tab is where the two meet in ordinary use: dropping an item
+		-- into the sell slot starts one of these searches, and the Finder
+		-- engine is already holding the channel whenever Scan Inventory or a
+		-- Batch Post run is going.  So this stands down and Atr_Idle starts it
+		-- the moment the channel is free.  Deferred, NOT skipped: the pane is
+		-- otherwise fully set up by the lines above, so the item's price simply
+		-- arrives a few seconds later instead of not at all.
+		elseif (Atr_Pane_ChannelBusy()) then
+			self.searchPending = true;
+
+		else
+			self.activeSearch:Start();
 		end
 	end
 	
@@ -107,6 +154,24 @@ function AtrPane:GetProcessingState ()
 	end
 	
 	return KM_NULL_STATE;
+end
+
+-----------------------------------------
+
+-- Start a search that stood down for the query channel, if it is free now.
+-- Driven from Atr_Idle; returns true if it actually started one.
+function AtrPane:ResumePendingSearch ()
+
+	if (not self.searchPending) then return false; end
+	if (Atr_Pane_ChannelBusy()) then return false; end
+
+	self.searchPending = false;
+
+	if (self.activeSearch == nil) then return false; end
+
+	self.activeSearch:Start();
+
+	return true;
 end
 
 -----------------------------------------

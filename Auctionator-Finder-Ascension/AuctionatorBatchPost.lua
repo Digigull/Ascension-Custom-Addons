@@ -1329,6 +1329,14 @@ function Atr_BP_GoClicked ()
 		Atr_BP_Msg ("Scan Inventory is running -- finish or cancel it first.");
 		return;
 	end
+	-- The sell pane holds the same one channel while it prices whatever is in
+	-- the sell box (Atr_Finder_ChannelBusy).  Unlike the two above there is
+	-- nothing to cancel and nothing to decide -- a pane search is over in a
+	-- second or two -- so this one is just "not yet".
+	if (Atr_Sell_QueryBusy and Atr_Sell_QueryBusy()) then
+		Atr_BP_Msg ("the sell pane is still searching -- try again in a moment.");
+		return;
+	end
 	if (not canScan) then
 		Atr_BP_Msg ("the Finder scan engine is not loaded -- posting at stored prices.");
 	end

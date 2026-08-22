@@ -3258,6 +3258,33 @@ gFdr_EventFrame:SetScript ("OnEvent", function (self, event, ...)
 	Fdr_HarvestPage ();
 end);
 
+-------------------------------------------------------------------------------
+-- Is the shared auction-query channel in somebody's hands?
+--
+-- There is exactly ONE auction query channel: QueryAuctionItems, gated by
+-- CanSendAuctionQuery, answered by AUCTION_ITEM_LIST_UPDATE -- and that answer
+-- carries no indication of which query it belongs to.  Two drivers paging at
+-- once therefore consume each other's pages: each sees a batch it did not ask
+-- for, calls it a duplicate, and re-queries.  AuctionatorAnalysis.lua's pump
+-- states the consequence in one line ("a second one racing it is how you get
+-- duplicate pages and disconnects") and this is the predicate that lets the
+-- rest of the addon honour it.
+--
+-- This file owns three of the drivers -- the tab scan, the exact-buy verifier
+-- and the group verifier -- so the predicate belongs here.  The fourth is the
+-- Buy/Sell panes' AtrSearch, which asks this before starting (AtrPane:DoSearch).
+-- Global rather than on addonTable.Finder because Auctionator.lua predates that
+-- surface and does not take addonTable; a nil check at the call site covers the
+-- load order either way.
+function Atr_Finder_ChannelBusy ()
+
+	if (gFdr_State ~= FDR_NULL) then return true; end
+	if (gFdrBuy_State ~= FDRBUY_IDLE) then return true; end
+	if (Atr_Finder_GroupIsFinding ()) then return true; end
+
+	return false;
+end
+
 gFdr_EventFrame:SetScript ("OnUpdate", function (self, elapsed)
 
 	if (Atr_Finder_GroupIsFinding ()) then
