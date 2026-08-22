@@ -53,6 +53,7 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/passlootbis/tools/contract-check.lua    # 20 assertions
   lua5.1 management/addons/passlootbis/tools/usable-smoke.lua      # 14 assertions
   lua5.1 management/addons/passlootbis/tools/report-smoke.lua      # 3 passes, non-zero on a crash
+  lua5.1 management/addons/passlootbis/tools/mountpet-smoke.lua    # 14 assertions
   lua5.1 management/addons/auctionator/tools/sell-variant-smoke.lua # 27 assertions
   lua5.1 management/addons/auctionator/tools/analysis-feed-smoke.lua # 68 assertions
   lua5.1 management/addons/auctionator/tools/history-store-smoke.lua # 114 assertions
@@ -60,7 +61,7 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/auctionator/tools/price-variant-smoke.lua # 20 assertions
   ```
 
-  All eight pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
+  All nine pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
   anything new belongs there, not in an addon folder. Several source files are deliberately
   shaped to be testable this way — helpers kept global, `rawget(_G, "CreateFrame")` guards — so
   **do not break that shape** when editing them. That is a preservation rule, not an
@@ -206,7 +207,7 @@ a 1px `WHITE8X8` border, `SetBackdropColor(0.05, 0.05, 0.07, 0.95)`,
 | `AscensionHonorTracker` | 4 spaces | Small. Panel attaches to the character panel; strata matches it. |
 | `Auctionator-Finder-Ascension-History` | tabs | Not an addon — the companion `.toc` that owns `AUCTIONATOR_MARKET_HISTORY` so it gets a file of its own. One line of Lua. Do not put anything else in it: the whole bargain is that everything in that file is re-derivable by scanning. `management/addons/auctionator/HISTORY-STORE.md`. |
 | `Auctionator-Finder-Ascension` | tabs | Largest, heavily XML. Local style puts a space before call parens: `f:SetSize (400, 124)`. Match it. Vendor pricing: `management/addons/auctionator/VENDOR-PRICE-RESEARCH.md` — read before touching the price estimator or the shipped seed. How the addon is put together — upstream vs. local, the two UI worlds, the saved-variable map, and the recipes for adding a tab or a subsystem: `management/addons/auctionator/FRAMEWORK.md` — read before adding anything new. Open request queue (owner's backlog, with what each item means against the current code): `management/addons/auctionator/BACKLOG.md`. A general market price history in a companion SavedVariables file — researched, not built, and it reopens a decision `FRAMEWORK.md` §5 states as settled: `management/addons/auctionator/HISTORY-STORE.md`. |
-| `PasslootBiS` | tabs | Ace3. Load order in `Core/Core.xml`; `PassLoot.lua` loads first, so shared helpers go there. BiS Check (the downgrade veto + the run's win ledger) spans both PassLoot addons: `management/addons/passlootbis/BIS-CHECK.md` — read before touching the roll gate or the verdict shape. The three bind-confirmation popups (and why a correct per-rule filter never fired): `management/addons/passlootbis/BIND-CONFIRMS.md`. How the "Not Usable" rule decides usability from tooltip *colour* — and the blank-red-line bug that made it swallow wearable gear: `management/addons/passlootbis/USABLE-SCAN.md` — read before touching `Core/Cache.lua`'s colour test or `Modules/Usable.lua`. In-game test plan for all of the above, incl. every debug command: `management/addons/passlootbis/TESTING.md`. |
+| `PasslootBiS` | tabs | Ace3. Load order in `Core/Core.xml`; `PassLoot.lua` loads first, so shared helpers go there. BiS Check (the downgrade veto + the run's win ledger) spans both PassLoot addons: `management/addons/passlootbis/BIS-CHECK.md` — read before touching the roll gate or the verdict shape. The three bind-confirmation popups (and why a correct per-rule filter never fired): `management/addons/passlootbis/BIND-CONFIRMS.md`. How the "Not Usable" rule decides usability from tooltip *colour* — and the blank-red-line bug that made it swallow wearable gear: `management/addons/passlootbis/USABLE-SCAN.md` — read before touching `Core/Cache.lua`'s colour test or `Modules/Usable.lua`. Why mounts and companion pets ship with a Need rule, and why their subclass string alone cannot be trusted to spot one: `management/addons/passlootbis/MOUNT-PET.md`. In-game test plan for all of the above, incl. every debug command: `management/addons/passlootbis/TESTING.md`. |
 | `PassLootBiS_Scanner` | tabs | Load order in the `.toc`; `Core/UI.lua` loads before its consumers. Files guard on `rawget(_G, "CreateFrame")` so they stay loadable under bare lua5.1 — **preserve that**, it is what makes helpers testable offline. |
 
 The two PassLoot addons are a designed pair (Scanner advises, PassLoot rolls). Changes to

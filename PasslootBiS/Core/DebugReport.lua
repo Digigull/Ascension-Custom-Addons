@@ -319,6 +319,34 @@ local function addUsableLine(out, link)
 		(reason and ("   red lines: " .. reason) or "")
 end
 
+-- The "Mounts & Pets" rule's verdict on one item, and -- the part worth printing --
+-- WHICH signal produced it (subclass or tooltip; see Modules/MountPet.lua). The rule
+-- ships enabled and Needs on what this says yes to, so "why did it Need / not Need
+-- that?" has to be answerable from a paste rather than from another dungeon.
+--
+-- Built through InitItem because this filter reads itemObj.subclass, which the bare
+-- { link = link } the usable dry run gets by does not carry. Routed through the
+-- module the rule itself uses, for the reason spelled out above addUsableLine.
+local function addMountPetLine(out, link)
+	local ok, mod = pcall(PasslootBiS.GetModule, PasslootBiS, L["Mount / Pet"], true)
+	if not (ok and type(mod) == "table" and mod.Classify and mod.MatchLabel) then
+		out[#out + 1] = "  mount/pet: Modules/MountPet.lua not loaded -- cannot dry-run the rule"
+		return
+	end
+	local built, itemObj = pcall(PasslootBiS.InitItem, PasslootBiS, link)
+	if not built then
+		itemObj = { link = link }
+	end
+	local okc, match, how = pcall(mod.Classify, mod, itemObj)
+	if not okc then
+		out[#out + 1] = "  mount/pet: check failed"
+		return
+	end
+	out[#out + 1] = "  mount/pet: " .. yn(match ~= 0) ..
+		"   (" .. tostring(match) .. " " .. tostring(mod:MatchLabel(match)) .. ", by " .. tostring(how) .. ")" ..
+		"   subclass: " .. tostring(itemObj and itemObj.subclass or "?")
+end
+
 local function addItemSection(out, link)
 	out[#out + 1] = "[Item test] " .. tostring(link)
 	local isBiS, list = PasslootBiS:IsBiSItem(GetItemInfoFromHyperlink(link), nil)
@@ -329,6 +357,7 @@ local function addItemSection(out, link)
 	end
 	out[#out + 1] = "  on a rolling BiS list: " .. yn(isBiS) .. (list and ("  (" .. list .. ")") or "")
 	addUsableLine(out, link)
+	addMountPetLine(out, link)
 
 	local scanner = scannerAPI()
 	if not (scanner and scanner.GetLinkVerdict) then

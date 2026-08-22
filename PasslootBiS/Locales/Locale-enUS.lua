@@ -190,6 +190,14 @@ L["Loot Won Comparison"] = true
 L["Loot Won Counter"] = true
 L["Loot Won Counter_Desc"] = [=[Set how many times we have won loot on this rule
 (Saves when you press enter)]=]
+-- Mount / Pet filter (Modules/MountPet.lua) and the choices in its dropdown.
+-- "Mount or Pet" rather than "Any" on purpose: this module's first choice means
+-- "either kind", not "do not filter" -- see the note on module.Choices.
+L["Mount / Pet"] = true
+L["Selected rule will only match mounts and companion pets."] = true
+L["Mount or Pet"] = true
+L["Mount"] = true
+L["Pet"] = true
 L["None"] = true
 L["Normal"] = true
 L["Not"] = true
@@ -395,11 +403,12 @@ L["RollAdvisor_HighValue"] = "High Value"
 -- The preview popup uses a REAL item (Thunderfury, id 19019) so it exercises the
 -- icon and tooltip path; its name comes from the client, not from here.
 
--- The two rules a profile with no rules of its own starts with
+-- The three rules a profile with no rules of its own starts with
 -- (Core/Constants.lua DefaultRules). Plain rule descriptions: they are copied
 -- into the profile once and are editable from the rules page afterwards.
 L["DefaultRule_NotUsable"] = "Not Usable"
 L["DefaultRule_CatchAll"] = "Catch All"
+L["DefaultRule_MountPet"] = "Mounts & Pets"
 
 -- Advisor status panel on the rules page (Core/AdvisorStatus.lua). Kept SHORT:
 -- the panel lives in the narrow column beside the rule list, so anything longer

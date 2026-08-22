@@ -71,6 +71,12 @@ local defaults = {
 		-- starter rules (Constants.lua DefaultRules) are handed out exactly once. A
 		-- user who then deletes them does NOT get them back on the next login.
 		["DefaultRulesSeeded"] = false,
+		-- Same idea, one rule later: the "Mounts & Pets" starter rule (Constants.lua
+		-- PasslootBiS.MountPetRule) shipped after this addon already had users, and
+		-- DefaultRulesSeeded is long since set on their profiles -- so without a flag of
+		-- its own the rule would only ever reach a brand-new profile. Flipped by
+		-- SeedMountPetRule(), which likewise hands it out exactly once.
+		["MountPetRuleSeeded"] = false,
 		["Modules"] = {},
 		-- Per-item manager metadata captured from imported PLBIS1 strings' additive
 		-- `mgr` block (protocol §3.5), keyed by BiS list name (the rule Desc without
@@ -1908,10 +1914,13 @@ function PasslootBiS:OnProfileChanged()
 	self.CurrentOptionFilter = { nil, 0 } -- Frame, line #
 	self:LoadModules()
 	self:SendMessage("PasslootBiS_OnProfileChanged")
-	-- A profile that has never held a rule gets the starter pair (Not Usable >
-	-- Greed, Catch All > Greed). Must run BEFORE CheckRuleTables so the seeded
-	-- rules go through the same DefaultTemplate fill-in as any other rule.
+	-- A profile that has never held a rule gets the starter set (Mounts & Pets >
+	-- Need, Not Usable > Greed, Catch All > Greed). Must run BEFORE CheckRuleTables
+	-- so the seeded rules go through the same DefaultTemplate fill-in as any other
+	-- rule.
 	self:SeedDefaultRules()
+	-- ...and a profile that predates the "Mounts & Pets" rule gets that one on its own.
+	self:SeedMountPetRule()
 	-- Now we check our rules to see if all variables are set.
 	-- We could check profile variables, but some modules need more than just setting defaults, they need to act on them.
 	self:CheckRuleTables()
@@ -2086,12 +2095,13 @@ end
 -- Why this is profile-wide and not another per-rule filter. The addon HAS a
 -- per-rule filter for it (Modules/ConfirmBoP.lua's "Confirm BoP") and it works --
 -- but it only fires when the rule that matched has it ticked, and none of the
--- rules a normal setup actually rolls with do. The two seeded starter rules
--- ("Not Usable > Greed", "Catch All > Greed", Core/Constants.lua DefaultRules)
--- carry no filters beyond their match condition, and neither do BiS-imported
--- rules. So on live boss loot -- which is BoP, which is why this looks like an
--- "epic items" problem -- the rule matched, the roll was cast, and then the
--- confirm sat there unanswered because the matched rule had no Confirm BoP tick.
+-- rules a normal setup actually rolls with do. The seeded starter rules
+-- ("Mounts & Pets > Need", "Not Usable > Greed", "Catch All > Greed",
+-- Core/Constants.lua DefaultRules) carry no filters beyond their match condition,
+-- and neither do BiS-imported rules. So on live boss loot -- which is BoP, which is
+-- why this looks like an "epic items" problem -- the rule matched, the roll was cast,
+-- and then the confirm sat there unanswered because the matched rule had no Confirm
+-- BoP tick.
 -- A setting nobody's rules opt into is a setting that does not work.
 --
 -- Disenchant (rollType 3) is deliberately NOT auto-confirmed here. Rolling DE on
@@ -2491,6 +2501,43 @@ function PasslootBiS:SeedDefaultRules()
 	for _, Rule in ipairs(self.DefaultRules or {}) do
 		table.insert(Profile.Rules, self:CopyTable(Rule))
 	end
+end
+
+-- Hand an EXISTING profile the "Mounts & Pets" starter rule, once.
+--
+-- SeedDefaultRules above only ever fires on a profile with no rules at all, and only
+-- once per profile -- both deliberate, and both mean a rule added to DefaultRules
+-- after release reaches nobody who already plays with this addon. That is the whole
+-- case this rule exists for: the auto-greed on mounts and pets is what the shipped
+-- configuration does today, on every install out there.
+--
+-- Same two guards as SeedDefaultRules, for the same reasons:
+--   * the flag is set even when we DON'T seed, so this runs exactly once per profile.
+--     Delete the rule and it stays deleted.
+--   * a profile that already has a rule using the MountPet filter is left alone --
+--     a fresh profile (SeedDefaultRules just gave it the rule as part of the starter
+--     set) and anyone who built their own mount rule before this shipped.
+-- Inserted at the FRONT, because a rule matched after "Not Usable" or "Catch All" is
+-- a rule that never matches: both of those claim a mount first (Constants.lua).
+-- Called from OnProfileChanged before CheckRuleTables, like the seed above, so the
+-- rule gets the same DefaultTemplate fill-in as any other; PartitionRules then places
+-- it among the other Before Advisor rules.
+function PasslootBiS:SeedMountPetRule()
+	local Profile = self.db.profile
+	Profile.Rules = Profile.Rules or {}
+	if (Profile.MountPetRuleSeeded) then
+		return
+	end
+	Profile.MountPetRuleSeeded = true
+	if (not self.MountPetRule) then
+		return
+	end
+	for _, Rule in ipairs(Profile.Rules) do
+		if (Rule.MountPet) then
+			return
+		end
+	end
+	table.insert(Profile.Rules, 1, self:CopyTable(self.MountPetRule))
 end
 
 -- Keep a rules array PARTITIONED: every rule ticked "Before Advisor" first, then

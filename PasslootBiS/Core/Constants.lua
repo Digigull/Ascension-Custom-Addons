@@ -31,16 +31,51 @@ PasslootBiS.DefaultTemplate = {
 -- whatever is already stored, so a rule list declared there would graft Usable/
 -- CanIRoll filters onto rules 1 and 2 of every existing profile.
 --
--- Both rules greed, and they are ordered so the narrow one is tried first (rules
--- are evaluated top-down; the first match wins):
---   1) "Not Usable" -- Usable = 3 ("Unusable", NOT an exception). The Usable module
+-- Order is the whole design: rules are evaluated top-down and the FIRST match wins,
+-- so they run narrowest first.
+--   1) "Mounts & Pets" -- MountPet = 1 ("Mount or Pet") AND LearnedItem = 3
+--      ("Unlearned") -> NEED, falling back to Greed where Need is not allowed on
+--      the roll. The one rule here that does not greed, and the reason it is first:
+--      a mount or pet reaching either rule below is auto-greeded, which is the wrong
+--      roll on the only drop in the run anybody is there for. Worse, a mount you
+--      have not got the riding skill for carries a RED requirement line, so it is
+--      "Not Usable" that claims it -- being unusable today says nothing about
+--      whether you want it. See Modules/MountPet.lua for how mounts and pets are
+--      recognised, and management/addons/passlootbis/MOUNT-PET.md for the rest.
+--   2) "Not Usable" -- Usable = 3 ("Unusable", NOT an exception). The Usable module
 --      reports 3 when the item tooltip carries a red requirement line, so this is
 --      the "I can't use it, take the gold" rule.
---   2) "Catch All"  -- CanIRoll = 1 ("Any"), which always matches, so anything the
---      rule above didn't claim still gets a greed rather than being ignored.
+--   3) "Catch All"  -- CanIRoll = 1 ("Any"), which always matches, so anything the
+--      rules above didn't claim still gets a greed rather than being ignored.
 -- The inner { Value, Exception } shape is the module widget filter format shared by
 -- every dropdown module (see Modules/Usable.lua).
+--
+-- Kept as a named rule rather than inline in the list below so the one-time seed for
+-- EXISTING profiles (PasslootBiS:SeedMountPetRule) hands out the same rule the list
+-- does; a second copy of it is a second thing to keep in step.
+PasslootBiS.MountPetRule = {
+  ["Desc"] = L["DefaultRule_MountPet"],
+  -- Need where the roll allows it, Greed where it does not (RollOrder decides which,
+  -- Core/PassLoot.lua): a Need the client refuses would otherwise leave this rule
+  -- matching and rolling nothing at all, which is worse than the greed it replaced.
+  ["Loot"] = { "need", "greed" },
+  -- Outranks the roll advisor. A mount has no equipped counterpart to score against,
+  -- so the advisor has nothing useful to say about one -- but under `trust` or `held`
+  -- it can still convert or hold this roll on a gold-value verdict, and a countdown
+  -- popup over an uncontroversial mount Need is noise. BiS Check's downgrade veto
+  -- still outranks THIS (Core/RollAdvisor.lua), which is fine: it only fires on an
+  -- item scored against gear in the same slot.
+  ["BeforeAdvisor"] = true,
+  ["MountPet"] = { { 1, false } },
+  -- Already collected -> this rule stops matching and the item falls through to a
+  -- greed below. Needing on a mount you already own is the same breach of pick-up
+  -- group etiquette this rule exists to fix, pointed the other way. Fails toward
+  -- Need: LearnedItem reads "Already known" off the tooltip, and when it cannot tell
+  -- it answers "Unlearned".
+  ["LearnedItem"] = { { 3, false } },
+}
 PasslootBiS.DefaultRules = {
+  PasslootBiS.MountPetRule,
   {
     ["Desc"] = L["DefaultRule_NotUsable"],
     ["Loot"] = { "greed" },

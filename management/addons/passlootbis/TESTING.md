@@ -68,17 +68,22 @@ it will not spam your chat.
 
 ## 0b. Offline checks (no client needed)
 
-Run both from the repo root before shipping a change to the report or the usable
-scan. Neither needs WoW; both exit non-zero on failure.
+Run these from the repo root before shipping a change to the report, the usable scan
+or the mount/pet filter. None needs WoW; all exit non-zero on failure.
 
 ```
 lua5.1 management/addons/passlootbis/tools/report-smoke.lua
 lua5.1 management/addons/passlootbis/tools/usable-smoke.lua
+lua5.1 management/addons/passlootbis/tools/mountpet-smoke.lua
 ```
 
 `usable-smoke.lua` is the regression net for the blank-red-line bug in §4. Its case 1
 is that exact tooltip — if it ever fails again, `Not Usable` is silently swallowing
 gear the player can wear.
+
+`mountpet-smoke.lua` pins both routes the `Mount / Pet` filter can recognise a chase
+item by — the subclass string and the `Use:` line — against the two items the feature
+was asked for. See `MOUNT-PET.md`.
 
 ## 1. Commands
 
@@ -231,6 +236,34 @@ in it — is `USABLE-SCAN.md`. This is just the test.
     per item as `(Usable) Usable: N (...)`. **N must vary** — it once printed a
     hardcoded `2` for everything, which is what made a self-contradicting report look
     like noise.
+
+### I. Mounts and pets Need instead of Greed (no dungeon needed)
+Background — why this ships, and why the subclass string alone is not enough — is
+`MOUNT-PET.md`. This is just the test.
+
+28. `/plbisdebug item ` then shift-click a mount or a pet (bags, a chat link, an AH
+    listing). The item section now carries a second verdict line:
+
+    ```
+      mount/pet: yes   (2 Mount, by subclass)   subclass: Mounts
+    ```
+
+    It comes from `Modules/MountPet.lua` itself, so it is the answer a live roll gets.
+29. Shift-click several: a mount you own, a mount you do not, a companion pet, an
+    Ascension vanity-quality pet, and a piece of gear. **Only the first four may say
+    `yes`.** `by tooltip` instead of `by subclass` is worth reporting — it means the
+    subclass did not say and the `Use:` line carried it, which is the fallback doing
+    its job but also the sign that the subclass set is missing a spelling.
+30. **`mount/pet: no` on something you can plainly summon is the finding.** Copy the
+    `subclass:` field from the same line; that string is what needs adding.
+31. Rules page: the `Mounts & Pets` rule should be present in the **Before Advisor**
+    section, above `Not Usable`. On an install that predates it, it is added once
+    (`SeedMountPetRule`) — delete it and it must **not** come back after `/reload`.
+32. The live check, when a mount finally drops: with the trace on, the report should
+    show `rule=Mounts & Pets method=need beforeAdvisor=true`. A mount you already own
+    should instead fall through to a greed rule — that half depends on `Learned Item`
+    seeing "Already known" on an Ascension collection item, which is the part of this
+    that has never been watched happen.
 
 ## 3. What to send back
 
