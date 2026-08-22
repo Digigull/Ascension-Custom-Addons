@@ -1232,6 +1232,10 @@ The buttons now continue the existing action row instead of starting a second on
 **Scan Inventory | Profit Margin | Batch Post | Clear**, each anchored to the one before it, ending
 at panel x ≈ 331 with thirty pixels clear of the tabs.
 
+**SUPERSEDED by item 17 (2026-08-24):** the single row was split into a pair per column, and
+`ATR_SELL_BROWSER_H` came down again, 168 → 150, to give those rows a band clear of the tabs. The
+x ≈ 331 margin above is history; what keeps the batch pair off `Current` now is its y.
+
 **2. Clicking the sell slot empties it.** There is no "empty the sell slot" API on 3.3.5;
 `Atr_Sell_ClearSlot` does the only thing there is — `ClickAuctionSellItemButton()` on an empty
 cursor **lifts** the item out, `ClearCursor()` drops it back in the bag. Raw rather than through
@@ -1259,3 +1263,39 @@ on a batch run's own display.
 
 `luac5.1 -p` clean; all eleven suites pass. **Not verified in game** — all three are layout and
 event wiring, which is the category offline work cannot check at all.
+
+---
+
+## 17. SELL tab: an action row per column, tucked under each window — DONE
+
+**Asked (owner, 2026-08-24, with a screenshot):** *"On the Sell tab for Auctionator, can you make
+the 'Scan Inventory' & 'Profit Margin' buttons smaller and place them underneath the Inventory
+window next to each other, so they fit tightly under the window (bottom left). Can you also do the
+same for the 'Batch Post' & 'Clear' buttons so they fit tightly under the Batch Post window as
+well?"*
+
+**Built 2026-08-24.** Details in `BATCH-POST.md` §2. Three parts:
+
+**1. The row split in two.** `Scan Inventory` was anchored to `Atr_HeadingsBar` and the other three
+chained off it, so all four sat under the *inventory* (item 16). `Atr_SellBrowser_Scan` now anchors
+to `Atr_SellBrowser`'s BOTTOMLEFT and `Atr_BP_Go` to `Atr_BP_List`'s, each at `ATR_SELL_BTNROW_Y`
+(−2); `Profit Margin` and `Clear` still chain off their partner. Both pairs therefore track the
+column they act on and stay true if the split geometry is retuned. `Atr_BP_Layout`'s
+headings-bar fallback branch is gone with it — the list it now anchors to is created by
+`Atr_BP_Ensure` two lines earlier, so there is no never-case left to guard.
+
+**2. Narrower buttons.** `Scan Inventory` 85 → 80, `Profit Margin` 95 → 76, `Batch Post` 90 → 72,
+`Clear` 55 → 48, gaps 12/8 → `ATR_SELL_BTN_GAP` = 6. Each is a few pixels of padding around its
+label *and* around its running caption — `Cancel (n/n)` and `Cancel`, which are what set the floor.
+The inventory pair ends at panel x 136 (column edge 264), the batch pair at 424 (edge 574).
+
+**3. The columns paid 18px for the band.** This is the part to read before lengthening them again.
+The tab strip owns y −258..−290, and an 18px row hung under a column bottom of −250 lands at
+−252..−270 — back inside it. That was survivable while the whole row lived under the inventory
+(x ≤ 331, left of the tabs at 361); it is not survivable for a batch pair that *starts* at x 298.
+`ATR_SELL_BROWSER_H` 168 → 150 bottoms the columns at −232 and puts both rows at −234..−252, six
+pixels above the tabs. The height came off the columns, not off `ATR_SELL_LIST_H`, because both
+columns scroll and the four-row results list does not.
+
+`luac5.1 -p` clean, XML parses, all eleven suites pass. **Not verified in game** — pure layout,
+which is the category offline work cannot check.

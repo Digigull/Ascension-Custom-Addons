@@ -59,7 +59,7 @@ constants in `Auctionator.lua` now split it, and they are the only place the spl
 
 ```
 ATR_SELL_BROWSER_Y = -82     top edge of BOTH columns
-ATR_SELL_BROWSER_H = 168     height of BOTH columns   (194 until 2026-08-23)
+ATR_SELL_BROWSER_H = 150     height of BOTH columns   (194 until 2026-08-23, 168 until 2026-08-24)
 ATR_SELL_INV_X = -26         inventory left   -> right edge 264
 ATR_SELL_INV_W = 290
 ATR_SELL_BP_X  = 298         batch left       -> right edge 574
@@ -78,8 +78,16 @@ x 361..611,   y -258..-290
 At 194 the columns bottomed out at −276 — eighteen pixels into that band. Note which column was
 actually at fault: the **inventory** spans x −26..264 and never reaches 361, so it never touched the
 tabs. Only the batch column (298..574) did. Both were shortened regardless, because two columns
-side by side have to stay level — an 8px step between them would read as a bug of its own. 168 puts
+side by side have to stay level — an 8px step between them would read as a bug of its own. 168 put
 the bottom at −250, eight pixels clear.
+
+**It came down again on 2026-08-24, 168 → 150, and that 18px bought the action rows their band.**
+The four buttons moved out of the tab band and under the columns (next section); an 18px row hung
+2px under a column bottom of −250 occupies −252..−270, which is twelve pixels back inside the tab
+strip — and the batch pair now *starts* at x 298, so unlike the old single row it would sit on
+`Current` again. 150 bottoms the columns at −232 and puts both rows at **−234..−252**, six pixels
+above the tabs and sixteen above the divider. The 18px came off the columns rather than off
+`ATR_SELL_LIST_H` because both columns scroll and the four-row results list does not.
 
 **The 34px gap between the two is not padding.** A `UIPanelScrollFrameTemplate` anchors its scroll
 bar to its own TOPRIGHT at +6 with a width of 16, so the bar lives *outside* the width you set,
@@ -88,27 +96,40 @@ batch list. The batch column's own bar reaches 596, which is where the single wi
 to end, so the band's right edge is unmoved.
 
 The batch panel is placed 16px **above** `ATR_SELL_BROWSER_Y` because it carries its own title
-row; the list inside it lines up with the inventory to the pixel, and both bottom out at −276.
+row; the list inside it lines up with the inventory to the pixel, and both bottom out at −232.
 
 `Atr_SB_Build` computes its tile columns from `Atr_SellBrowser:GetWidth()`, so halving the width
 re-flows the inventory with no further change: 18 tile columns became 8.
 
-**The two buttons ride `Atr_SB_ProfitMargin`, continuing the row that starts with `Scan Inventory`.**
-They are not children of the batch column and are not anchored to it. Two reasons, and the second
-one was a bug:
+**The two buttons hang off `Atr_BP_List`'s bottom-left corner — one action row per column**
+(owner's request, 2026-08-24: *"place them underneath the Inventory window next to each other, so
+they fit tightly under the window (bottom left) … same for Batch Post & Clear"*). They are still
+children of `Atr_Main_Panel` rather than of `Atr_BP_Panel`, so their frame level can be raised clear
+of the headings-bar divider independently of the list, which must stay under it.
 
-- The headings-bar divider is drawn *over* anything sitting at a column's bottom edge, so a button
-  anchored there is buried. `Scan Inventory` already solved that by sitting **on** the divider with
-  its frame level raised by 5; these do the same.
-- They used to be placed at the batch column's own left edge, panel x 298..451 — and `Atr_ListTabs`
-  owns x 361..611, so `Clear` sat squarely on top of `Current` (owner's screenshot, 2026-08-23).
-  Shortening the columns fixed the vertical half of that overlap; moving the buttons fixes the
-  horizontal half.
+Three placements, each fixing the one before, and both earlier bugs have to stay fixed:
 
-The row now reads **Scan Inventory | Profit Margin | Batch Post | Clear** — every action this tab
-has, in one line, ending at panel x ≈ 331 with thirty pixels to spare before the tabs. Each button
-is anchored to the one before it, so the row stays true if any of them is moved or resized. The
-lists themselves deliberately stay at the default frame level, *under* the divider.
+| | Placement | What broke |
+|---|---|---|
+| ≤ 2026-08-23 | batch column's left edge, on the divider (x 298..451) | `Clear` sat on top of `Current` — `Atr_ListTabs` owns x 361..611 |
+| 2026-08-23 | chained onto `Atr_SB_ProfitMargin`, one row of four | cleared the tabs at x ≈ 331, but read as four *inventory* buttons, with nothing under the batch column |
+| 2026-08-24 | under each column, `Atr_SellBrowser` / `Atr_BP_List` BOTTOMLEFT | — |
+
+**What keeps the batch pair off the tabs now is y, not x.** Starting at x 298 it would hit
+`Current` at any y inside the tab band; the columns giving up 18px (above) is the whole reason it is
+safe. `ATR_SELL_BROWSER_H` carries that arithmetic and says so — do not lengthen the columns without
+moving these buttons.
+
+The four buttons were narrowed to a few pixels of padding around their labels so each pair sits well
+inside its column: `Scan Inventory` 85 → **80**, `Profit Margin` 95 → **76** (pair ends at x 136,
+column edge 264), `Batch Post` 90 → **72**, `Clear` 55 → **48** (pair ends at x 424, column edge
+574), with `ATR_SELL_BTN_GAP` = 6 between each pair. The widths clear the running captions too —
+`Cancel (n/n)` on the scan button, `Cancel` on the Go button. `ATR_SELL_BTNROW_Y` = −2 is the drop
+below the column bottom, shared by both rows so they stay level.
+
+The raised frame levels are no longer load-bearing at this y — they are kept because they are what
+stops the divider burying a button if the results block is ever nudged back up. The lists themselves
+deliberately stay at the default frame level, *under* the divider.
 
 Nothing here calls `SetToplevel` or `Raise` (`DRAG-FREEZE.md`).
 

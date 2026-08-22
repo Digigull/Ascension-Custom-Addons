@@ -556,8 +556,8 @@ end
 -- Everything is built here rather than in Auctionator.xml for the reason the
 -- drop zone and the Ignore button already are: this lives beside widgets the
 -- panel's other tabs share, so it has to be created, placed and unplaced per
--- tab.  Nothing below is anchored to a shared widget except the two buttons,
--- which ride Atr_HeadingsBar exactly as Scan Inventory does.
+-- tab.  Nothing below is anchored to a shared widget: the two buttons hang off
+-- this column's own list, as Scan Inventory hangs off the inventory.
 -----------------------------------------------------------------------------
 
 -- A label above a column.  Its own frame so it can be shown and hidden with
@@ -635,13 +635,17 @@ function Atr_BP_Ensure ()
 	hint:SetPoint ("TOPLEFT", 8, -8);
 	hint:SetText ("Right-click items on the left\nto add them here.");
 
-	-- The two buttons ride Atr_HeadingsBar, level with Scan Inventory, for the
-	-- reason that button was moved there: the divider is drawn over anything
-	-- sitting at the inventory's bottom edge.  Children of the PANEL rather than
-	-- of Atr_BP_Panel so they can be raised above that divider independently of
-	-- the list, which must stay under it.
+	-- The two buttons sit under this column, at its bottom-left corner -- the
+	-- batch half of the action row Atr_BP_Layout places.  Children of the PANEL
+	-- rather than of Atr_BP_Panel so their frame level can be raised clear of
+	-- the headings-bar divider independently of the list, which must stay under
+	-- it.
+	--
+	-- Narrow: a few pixels of padding around the label, and around "Cancel",
+	-- which is the only other caption the Go button wears.  A pair wider than
+	-- this used to run out from under the column it belongs to.
 	local go = CreateFrame ("Button", "Atr_BP_Go", Atr_Main_Panel, "UIPanelButtonTemplate");
-	go:SetWidth (90);
+	go:SetWidth (72);
 	go:SetHeight (18);
 	go:SetText ("Batch Post");
 	local gofs = go:GetFontString();
@@ -650,7 +654,7 @@ function Atr_BP_Ensure ()
 	go:Hide();
 
 	local clr = CreateFrame ("Button", "Atr_BP_ClearButton", Atr_Main_Panel, "UIPanelButtonTemplate");
-	clr:SetWidth (55);
+	clr:SetWidth (48);
 	clr:SetHeight (18);
 	clr:SetText ("Clear");
 	local clrfs = clr:GetFontString();
@@ -718,47 +722,41 @@ function Atr_BP_Layout (x, y, w, h, labelX, labelY, labelW)
 		Atr_BP_InvLabel:Show();
 	end
 
-	-- THE BUTTONS RIDE Atr_SB_ProfitMargin, not the batch column above them.
+	-- THE BUTTONS RIDE THIS COLUMN, and nothing else.
 	--
-	-- They used to be placed at the batch column's own left edge, which put them
-	-- at panel x 298..451 -- and Atr_ListTabs, the Current/History/Ledger strip,
-	-- owns x 361..611.  Clear sat squarely on top of Current (owner's screenshot,
-	-- 2026-08-23).  Shortening the columns fixed the vertical half of that
-	-- overlap; this fixes the horizontal half.
+	-- Two earlier placements are worth keeping in view, because each fixed a
+	-- real overlap and the current one has to keep both fixed:
 	--
-	-- Continuing the existing action row rather than starting a second one is
-	-- the point: the row reads Scan Inventory | Profit Margin | Batch Post |
-	-- Clear, which is every action this tab has, in one line, ending at panel
-	-- x ~331 with thirty pixels to spare before the tabs.  Anchored to the
-	-- button before them so it stays true if that one moves or is resized.
-	local anchorTo = Atr_SB_ProfitMargin or Atr_SellBrowser_Scan;
-
-	if (anchorTo and Atr_BP_Go) then
+	--   * At the batch column's left edge on the headings bar (panel x 298..451)
+	--     Clear sat squarely on top of the Current tab -- Atr_ListTabs owns
+	--     x 361..611 (owner's screenshot, 2026-08-23).
+	--   * Chained onto Profit Margin instead, the four buttons made one long row
+	--     that started under the inventory and ended at panel x ~331 -- clear of
+	--     the tabs, but reading as four inventory buttons, with nothing under the
+	--     batch column at all (owner's screenshot, 2026-08-24).
+	--
+	-- So: anchored to Atr_BP_List's bottom-left corner, tight under the list, and
+	-- narrow enough that the pair ends at panel x ~424, well inside this column
+	-- (298..574).  x is no longer what keeps it off the tabs, though -- y is:
+	-- the columns were shortened 168 -> 150 so both rows sit at -234..-252, six
+	-- pixels above the tab strip, which is the only reason a pair starting at
+	-- x 298 is safe at all.  ATR_SELL_BROWSER_H carries that arithmetic; do not
+	-- lengthen the columns without moving these.
+	--
+	-- The frame level is raised for the same reason Scan Inventory's is: not
+	-- load-bearing at this y, but it is what stops the divider burying a button
+	-- if the results block is ever nudged back up.
+	if (Atr_BP_List and Atr_BP_Go) then
 		local lvl = ((Atr_HeadingsBar and Atr_HeadingsBar:GetFrameLevel()) or 5) + 5;
+		local gap = ATR_SELL_BTN_GAP or 6;
 
 		Atr_BP_Go:ClearAllPoints();
-		Atr_BP_Go:SetPoint ("LEFT", anchorTo, "RIGHT", 12, 0);
+		Atr_BP_Go:SetPoint ("TOPLEFT", Atr_BP_List, "BOTTOMLEFT", 0, ATR_SELL_BTNROW_Y or -2);
 		Atr_BP_Go:SetFrameLevel (lvl);
 		Atr_BP_Go:Show();
 
 		Atr_BP_ClearButton:ClearAllPoints();
-		Atr_BP_ClearButton:SetPoint ("LEFT", Atr_BP_Go, "RIGHT", 8, 0);
-		Atr_BP_ClearButton:SetFrameLevel (lvl);
-		Atr_BP_ClearButton:Show();
-
-	elseif (Atr_HeadingsBar and Atr_BP_Go) then
-		-- The inventory's own buttons are not up (nothing else builds them, so
-		-- this is the never case) -- fall back to the old headings-bar offset
-		-- rather than leaving two buttons unanchored in the corner.
-		local lvl = (Atr_HeadingsBar:GetFrameLevel() or 5) + 5;
-
-		Atr_BP_Go:ClearAllPoints();
-		Atr_BP_Go:SetPoint ("TOPLEFT", Atr_HeadingsBar, "TOPLEFT", x - 6, ATR_SELL_SCANBTN_Y or 2);
-		Atr_BP_Go:SetFrameLevel (lvl);
-		Atr_BP_Go:Show();
-
-		Atr_BP_ClearButton:ClearAllPoints();
-		Atr_BP_ClearButton:SetPoint ("LEFT", Atr_BP_Go, "RIGHT", 8, 0);
+		Atr_BP_ClearButton:SetPoint ("LEFT", Atr_BP_Go, "RIGHT", gap, 0);
 		Atr_BP_ClearButton:SetFrameLevel (lvl);
 		Atr_BP_ClearButton:Show();
 	end
