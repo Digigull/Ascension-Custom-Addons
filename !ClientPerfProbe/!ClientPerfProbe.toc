@@ -2,7 +2,7 @@
 ## Title: Client Perf Probe
 ## Notes: Measure and mitigate client stutter — per-addon, per-event frame-time spike attribution (fixes gated on captures)
 ## Author: Ascension-Stutter
-## Version: 0.2.1
+## Version: 0.2.2
 ## SavedVariables: ClientPerfProbeDB
 ## X-Category: Development
 ## X-Website: https://github.com/digigull/ascension-stutter

@@ -14,7 +14,7 @@
 local ADDON, ns = ...
 
 local Core = {}
-local VERSION = "0.2.1"
+local VERSION = "0.2.2"
 
 -- defaults (persisted into ClientPerfProbeDB.settings)
 local DEFAULTS = {
@@ -209,6 +209,10 @@ local function buildReportData(includeMatrix)
             since    = probeCost.since,
         },
         blocked   = ns.Events and ns.Events.blockedRanked(ns.Report.MAX_BLOCKED) or nil,
+        -- per-channel chat breakdown (C rows): names WHICH channel the chat firehose
+        -- is in, which the flat R rate row cannot. Read on demand, never per-frame.
+        chat      = ns.Events and ns.Events.chatRanked and
+                    ns.Events.chatRanked(ns.Report.MAX_CHANNELS) or nil,
     }
     -- Are the O rows above a baseline rather than real deltas? The first scan of a
     -- session (or after /cpp clear) only establishes one, so it reports every addon

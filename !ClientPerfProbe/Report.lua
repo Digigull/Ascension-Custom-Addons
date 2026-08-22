@@ -17,6 +17,7 @@
        MemSum : WM|kb=<estTotal>|tbls=<visited>|roots=<n>|cap=<0/1>|shown=<n>
        MemTop : W|r=..|name=<global>|kb=<estKB>|tbls=<tableCount>
        Rate   : R|ev=<name>|n=<count>|ps=<perSec>
+       Chan   : C|r=..|chan=<name>|id=<n>|n=<count>|ps=<perSec>|kbps=<KB/s>|snd=<distinct>[|cap=1][|top=<sender>|topn=<n>][|j=<0/1>]
        Footer : END|lines=<n>
 
      CLASSIFICATION is an explicit, rule-based HEURISTIC suspect tag, never a
@@ -45,6 +46,7 @@ Report.MAX_OFFENDERS = 15
 Report.MAX_EVENTS    = 15
 Report.MAX_LOADADDONS = 20
 Report.MAX_BLOCKED   = 10
+Report.MAX_CHANNELS  = 8     -- per-channel chat rows (the C rate breakdown)
 Report.MAX_MEM       = 12    -- top-N memory globals in the /cpp mem walk
 Report.PAGE_LINES    = 120     -- rows per page before pagination kicks in
 
@@ -479,6 +481,10 @@ Report.GLOSSARY = {
       tech = "IsMouseButtonDown('LeftButton') sampled on the spike frame. Feature-detected (not in the API dump); when absent the field is simply omitted. Drives the Window-drag label when no measured cause owns the frame, and is reported as complementary context (mouse=held) otherwise." },
     -- Not a per-spike field: a report-level row about the MEASUREMENT, so it belongs
     -- with the how-to-read entries rather than in the spike-column list.
+    { group = "How to read this", field = "C",
+      term = "Which channel the chat flood is in",
+      plain = "In a city, chat is usually the single busiest thing your client handles - so when the event list shows chat at the top, these rows say WHICH channel it is, who is loudest in it, and how much of your download it is eating. The last column is the one that matters: j=1 means you joined that channel yourself, j=0 means traffic is arriving from a channel you did NOT join, which means an addon joined it for you. A channel you are in that said nothing still gets a row, because a quiet data channel is exactly the thing worth spotting.",
+      tech = "Per-channel CHAT_MSG_CHANNEL tally from a dedicated narrow frame (arg9 channel base name, arg8 index, arg2 sender, message LENGTH only - text is never stored, the report is pasted in public). kbps= is the summed message bytes as KB/s, so an event rate can be set against the inbound KB/s that GetNetStats reports. j= is tri-state: 1 joined, 0 not joined, absent when GetChannelList is unavailable. Joined channels are matched by ID, not name, because GetChannelList's naming need not match arg9's. A live Ironforge capture showed 109.3 CHAT_MSG_CHANNEL/s - 14,231 in 130 s - accounting for essentially all of 19.2 KB/s inbound; these rows exist to name it." },
     { group = "How to read this", field = "P",
       term = "What the probe costs you",
       plain = "This addon is not free, and this row says exactly what it costs. To answer 'which addon moved memory' it has to walk the whole memory pile, which takes tens of milliseconds on a long session - long enough to feel. So it only does that while this window is open, or once when you ask for a report. last/max are the millisecond cost of that walk, n is how many it has run, and over is how many crossed your spike threshold.",
@@ -817,6 +823,46 @@ function Report.build(data)
         end
     end
 
+    -- CHANNEL BREAKDOWN — which channel the chat firehose is actually coming from.
+    -- The R row above can only say "CHAT_MSG_CHANNEL is the loudest event"; these rows
+    -- say WHICH channel, WHO is loudest in it, and how much of your inbound bandwidth
+    -- it accounts for. That last part is why kbps= is here: 109 events/sec means
+    -- nothing until you can set it against the ~19 KB/s the client reports receiving.
+    --
+    -- j= is the verdict field, and it is TRI-STATE: j=1 you are joined to this channel,
+    -- j=0 you are NOT (something is delivering traffic from a channel you did not join),
+    -- and the field is ABSENT when GetChannelList is unavailable and we have no opinion.
+    -- A joined channel that carried nothing still gets a row at n=0 — a data channel an
+    -- addon joined on your behalf is exactly the thing being hunted, and it can be quiet
+    -- in any one window.
+    --
+    -- No message text, by design: this blob gets pasted in public.
+    if type(data.chat) == "table" then
+        local shown = 0
+        for _, ch in ipairs(data.chat) do
+            if shown >= Report.MAX_CHANNELS then break end
+            shown = shown + 1
+            local row = {
+                "C",
+                "r=" .. shown,
+                "chan=" .. clean(ch.name or "?"),
+                "id=" .. inum(ch.id or 0),
+                "n=" .. inum(ch.count or 0),
+                "ps=" .. f1(ch.perSec or 0),
+                "kbps=" .. f1(ch.kbPerSec or 0),
+                "snd=" .. inum(ch.senders or 0),
+            }
+            if ch.capped then row[#row + 1] = "cap=1" end
+            -- a silent channel has no loudest speaker; omit rather than print "?"
+            if ch.top then
+                row[#row + 1] = "top=" .. clean(ch.top)
+                row[#row + 1] = "topn=" .. inum(ch.topCount or 0)
+            end
+            if ch.joined ~= nil then row[#row + 1] = "j=" .. (ch.joined and "1" or "0") end
+            body[#body + 1] = table.concat(row, SEP)
+        end
+    end
+
     -- paginate: each page is self-describing (own header + footer).
     local perPage = Report.PAGE_LINES
     local npages = math.max(1, math.ceil(#body / perPage))
@@ -1014,6 +1060,26 @@ if _SELFTEST then
     -- absent probe data must not fabricate a row (same rule as net=/str=)
     local noProbe = Report.build({ meta = { version = "1" } })
     assert(not noProbe.text:find("P^int=", 1, true), "no probe data -> no P row")
+
+    -- build: the per-channel chat rows. The tri-state j= is the point of the row, so
+    -- all three states are pinned: joined, NOT joined, and no-opinion.
+    local chatOut = Report.build({ meta = { version = "1" }, chat = {
+        { name = "Trade - City", id = 2, count = 14231, perSec = 109.3,
+          kbPerSec = 18.9, senders = 3, top = "Someone", topCount = 13990, joined = false },
+        { name = "General - Ironforge", id = 1, count = 12, perSec = 0.1,
+          kbPerSec = 0.0, senders = 4, top = "Player", topCount = 5, joined = true },
+        { name = "xtensionxtooltip2", id = 9, count = 0, perSec = 0,
+          kbPerSec = 0, senders = 0, joined = true },
+    } })
+    has(chatOut.text, "C^r=1^chan=Trade - City^id=2^n=14231^ps=109.3^kbps=18.9^snd=3^top=Someone^topn=13990^j=0",
+        "build names the flooding channel, its loudest sender, and that it is unjoined")
+    has(chatOut.text, "C^r=3^chan=xtensionxtooltip2^id=9^n=0", "a silent joined channel still gets a row")
+    assert(not chatOut.text:find("top=?", 1, true), "a silent channel prints no loudest sender")
+
+    -- j= must be ABSENT (not guessed) when GetChannelList gave us nothing
+    local noList = Report.build({ meta = { version = "1" },
+        chat = { { name = "Trade - City", id = 2, count = 9, perSec = 1, senders = 1 } } })
+    assert(not noList.text:find("j=", 1, true), "no channel list -> no joined verdict")
 
     -- suspectLabel: friendly names for the UI (the owner-approved plain-English set)
     eq(Report.suspectLabel("?"), "Unknown (likely the game engine)", "label ?")
