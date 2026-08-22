@@ -384,10 +384,25 @@ function PasslootBiS:Rules_RuleSection_OnScroll(Key)
 		local RuleNum = First + Index - 1
 		if (Index <= Count and Rules[RuleNum]) then
 			LineFrame.RuleNum = RuleNum
+			-- A rule turned OFF is still listed, in grey and marked -- it is skipped
+			-- whole by the roll loop (Core/PassLoot.lua), so a line that reads exactly
+			-- like a live one is a lie about what the addon will do. Off is the
+			-- non-destructive alternative to Remove: flip it from this line's
+			-- right-click menu or the minimap button's (Core/MinimapButton.lua).
+			local Off = Rules[RuleNum].Disabled and true or false
+			local Desc = Rules[RuleNum].Desc or ""
+			if (Off) then
+				Desc = Desc .. " " .. L["RuleList_Off"]
+			end
 			if (Key == "Before") then
-				LineFrame.Text:SetText(string.format("%02d) %s", Index, Rules[RuleNum].Desc))
+				LineFrame.Text:SetText(string.format("%02d) %s", Index, Desc))
 			else
-				LineFrame.Text:SetText(Index .. ") " .. Rules[RuleNum].Desc)
+				LineFrame.Text:SetText(Index .. ") " .. Desc)
+			end
+			if (Off) then
+				LineFrame.Text:SetTextColor(0.45, 0.45, 0.45)
+			else
+				LineFrame.Text:SetTextColor(1, 1, 1) -- ChatFontSmall's own colour
 			end
 			LineFrame.Pass:SetChecked(false)
 			LineFrame.Greed:SetChecked(false)
@@ -859,6 +874,15 @@ PasslootBiS.EasyMenu_RuleListMenu = {
 		["hasArrow"] = true,
 		["menuList"] = {},
 	},
+	-- On / off for this rule, the same flag the minimap button's right-click menu
+	-- sets. It lives here because this is where the Remove button is: turning a rule
+	-- off is what you usually wanted when you reached for Remove, and unlike Remove it
+	-- is reversible. `checked` is filled in when the menu opens (Create_RuleListScrollLine).
+	[3] = {
+		["text"] = L["Rule Enabled"],
+		["isNotRadio"] = true, -- a checkbox, not a radio dot
+		["func"] = function(frame, arg) PasslootBiS:ToggleRuleDisabled(arg) end,
+	},
 }
 
 function PasslootBiS:Create_RuleListScrollLine()
@@ -872,9 +896,12 @@ function PasslootBiS:Create_RuleListScrollLine()
 		self:SetCurrentRule(Frame)
 		if (button == "RightButton" and Frame.RuleNum) then
 			self.EasyMenu_RuleListMenu[1].arg1 = Frame.RuleNum
-			-- self.EasyMenu_RuleListMenu[2].arg1 = Name
-			-- self.EasyMenu_RuleListMenu[3].arg1 = Name
-			-- self.EasyMenu_RuleListMenu[5].arg1 = "Raider"..Name
+			-- The on/off row is built fresh on every open: EasyMenu reads this table as
+			-- it draws, so the tick has to be set from the rule NOW rather than left on
+			-- whatever the last rule right-clicked was.
+			local Rule = self.db.profile.Rules[Frame.RuleNum]
+			self.EasyMenu_RuleListMenu[3].arg1 = Frame.RuleNum
+			self.EasyMenu_RuleListMenu[3].checked = not (Rule and Rule.Disabled)
 			local CurrentProfile = self.db:GetCurrentProfile()
 			local ProfileList = self.db:GetProfiles()
 			self.EasyMenu_RuleListMenu[2].menuList = {}

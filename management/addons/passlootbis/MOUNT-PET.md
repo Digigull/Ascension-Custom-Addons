@@ -50,7 +50,37 @@ at all, and only once, so a rule added after release reaches nobody who already 
 addon — which is the entire population this bug affects. `PasslootBiS:SeedMountPetRule`
 (`Core/PassLoot.lua`) hands the one rule to an existing profile, once, guarded by its own
 `MountPetRuleSeeded` flag and skipped for any profile that already has a rule using the filter.
-Delete the rule and it stays deleted.
+Delete the rule and it stays deleted — see the next section for the way back.
+
+## Getting a deleted starter rule back
+
+Both seeds are one-shot by design, which is right for a rule you meant to be rid of and useless
+for one you deleted by accident: nothing else in the addon could ever hand it back. Two answers,
+added at the owner's request:
+
+- **Turn a rule off instead of removing it.** The `Disabled` flag already existed — the minimap
+  button's right-click menu sets it, and the roll loop skips such a rule whole — but the rules
+  page painted a disabled rule exactly like a live one, so the feature was invisible where it
+  mattered. A disabled rule now shows **greyed and marked `(off)`** in the list, and its own
+  right-click menu carries the same on/off tick, right where the Remove button is. That is the
+  reversible way to silence a rule.
+- **`Restore Starter Rules`** (General options, beside Clean Rules; `RestoreDefaultRules` in
+  `Core/PassLoot.lua`) puts back any starter rule the profile no longer has. It **only ever
+  adds**: a starter rule you still have is left exactly as you have edited it, and your own rules
+  are untouched. It reports in chat which rules it restored, or that none were missing — a button
+  that looks inert is worse than one that asks first.
+
+Two details worth knowing before changing it:
+
+- **Rules are identified by `Desc`**, the same way a BiS list's rules are found. So a starter rule
+  you *renamed* reads as missing and restoring adds a fresh copy beside it. The alternative —
+  identifying a rule by the filter it uses — is worse: plenty of ordinary hand-made rules use a
+  `Usable` or `CanIRoll` filter and would each suppress the restore of a rule that really is gone.
+- **Position is not "append".** Each missing rule goes back *before the first later starter rule
+  the profile still has*, or at the end if there is none. Order is the whole design of that set:
+  `Catch All` matches everything, so anything restored below it would never be reached, and
+  `Mounts & Pets` restored below `Not Usable` would never match either — which would make the
+  button look like it had done nothing.
 
 ## Why a new module and not Type / SubType
 
@@ -114,3 +144,9 @@ The whole feature is reasoned and checked offline; nothing here has seen a live 
 one input that cannot be read from this repo is the subclass string the live client returns for
 item classes 15/5 and 15/2 — hence two signals and a debug line naming which one fired, rather
 than a guess dressed as a fact.
+
+The same goes for the two UI additions above: `RestoreDefaultRules`' ordering is pinned by
+reasoning and a throwaway run over the real function (every case: each rule missing on its own,
+all three missing, user rules interleaved, a second press adding nothing, the selection following
+its rule across the insert), but the button, the greyed line and the right-click tick have only
+been read, not clicked. `TESTING.md` §I steps 32–33 are the click-through.

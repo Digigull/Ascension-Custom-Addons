@@ -259,7 +259,16 @@ Background — why this ships, and why the subclass string alone is not enough �
 31. Rules page: the `Mounts & Pets` rule should be present in the **Before Advisor**
     section, above `Not Usable`. On an install that predates it, it is added once
     (`SeedMountPetRule`) — delete it and it must **not** come back after `/reload`.
-32. The live check, when a mount finally drops: with the trace on, the report should
+32. **Deleting the rule, and getting it back.** Select `Mounts & Pets`, press Remove,
+    then General options → **Restore Starter Rules**. It must come back **above**
+    `Not Usable` (restored below it, it would never match) and chat must name what it
+    restored. Press it again with nothing missing: it must say so rather than
+    silently doing nothing, and must **not** add a second copy.
+33. **Off, rather than deleted.** Right-click the rule in the list → untick
+    `Rule Enabled`. The line must go **grey and read `(off)`**, and the same tick must
+    show its state when you reopen the menu — the minimap button's right-click menu
+    sets the same flag, so the two must agree in both directions.
+34. The live check, when a mount finally drops: with the trace on, the report should
     show `rule=Mounts & Pets method=need beforeAdvisor=true`. A mount you already own
     should instead fall through to a greed rule — that half depends on `Learned Item`
     seeing "Already known" on an Ascension collection item, which is the part of this

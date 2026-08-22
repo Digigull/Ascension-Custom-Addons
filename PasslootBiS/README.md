@@ -59,8 +59,18 @@ A profile with no rules of its own is given three, tried top-down:
 Rule 1 exists because the other two auto-greed a chase item, and a mount you have not
 got the riding skill for is *unusable*, so it was rule 2 that claimed it — the addon
 greeded the drop of the run because you could not ride it yet. Need is the pick-up
-group convention, so that is the default. It is an ordinary rule: edit it, or delete
-it and it stays deleted. Installs that predate it are given it once.
+group convention, so that is the default. It is an ordinary rule: edit it, reorder
+it, or get rid of it. Installs that predate it are given it once.
+
+Two ways to get rid of one, and the reversible one is worth knowing about:
+
+- **Turn it off** — right-click the rule in the list (or the minimap button) and
+  untick it. The rule stays where it is, greyed and marked `(off)`, and is skipped
+  entirely while rolling.
+- **Remove it** — gone for good, since the starter rules are only ever handed out
+  once. **Restore Starter Rules** on the General options page puts back any that are
+  missing, each at its original place in the order; it only ever adds, and never
+  touches a rule you still have or one you made yourself.
 
 ### Roll advisor API
 
