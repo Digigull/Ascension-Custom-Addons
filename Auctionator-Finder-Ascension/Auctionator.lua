@@ -210,7 +210,50 @@ local gHistoryItemList = {};
 -- SELL Browser (inventory) state
 local gSB_Visible = false;        -- whether the inventory browser is visible on the SELL tab
 local gSB_Inited  = false;        -- first-time initialization when SELL tab is shown
-local gSB_Widgets = {};           -- dynamic frames created under Atr_SB_Content
+-- WIDGET POOLS FOR THE INVENTORY BROWSER.  A frame created on 3.3.5 can never
+-- be destroyed: Hide() and SetParent(nil) only orphan it, and it stays in the
+-- client's frame list until you log out.  Atr_SB_Build used to create a fresh
+-- Button, two Textures and a FontString per bag item -- plus a Frame and a
+-- FontString per category heading -- on EVERY rebuild, and throw the previous
+-- set away.  With a hundred sellable items that is ~400 objects per rebuild,
+-- and the browser rebuilds on every bag change, every tile click and at both
+-- ends of every scan and batch run.  A long session at the auction house leaks
+-- thousands of them, which is CPU on the frame that pays for it and heap that
+-- never comes back (the owner's probe reported a 123 MB Lua heap and an 80 ms
+-- rebuild frame allocating 311 KB, 2026-08-23).
+--
+-- So the widgets are recycled instead.  The pools only ever grow to the largest
+-- bag load seen this session; a rebuild hands out the first N and hides the
+-- rest.  AuctionatorBatchPost.lua's gRowPool is the same bargain for the
+-- column next door and carries the same one-line reason.
+local gSB_TilePool = {};          -- every item tile ever created, in order
+local gSB_TileUsed = 0;           -- how many of them the current build claimed
+local gSB_HeadPool = {};          -- category / method heading rows
+local gSB_HeadUsed = 0;
+
+-- THE BAG-SLOT VERDICT MEMO.  Atr_IsItemSellableOnAH renders a whole tooltip
+-- per non-grey bag item (Atr_Sell_ItemIsBound's SetBagItem scan), and the
+-- browser asks it about every slot on every rebuild -- so a hundred tooltips
+-- get built each time the browser repaints, and it repaints far more often
+-- than the bags change.  That is the bulk of the rebuild's CPU and it buys
+-- nothing: a slot's verdict cannot change while its contents do not.
+--
+-- Keyed "bag:slot", and a hit still has to match the LINK that was in the slot
+-- when the verdict was taken, so a swap the memo did not hear about cannot be
+-- answered from it.  Cleared outright on BAG_UPDATE (Atr_SB_BagUpdate, before
+-- its own throttle and its own combat/loading bail-outs, so a skipped rebuild
+-- never leaves a stale verdict behind) -- which is also what covers the one
+-- case the link check cannot: an item that BINDS in place, same slot, same
+-- link, which fires a bag update of its own.
+--
+-- This is a cache of the slot scan's ANSWER, not of the slot scan.
+-- Atr_Sell_ItemIsBound itself stays uncached, which is the rule its own block
+-- comment lays down and the bug history behind it.
+local gSB_SlotCache = {};
+
+function Atr_SB_FlushSlotCache()
+    gSB_SlotCache = {};
+end
 local gSB_Scanning   = false;     -- a "Scan Prices" run over the inventory is in progress
 local gSB_ScanNames  = {};        -- distinct item names queued for the current scan
 local gSB_ScanIdx    = 0;         -- index into gSB_ScanNames of the name being scanned
@@ -1870,18 +1913,22 @@ end
 
 -- SELL BROWSER (Inventory) -----------------------------------------
 
+-- Hand every pooled widget back.  Nothing is destroyed and nothing is
+-- reparented -- see the pool comment at the top of the file for why that is the
+-- point -- so this is a Hide loop and two counters.
 local function Atr_SB_Clear()
-    for _, w in ipairs(gSB_Widgets) do
-        if (w and w.Hide) then w:Hide(); end
-        if (w and w.SetParent) then w:SetParent(nil); end
+    local i;
+    for i = 1, gSB_TileUsed do
+        local w = gSB_TilePool[i];
+        if (w) then w:Hide(); end
     end
-    gSB_Widgets = {};
+    for i = 1, gSB_HeadUsed do
+        local w = gSB_HeadPool[i];
+        if (w) then w:Hide(); end
+    end
+    gSB_TileUsed = 0;
+    gSB_HeadUsed = 0;
     if (Atr_SB_Content) then Atr_SB_Content:SetHeight(10); end
-end
-
-local function Atr_SB_AddWidget(w)
-    table.insert(gSB_Widgets, w);
-    return w;
 end
 
 -----------------------------------------
@@ -2265,6 +2312,27 @@ function Atr_Sell_SearchLabel ()
 	return label;
 end
 
+-- Is one of the panes holding the shared auction query channel?
+--
+-- The mirror of Atr_Finder_ChannelBusy, for the drivers that live on the other
+-- side of it: Scan Inventory and a Batch Post run both take the channel for
+-- minutes, and starting one on top of a sell search in flight is the same
+-- two-drivers-one-channel race from the other end.  Both ask this and refuse
+-- rather than racing; a pane search is over in a second or two, so "wait a
+-- moment" is an honest thing to tell the player.
+--
+-- Both panes are asked, not just the sell one: the pane the SELL tab uses is
+-- gSellPane, but a search left running by the Buy tab holds the same channel.
+function Atr_Sell_QueryBusy ()
+
+    local function busy (p)
+        return (p ~= nil and p.GetProcessingState ~= nil
+                and p:GetProcessingState() ~= KM_NULL_STATE);
+    end
+
+    return busy (gSellPane) or busy (gCurrentPane);
+end
+
 -----------------------------------------
 -- /atrbound -- what the tooltips ACTUALLY say, in a window you can copy out of
 --
@@ -2421,7 +2489,19 @@ function Atr_IsItemSellableOnAH(bag, slot, link, quality)
     -- never needs it.  Grey is not "bound", it is "not worth showing".
     if (Atr_Sell_ItemIsGrey(link, quality)) then return false, false; end
 
+    -- Answered already for this exact item in this exact slot?  See the memo's
+    -- comment at the top of the file: the expensive half is a tooltip render
+    -- per item, and the browser asks far more often than the bags change.
+    local key = bag .. ":" .. slot;
+    local memo = gSB_SlotCache[key];
+    if (memo and memo.link == link) then
+        return (not memo.bound), memo.bound;
+    end
+
     local bound = Atr_Sell_ItemIsBound(bag, slot, link);
+
+    gSB_SlotCache[key] = { link = link, bound = bound };
+
     return (not bound), bound;
 end
 
@@ -2503,6 +2583,75 @@ local function Atr_SB_Item_OnClick(self, button)
         if (wasIgnored) then Atr_SellIgnore_Refresh(); end
     end
 end
+
+-- One item tile: the button, its icon, the "already queued" wash and the stack
+-- count.  Created once and then reused; the caller resets every field it cares
+-- about, because a recycled tile still carries the last item's.
+local function Atr_SB_AcquireTile(size)
+
+    gSB_TileUsed = gSB_TileUsed + 1;
+
+    local btn = gSB_TilePool[gSB_TileUsed];
+
+    if (btn == nil) then
+        btn = CreateFrame("Button", nil, Atr_SB_Content);
+        btn:RegisterForClicks("LeftButtonUp", "RightButtonUp");
+        btn:SetScript("OnClick", Atr_SB_Item_OnClick);
+        btn:SetScript("OnEnter", Atr_SB_Item_OnEnter);
+        btn:SetScript("OnLeave", Atr_SB_Item_OnLeave);
+
+        btn.icon = btn:CreateTexture(nil, "BACKGROUND");
+        btn.icon:SetAllPoints(btn);
+
+        -- The green "in the batch" wash.  Made once and hidden rather than
+        -- created on demand: a texture is as unfreeable as a frame.
+        btn.wash = btn:CreateTexture(nil, "OVERLAY");
+        btn.wash:SetAllPoints(btn);
+        btn.wash:SetTexture(0.1, 0.9, 0.1, 0.30);
+
+        btn.count = btn:CreateFontString(nil, "OVERLAY", "NumberFontNormal");
+        btn.count:SetPoint("BOTTOMRIGHT", -2, 2);
+
+        gSB_TilePool[gSB_TileUsed] = btn;
+    end
+
+    btn:SetWidth(size);
+    btn:SetHeight(size);
+    btn:ClearAllPoints();
+    btn:Show();
+
+    return btn;
+end
+
+-- One heading row.  Both the category headings and the per-method sub-headings
+-- come from here; they differ only in font, indent and height, all of which are
+-- set per use.
+local function Atr_SB_AcquireHeading(font, w, h)
+
+    gSB_HeadUsed = gSB_HeadUsed + 1;
+
+    local f = gSB_HeadPool[gSB_HeadUsed];
+
+    if (f == nil) then
+        f = CreateFrame("Frame", nil, Atr_SB_Content);
+        f.text = f:CreateFontString(nil, "OVERLAY", "GameFontNormal");
+        f.text:SetPoint("LEFT", 0, 0);
+        gSB_HeadPool[gSB_HeadUsed] = f;
+    end
+
+    if (f.font ~= font) then
+        f.font = font;
+        f.text:SetFontObject(font);
+    end
+
+    f:SetWidth(w);
+    f:SetHeight(h);
+    f:ClearAllPoints();
+    f:Show();
+
+    return f;
+end
+
 
 function Atr_SB_Build()
     if (not Atr_SB_Content) then return; end
@@ -2639,24 +2788,18 @@ function Atr_SB_Build()
     local contentHeight = 10;
 
     local function addHeader(text)
-        local f = Atr_SB_AddWidget(CreateFrame("Frame", nil, Atr_SB_Content));
-        f:SetSize(160, 16);
+        local f = Atr_SB_AcquireHeading(GameFontNormal, 160, 16);
         f:SetPoint("TOPLEFT", 6, y);
-        local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormal");
-        fs:SetPoint("LEFT", 0, 0);
-        fs:SetText(text);
+        f.text:SetText(text);
         y = y - 18;
         contentHeight = contentHeight + 18;
         return f;
     end
 
     local function addSubHeader(text)
-        local f = Atr_SB_AddWidget(CreateFrame("Frame", nil, Atr_SB_Content));
-        f:SetSize(150, 14);
+        local f = Atr_SB_AcquireHeading(GameFontNormalSmall, 150, 14);
         f:SetPoint("TOPLEFT", 14, y);
-        local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall");
-        fs:SetPoint("LEFT", 0, 0);
-        fs:SetText(text);
+        f.text:SetText(text);
         y = y - 15;
         contentHeight = contentHeight + 15;
         return f;
@@ -2675,39 +2818,36 @@ function Atr_SB_Build()
         for _, it in ipairs(items) do
             if (col == 0) then rowStartY = y; end
 
-            local btn = Atr_SB_AddWidget(CreateFrame("Button", nil, Atr_SB_Content));
-            btn:SetSize(TILE, TILE);
+            -- Recycled, so EVERY field a previous item set has to be set again
+            -- here -- an unset one is the last item's, not a default.
+            local btn = Atr_SB_AcquireTile(TILE);
             btn:SetPoint("TOPLEFT", BASEX + col*(TILE+GAP), rowStartY);
             btn.bagID     = it.bag;
             btn.slotID    = it.slot;
             btn.itemLink  = it.link;
             btn.ignored   = it.ignored;
             btn.bound     = it.bound;
-            btn:RegisterForClicks("LeftButtonUp", "RightButtonUp");
-            btn:SetScript("OnClick", Atr_SB_Item_OnClick);
-            btn:SetScript("OnEnter", Atr_SB_Item_OnEnter);
-            btn:SetScript("OnLeave", Atr_SB_Item_OnLeave);
 
-            local tex = btn:CreateTexture(nil, "BACKGROUND");
-            tex:SetAllPoints(btn);
-            tex:SetTexture(it.icon);
+            btn.icon:SetTexture(it.icon);
 
             -- Dim the bucket that cannot be sold, so "at the bottom" is not the
             -- only thing separating it from the categories that can.
-            if (it.bound) then tex:SetVertexColor(0.45, 0.45, 0.45); end
+            if (it.bound) then
+                btn.icon:SetVertexColor(0.45, 0.45, 0.45);
+            else
+                btn.icon:SetVertexColor(1, 1, 1);
+            end
 
             -- Already in the batch: a green wash over the tile.  Without it a
             -- right-click that queued something and one that did nothing look
             -- identical, and the queue is off in the other column.
             if (Atr_BP_Contains and Atr_BP_Contains(it.bag, it.slot)) then
-                local q = btn:CreateTexture(nil, "OVERLAY");
-                q:SetAllPoints(btn);
-                q:SetTexture(0.1, 0.9, 0.1, 0.30);
+                btn.wash:Show();
+            else
+                btn.wash:Hide();
             end
 
-            local cnt = btn:CreateFontString(nil, "OVERLAY", "NumberFontNormal");
-            cnt:SetPoint("BOTTOMRIGHT", -2, 2);
-            if (it.count and it.count > 1) then cnt:SetText(it.count); else cnt:SetText(""); end
+            if (it.count and it.count > 1) then btn.count:SetText(it.count); else btn.count:SetText(""); end
 
             col = col + 1;
             if (col >= COLS) then
@@ -2812,6 +2952,14 @@ function Atr_SB_OnTabShown()
 end
 
 function Atr_SB_BagUpdate()
+    -- FIRST, and above every bail-out below it: the bag-slot verdict memo is
+    -- keyed by slot, and this event is the only notice we get that a slot's
+    -- contents (or its bind state) moved.  Dropping it here rather than inside
+    -- the rebuild means a bag change that is deferred -- in combat, on a taxi,
+    -- inside the once-a-second throttle -- still invalidates what the memo
+    -- says about it.
+    Atr_SB_FlushSlotCache();
+
     -- Skip or defer during combat/flight/loading screens or immediate post-zone period
     if (UnitAffectingCombat("player") or (UnitOnTaxi and UnitOnTaxi("player")) or GetPlayerMapPosition("player") == nil
         or gAtr_SuspendForLoading or (gAtr_SuspendUntilTime and time() < gAtr_SuspendUntilTime)) then
@@ -2904,6 +3052,15 @@ function Atr_SB_ScanPrices()
     end
 
     if (not Atr_Finder_StartNameScan) then return; end   -- Finder not loaded
+
+    -- One driver at a time on the query channel (Atr_Finder_ChannelBusy).  A
+    -- sell search is seconds; this run is minutes, so it is the one that waits.
+    if (Atr_Sell_QueryBusy and Atr_Sell_QueryBusy()) then
+        if (DEFAULT_CHAT_FRAME) then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00Auctionator:|r the sell pane is still searching -- try again in a moment.");
+        end
+        return;
+    end
 
     -- collect the DISTINCT sellable item names currently in bags (same filter
     -- the browser build uses, so the scan set matches what is shown)
@@ -5052,6 +5209,18 @@ function Atr_Idle(self, elapsed)
 
 	if (gCurrentPane and gCurrentPane.tooltipvisible) then
 		Atr_ShowRecTooltip();
+	end
+
+	-- A pane search that stood down for the shared query channel (see
+	-- AtrPane:DoSearch) gets started here the moment the channel is free.  Above
+	-- every bail-out below, because a pane waiting for the channel is idle by
+	-- every test those bail-outs make -- its processing_state is still
+	-- KM_NULL_STATE -- so a check further down would never be reached.
+	if (gCurrentPane and gCurrentPane.ResumePendingSearch) then
+		gCurrentPane:ResumePendingSearch();
+	end
+	if (gSellPane and gSellPane ~= gCurrentPane and gSellPane.ResumePendingSearch) then
+		gSellPane:ResumePendingSearch();
 	end
 
 
