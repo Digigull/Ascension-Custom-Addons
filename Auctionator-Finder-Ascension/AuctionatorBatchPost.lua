@@ -19,27 +19,59 @@
 -- apply/reset pair, and nothing here may leave a widget showing when the player
 -- switches to Buy.  Atr_BP_Layout / Atr_BP_Unplace are that contract.
 --
--- WHAT "AUTOMATIC SET PRICE DISCOUNT" MEANS HERE.  Exactly what
--- Atr_UpdateRecommendation computes for a single item, minus the part that
--- needs a live scan:
+-- IT SCANS THE LIVE PRICE FOR EACH ITEM AS IT GOES (owner's request,
+-- 2026-08-23: "let's have it scan the current prices at the batch post time.
+-- Maybe have a progress bar, prices can change quickly").
 --
---     buyout per item  = Atr_CalcUndercutPrice (Atr_GetAuctionPrice (name, vkey))
+-- The first build priced off the stored scan database, which made the batch as
+-- stale as your last Scan Inventory and -- because that database records a
+-- price with no owner attached -- able to undercut your own standing listing.
+-- Both are gone.  The run now interleaves:
+--
+--     for each queued item, in order:
+--        if this NAME has not been scanned yet this run:
+--             Atr_Finder_StartNameScan (name)      <- one auction query
+--             ... wait for it, then read F.GetResults() ...
+--             price EVERY queued entry of that name off those live listings
+--        post it
+--
+-- Interleaved rather than scan-everything-then-post-everything, and that is the
+-- whole point of the request: the same total wall clock either way, but this
+-- way the gap between an item's price being read and that item being listed is
+-- one tick instead of the length of the entire scan phase.
+--
+-- Scanning by NAME and pricing every entry of that name from the one result set
+-- is what keeps a queue of five Saronite Ore stacks to one query rather than
+-- five.
+--
+-- WHAT IT TAKES FROM THE RESULTS.  The lowest per-unit buyout among listings
+-- that (a) carry this item's variant key and (b) are NOT yours -- `rec.owner`
+-- is on every scan record, which is the thing the price database throws away.
+-- So the batch no longer undercuts itself, and that limitation is retired.
+-- Then the ordinary arithmetic, which is Atr_UpdateRecommendation's line for
+-- line:
+--
+--     buyout per item  = Atr_CalcUndercutPrice (lowest live listing)
 --     start  per item  = Atr_CalcStartPrice (buyout)        -- STARTING_DISCOUNT
---     stack prices     = the two above x the stack size
---     duration         = whatever Atr_Duration currently holds
+--     stack prices     = the two above x the stack size in the sell slot
+--     duration         = whatever Atr_Duration holds, read once at run start
 --
--- The one honest difference from posting by hand: the sell box runs a fresh
--- query for the item and prices against the listings that come back, so it
--- knows which of them are YOURS and does not undercut those.  A batch of thirty
--- items cannot afford thirty queries, so this prices off the scan database
--- (Atr_GetAuctionPrice's own cascade) instead, which is name/variant keyed and
--- carries no owner.  Consequence, stated rather than hidden: batch-posting the
--- same item twice without a scan in between undercuts your own listing by one
--- step.  Scan Inventory, sitting under the left column, is the fix.
+-- THREE THINGS THE SCAN CAN COME BACK WITH, and they are not the same:
 --
--- An item with no known price is NOT guessed at -- it stays in the queue,
--- greyed, and the run skips it.  Posting at a made-up price is worse than not
--- posting.
+--   * listings that are not yours  -> undercut the lowest.  The normal case.
+--   * NOTHING listed at all        -> there is nothing to undercut, so it falls
+--                                     back to Atr_GetAuctionPrice's cascade and
+--                                     deliberately does NOT trim it.  Shaving a
+--                                     step off a price nobody is competing with
+--                                     is pure loss.
+--   * the scan could not be run    -> (Finder absent, engine busy, timed out)
+--                                     the stored cascade price, undercut, i.e.
+--                                     exactly what the first build did.  Said
+--                                     out loud in chat, never silently.
+--
+-- An item with no price from ANY of those is NOT guessed at -- it stays in the
+-- queue, greyed, and the run skips it.  Posting at a made-up price is worse
+-- than not posting.
 --
 -- THE DRIVER IS A TICKER, NOT AN EVENT CHAIN.  StartAuction is asynchronous and
 -- the client's completion signal differs between a one-stack post and a
@@ -47,8 +79,16 @@
 -- one thing that is true in both cases is that the item LEAVES the auction sell
 -- slot when the auction goes up, so the driver posts one item, then polls
 -- GetAuctionSellItemInfo until the slot is empty before moving on.  That is
--- also what makes it safe to interrupt: nothing is queued server-side.
+-- also what makes it safe to interrupt: nothing is queued server-side, and the
+-- one scan that might be in flight is cancelled with it.
+--
+-- A run is therefore minutes rather than seconds -- a query per distinct name,
+-- throttled -- which is why there is a progress bar over the column and why it
+-- keeps moving DURING a scan rather than only between items.
 -----------------------------------------------------------------------------
+
+local addonName, addonTable = ...;
+local F = addonTable and addonTable.Finder;		-- the scan engine's shared surface
 
 local ATR_BP_ROW_H		= 18;		-- one queue row
 local ATR_BP_TICK		= 0.25;		-- driver step interval, seconds
@@ -59,6 +99,17 @@ local ATR_BP_WAIT		= 6;		-- seconds to wait for one auction to leave
 -- part of a minute standing at the auctioneer; past that this stops being a
 -- convenience and starts being a macro nobody asked for.
 local ATR_BP_MAX		= 60;
+
+-- Give one name scan this long before deciding the engine is not going to call
+-- back.  The Finder has its own paging retries and runaway guard, so this is a
+-- backstop against the callback being dropped entirely (a cancel from somewhere
+-- that does not route through Atr_BP_ScanCancelled), not a per-query budget.
+local ATR_BP_SCAN_TIMEOUT	= 45;
+
+-- Only used to make the progress bar creep while a scan is out.  A typical name
+-- scan is one query plus the throttle; this is the shape of the fill, not a
+-- deadline, and it is capped short of the next item's slice either way.
+local ATR_BP_SCAN_EXPECT	= 8;
 
 -- The queue.  Session-only, deliberately: a batch you did not post is a
 -- decision about right now, and a /reload dropping it is the correct amount of
@@ -105,12 +156,88 @@ local function Atr_BP_FitText (fs, text, maxW)
 	end
 end
 
--- The per-ITEM buyout this queue would post at, or nil when nothing is known.
+-----------------------------------------------------------------------------
+-- The progress bar
+--
+-- It takes the title's row for the length of a run.  A run is minutes, not
+-- seconds -- one throttled auction query per distinct name -- so a column that
+-- just sat there would read as a hang.
+-----------------------------------------------------------------------------
+
+local function Atr_BP_ShowProgress (fraction, text)
+
+	if (not Atr_BP_Progress) then return; end
+
+	local f = tonumber (fraction) or 0;
+	if (f < 0) then f = 0; elseif (f > 1) then f = 1; end
+
+	Atr_BP_Progress:SetValue (f);
+	if (Atr_BP_Progress.text) then Atr_BP_Progress.text:SetText (text or ""); end
+	Atr_BP_Progress:Show();
+
+	if (Atr_BP_Title) then Atr_BP_Title:Hide(); end
+end
+
+local function Atr_BP_HideProgress ()
+	if (Atr_BP_Progress) then Atr_BP_Progress:Hide(); end
+	if (Atr_BP_Title)    then Atr_BP_Title:Show();    end
+end
+
+-- Repaint the bar from the run's own counters.
+--
+-- Each queue entry is one unit of work.  An entry whose name is out for a scan
+-- fills up to 0.8 of its own unit as the query runs -- the fill is driven off
+-- the tick counter, not off a real estimate, and it is capped short of the
+-- item's full slice so it can never run ahead of what has happened.  Without
+-- it the bar would freeze for seconds at exactly the moments the run is doing
+-- the most work, which is the failure this bar exists to prevent.
+local function Atr_BP_PaintProgress ()
+
+	if (gRun == nil) then return; end
+
+	local total = gRun.total;
+	if (total == nil or total < 1) then total = 1; end
+
+	local dealt = gRun.posted + gRun.skipped + gRun.failed;
+	local done  = dealt;
+	local label;
+
+	if (gRun.scanName) then
+		local part = (gRun.scanWait or 0) / ATR_BP_SCAN_EXPECT;
+		if (part > 0.95) then part = 0.95; end
+		done  = done + 0.8 * part;
+		label = string.format ("Scanning %s  (%d/%d)", gRun.scanName,
+							   math.min (dealt + 1, total), total);
+	else
+		label = string.format ("Posting  %d/%d", math.min (dealt + 1, total), total);
+	end
+
+	Atr_BP_ShowProgress (done / total, label);
+end
+
+-- Atr_CalcUndercutPrice bottoms out at 0 for a 1c item, and a zero buyout is
+-- not a free listing -- it is an auction with no buyout at all.
+local function Atr_BP_Undercut (price)
+	local p = math.floor (tonumber (price) or 0);
+	if (p <= 0) then return nil; end
+	p = math.floor (tonumber (Atr_CalcUndercutPrice and Atr_CalcUndercutPrice (p) or p) or 0);
+	if (p < 1) then p = 1; end
+	return p;
+end
+
+-- The STORED per-item buyout: what the price database and its fallbacks think
+-- this is worth, undercut.  This is the run's fallback now, not its source --
+-- see Atr_BP_LiveUnit for what a run actually prices off.
+--
 -- Variant-keyed for the same reason Atr_SB_BestMethod is (BACKLOG item 4, the
 -- read half): a name-only read answers the ATR_PV_ANY slot, which only a full
 -- scan writes, so the price a Sell or Buy search just found would be invisible
 -- here.
-function Atr_BP_UnitPrice (link, name)
+--
+-- `raw` skips the undercut.  Its one caller is the scanned-and-empty case: with
+-- no competing listing there is nothing to undercut, and trimming a step off a
+-- price nobody is bidding against is pure loss.
+function Atr_BP_UnitPrice (link, name, raw)
 
 	if (link == nil) then return nil; end
 	if (name == nil) then name = GetItemInfo (link); end
@@ -120,15 +247,83 @@ function Atr_BP_UnitPrice (link, name)
 	local ah   = tonumber (Atr_GetAuctionPrice (name, vkey)) or 0;
 
 	if (ah <= 0) then return nil; end
+	if (raw) then return math.floor (ah); end
 
-	local buyout = Atr_CalcUndercutPrice and Atr_CalcUndercutPrice (ah) or ah;
-	buyout = math.floor (tonumber (buyout) or 0);
+	return Atr_BP_Undercut (ah);
+end
 
-	-- Atr_CalcUndercutPrice bottoms out at 0 for a 1c item, and a zero buyout
-	-- is not a free listing, it is an auction with no buyout at all.
-	if (buyout < 1) then buyout = 1; end
+-- Read the just-finished name scan and answer, for ONE queued link: the lowest
+-- per-unit buyout among listings of that item's variant that are not yours.
+-- nil means the scan found no such listing -- which is a real answer ("nobody
+-- is selling this"), not a failure, and the caller treats it as one.
+--
+-- **`rec.owner` is the whole reason this exists.** It is on every scan record
+-- and the price database throws it away, so a batch priced off the database
+-- would undercut its own standing listing every time you ran it twice.  Here
+-- your own rows are simply dropped before the minimum is taken.
+--
+-- A listing whose owner has not arrived from the server yet (`owner` nil) is
+-- treated as somebody else's.  That errs toward seeing competition that might
+-- be your own, which costs one undercut step; the other way round would mean
+-- ignoring real competition and listing above the market.
+--
+-- Global rather than local ONLY so batch-price-smoke.lua can drive it. Same-name
+-- variants have escaped this addon three times (BACKLOG items 12, 15, 16) and
+-- this function does variant matching AND owner filtering over a result order
+-- nobody controls -- which is exactly the shape sell-variant-smoke.lua exists
+-- for.  Keep it global.
+function Atr_BP_LiveUnit (link, name)
 
-	return buyout;
+	if (F == nil or F.GetResults == nil) then return nil; end
+
+	local res = F.GetResults();
+	if (type (res) ~= "table") then return nil; end
+
+	local want = (Atr_VariantKey) and Atr_VariantKey (link) or nil;
+	local me   = UnitName and UnitName ("player") or nil;
+	local low  = nil;
+
+	for i = 1, #res do
+		local rec = res[i];
+		if (rec and rec.name == name and (me == nil or rec.owner ~= me)) then
+
+			-- Same-name variants are genuinely different items on this server
+			-- (BACKLOG item 12 part 2).  Price against this one's own variant,
+			-- and only fall back to name-matching when a key cannot be read.
+			local key = (Atr_VariantKey and rec.link) and Atr_VariantKey (rec.link) or nil;
+
+			if (want == nil or key == nil or key == want) then
+				local cnt = tonumber (rec.count) or 1;
+				if (cnt < 1) then cnt = 1; end
+				local bo = tonumber (rec.buyoutPrice) or 0;
+				if (bo > 0) then
+					local unit = math.floor (bo / cnt);
+					if (unit > 0 and (low == nil or unit < low)) then low = unit; end
+				end
+			end
+		end
+	end
+
+	return low;
+end
+
+-- The per-item buyout an entry will actually post at, given what the run knows
+-- about it so far.  Three cases, in the order the header lists them.
+function Atr_BP_EffectiveUnit (entry)
+
+	if (entry == nil) then return nil; end
+
+	if (entry.scanned) then
+		if (entry.liveUnit) then
+			return Atr_BP_Undercut (entry.liveUnit);		-- undercut the market
+		end
+		-- Scanned and nothing is listed: nothing to undercut.
+		return Atr_BP_UnitPrice (entry.link, entry.name, true);
+	end
+
+	-- Not scanned (yet, or at all): the stored cascade, undercut, which is what
+	-- the pre-scan build did for everything.
+	return Atr_BP_UnitPrice (entry.link, entry.name);
 end
 
 -- The duration the SELL tab is currently set to.  Falls back to the saved
@@ -359,6 +554,28 @@ function Atr_BP_Ensure ()
 	title:SetPoint ("BOTTOMLEFT", list, "TOPLEFT", 2, 3);
 	title:SetText ("Batch Post");
 
+	-- The progress bar takes the title's row while a run is going, so it costs
+	-- no layout: a run has nothing to say that the title was saying.  A run is
+	-- minutes long -- one throttled auction query per distinct name -- and the
+	-- bar is the only thing on screen that says the addon is still working.
+	local bar = CreateFrame ("StatusBar", "Atr_BP_Progress", p);
+	bar:SetStatusBarTexture ("Interface\\TargetingFrame\\UI-StatusBar");
+	bar:SetStatusBarColor (0.20, 0.55, 0.25);
+	bar:SetMinMaxValues (0, 1);
+	bar:SetValue (0);
+
+	bar.bg = bar:CreateTexture (nil, "BACKGROUND");
+	bar.bg:SetAllPoints (bar);
+	bar.bg:SetTexture (0, 0, 0, 0.55);
+
+	-- No SetWidth on this, ever: a 3.3.5 FontString wraps the moment one is set
+	-- and nothing clips the result.  Left unsized it measures its own text,
+	-- which is also what lets a CENTER anchor centre it with no arithmetic.
+	bar.text = bar:CreateFontString ("Atr_BP_ProgressText", "OVERLAY", "GameFontHighlightSmall");
+	bar.text:SetPoint ("CENTER", bar, "CENTER", 0, 0);
+
+	bar:Hide();
+
 	-- The empty-queue caption.  A blank panel beside a full inventory reads as
 	-- broken; this says what the right half is FOR, which is the one thing a
 	-- new column has to do.
@@ -426,6 +643,13 @@ function Atr_BP_Layout (x, y, w, h, labelX, labelY, labelW)
 
 	Atr_BP_Content:SetWidth (w - 24);
 
+	if (Atr_BP_Progress) then
+		Atr_BP_Progress:ClearAllPoints();
+		Atr_BP_Progress:SetPoint ("TOPLEFT", p, "TOPLEFT", 1, -1);
+		Atr_BP_Progress:SetWidth  (w - 26);
+		Atr_BP_Progress:SetHeight (13);
+	end
+
 	if (Atr_BP_InvLabel) then
 		Atr_BP_InvLabel:ClearAllPoints();
 		Atr_BP_InvLabel:SetPoint ("BOTTOMLEFT", Atr_Main_Panel, "TOPLEFT", labelX, labelY);
@@ -460,6 +684,7 @@ end
 -- showing once the player is on another tab.
 function Atr_BP_Unplace ()
 	if (gRun) then Atr_BP_Cancel (true); end
+	if (Atr_BP_Progress)	then Atr_BP_Progress:Hide();	end
 	if (Atr_BP_Panel)		then Atr_BP_Panel:Hide();		end
 	if (Atr_BP_Go)			then Atr_BP_Go:Hide();			end
 	if (Atr_BP_ClearButton)	then Atr_BP_ClearButton:Hide();	end
@@ -533,7 +758,7 @@ function Atr_BP_Build ()
 	for i, e in ipairs (gQueue) do
 		local r = Atr_BP_RowEnsure (i);
 		if (r) then
-			local unit  = Atr_BP_UnitPrice (e.link, e.name);
+			local unit  = Atr_BP_EffectiveUnit (e);
 			local stack = unit and (unit * (e.count or 1)) or nil;
 
 			r.qIndex   = i;
@@ -584,6 +809,8 @@ function Atr_BP_Build ()
 		if (#gQueue == 0) then Atr_BP_Hint:Show(); else Atr_BP_Hint:Hide(); end
 	end
 
+	-- The title text is kept current even while the progress bar covers it, so
+	-- it is right the instant the run ends and the bar goes away.
 	if (Atr_BP_Title) then
 		if (#gQueue == 0) then
 			Atr_BP_Title:SetText ("Batch Post");
@@ -641,6 +868,14 @@ function Atr_BP_Cancel (quiet)
 
 	if (Atr_BP_Ticker) then Atr_BP_Ticker:Hide(); end
 	if (ClearCursor) then ClearCursor(); end
+	Atr_BP_HideProgress();
+
+	-- A name scan may still be out.  gRun is already nil above, so the engine's
+	-- cancel path calling back into Atr_BP_ScanCancelled short-circuits there
+	-- rather than recursing into here.
+	if (r.scanName and Atr_Finder_CancelSearch) then
+		pcall (Atr_Finder_CancelSearch, false);
+	end
 
 	-- A quiet cancel is a tab switch or a Clear: the caller is already tearing
 	-- the column down or repainting it, and calling Atr_SB_Build from inside
@@ -661,6 +896,7 @@ local function Atr_BP_Finish ()
 	gRun = nil;
 
 	if (Atr_BP_Ticker) then Atr_BP_Ticker:Hide(); end
+	Atr_BP_HideProgress();
 
 	if (r) then
 		local parts = string.format ("%d posted", r.posted);
@@ -673,11 +909,78 @@ local function Atr_BP_Finish ()
 	if (Atr_SB_Build) then Atr_SB_Build(); end
 end
 
+-----------------------------------------------------------------------------
+-- The scan phase
+-----------------------------------------------------------------------------
+
+-- The engine called back.  Price EVERY queued entry of this name off the
+-- listings it just brought in -- one query serves all of that item's stacks,
+-- which is the reason the run scans by name rather than by queue entry.
+local function Atr_BP_ScanFinished (name)
+
+	if (gRun == nil or gRun.scanName ~= name) then return; end	-- stale callback
+
+	gRun.scanned[name] = true;
+	gRun.scanName = nil;
+	gRun.scanWait = 0;
+
+	for _, e in ipairs (gQueue) do
+		if (e.name == name) then
+			e.liveUnit = Atr_BP_LiveUnit (e.link, name);	-- nil = nothing listed
+			e.scanned  = true;
+		end
+	end
+
+	-- Repaint: the column's prices and total are what the run is about to post
+	-- at, and they have just changed under the player.
+	Atr_BP_Build();
+	Atr_BP_PaintProgress();
+end
+
+-- Send one name to the scan engine.  Returns false when it could not be sent,
+-- which the caller treats as "price this one from the database" rather than as
+-- a failure -- posting at a stale price beats not posting.
+local function Atr_BP_StartScan (name)
+
+	if (type (Atr_Finder_StartNameScan) ~= "function") then return false; end
+	if (F == nil or F.GetState == nil or F.GetState() ~= F.State_NULL) then return false; end
+
+	-- The callback closes over the name so a scan that finishes after the run
+	-- moved on (a cancel, a timeout) is recognised as stale and dropped.
+	local ok = Atr_Finder_StartNameScan (name, function ()
+		Atr_BP_ScanFinished (name);
+	end);
+
+	if (not ok) then return false; end
+
+	gRun.scanName = name;
+	gRun.scanWait = 0;
+	Atr_BP_PaintProgress();
+
+	return true;
+end
+
+-- Called by Atr_Finder_CancelSearch, the same way that path already tells the
+-- Sell tab's Scan Inventory driver.  Our per-name callback rides gFdr_OnFinish,
+-- which a cancel clears, so without this a batch waiting on a scan would sit
+-- there until its own timeout.
+function Atr_BP_ScanCancelled ()
+
+	if (gRun == nil or gRun.scanName == nil) then return; end
+
+	Atr_BP_Msg ("the price scan was cancelled -- batch stopped.");
+	Atr_BP_Cancel (true);
+	Atr_BP_Build();
+end
+
 -- Put one bag slot into the auction sell slot and start its auction.
 -- Returns "posted", "skipped", "failed" or "nomoney".
 local function Atr_BP_PostOne (entry, duration)
 
-	local unit = Atr_BP_UnitPrice (entry.link, entry.name);
+	-- Whatever the scan phase learned about this entry, or the stored price if
+	-- it learned nothing.  Atr_BP_EffectiveUnit is the single place those three
+	-- cases are decided; nothing here re-decides them.
+	local unit = Atr_BP_EffectiveUnit (entry);
 	if (unit == nil) then return "skipped"; end
 
 	-- Anything already on the cursor would be swapped INTO the bag slot we are
@@ -747,8 +1050,9 @@ local function Atr_BP_PostOne (entry, duration)
 	return "posted";
 end
 
--- One step of the driver.  Either it is waiting for the auction it started to
--- clear the sell slot, or it is starting the next one.
+-- One step of the driver.  At any tick it is doing exactly one of three things:
+-- waiting for a name scan to come back, waiting for the auction it started to
+-- clear the sell slot, or starting the next item.
 function Atr_BP_Step ()
 
 	if (not gRun) then
@@ -757,11 +1061,32 @@ function Atr_BP_Step ()
 	end
 
 	-- Anything that takes the auction house or the SELL tab away takes the run
-	-- with it.  There is nothing queued server-side, so stopping is free.
+	-- with it.  There is nothing queued server-side, so stopping is free, and
+	-- Atr_BP_Cancel kills the scan that may be in flight.
 	if (not AuctionFrame or not AuctionFrame:IsShown()
 		or (Atr_IsModeCreateAuction and not Atr_IsModeCreateAuction())) then
 		Atr_BP_Cancel();
 		return;
+	end
+
+	-- Waiting on a name scan.  This is the long half of a run -- a query plus
+	-- the engine's throttle -- so the bar is repainted every tick through it.
+	if (gRun.scanName) then
+
+		gRun.scanWait = gRun.scanWait + ATR_BP_TICK;
+		Atr_BP_PaintProgress();
+
+		if (gRun.scanWait < ATR_BP_SCAN_TIMEOUT) then return; end
+
+		-- The engine never called back.  Almost certainly a cancel from a path
+		-- that does not route through Atr_BP_ScanCancelled -- but whatever the
+		-- cause, a run must not hang on it.  Fall through to the stored price.
+		Atr_BP_Msg ("the price scan for " .. tostring (gRun.scanName)
+					.. " did not finish -- using the stored price for it.");
+		gRun.scanned[gRun.scanName] = true;
+		gRun.scanName = nil;
+		gRun.scanWait = 0;
+		if (Atr_Finder_CancelSearch) then pcall (Atr_Finder_CancelSearch, false); end
 	end
 
 	-- Waiting on the post we started last step.  The item leaving the sell slot
@@ -794,6 +1119,7 @@ function Atr_BP_Step ()
 	-- has to be re-pointed before the next entry's slot is read.
 	Atr_BP_Resolve();
 	Atr_BP_Build();
+	Atr_BP_PaintProgress();
 
 	-- One tick, one AUCTION -- but a queue entry that never reaches the server
 	-- (nothing known about its price, or the slot refused to load) costs no
@@ -821,6 +1147,25 @@ function Atr_BP_Step ()
 			return;
 		end
 
+		-- SCAN FIRST (owner's request, 2026-08-23).  One query per distinct
+		-- NAME, taken out immediately before the first entry of that name is
+		-- posted rather than in a phase of its own -- which is the whole point:
+		-- the gap between reading a price and listing at it is one tick.
+		--
+		-- Note the entry is deliberately NOT marked done here.  The scan
+		-- returns, the next tick picks this same entry again, and by then
+		-- gRun.scanned says the price is fresh.
+		if (not gRun.noScan and not gRun.scanned[entry.name]) then
+			if (Atr_BP_StartScan (entry.name)) then return; end
+
+			-- Could not be sent -- something else owns the query channel.  Say
+			-- so once and finish the run on stored prices rather than stopping:
+			-- a stale price beats an unlisted item.
+			gRun.noScan = true;
+			gRun.scanned[entry.name] = true;
+			Atr_BP_Msg ("could not start a price scan -- the rest of this batch uses stored prices.");
+		end
+
 		gRun.done[entry] = true;
 
 		local result = Atr_BP_PostOne (entry, gRun.duration);
@@ -828,7 +1173,7 @@ function Atr_BP_Step ()
 		if (result == "posted") then
 			gRun.pending = entry;
 			gRun.wait    = 0;
-			Atr_BP_SetGoButton (string.format ("Cancel (%d)", gRun.posted + 1), true);
+			Atr_BP_PaintProgress();
 			return;
 
 		elseif (result == "nomoney") then
@@ -869,6 +1214,24 @@ function Atr_BP_GoClicked ()
 		return;
 	end
 
+	-- The run wants the query channel for one scan per distinct name, and it is
+	-- shared.  Refuse rather than silently downgrading the whole batch to stored
+	-- prices: the player asked for live ones and can free the channel in a click.
+	local canScan = (type (Atr_Finder_StartNameScan) == "function")
+					and F ~= nil and F.GetState ~= nil;
+
+	if (canScan and F.GetState() ~= F.State_NULL) then
+		Atr_BP_Msg ("a Finder scan is running -- finish or cancel it first.");
+		return;
+	end
+	if (Atr_SB_ScanRunning and Atr_SB_ScanRunning()) then
+		Atr_BP_Msg ("Scan Inventory is running -- finish or cancel it first.");
+		return;
+	end
+	if (not canScan) then
+		Atr_BP_Msg ("the Finder scan engine is not loaded -- posting at stored prices.");
+	end
+
 	-- An item left sitting in the sell box would be swapped out by the first
 	-- post and land back in the bags mid-run -- which is the one moment the
 	-- queue is being re-pointed at bag slots.  Put it away before starting.
@@ -878,19 +1241,33 @@ function Atr_BP_GoClicked ()
 		ClearCursor();
 	end
 
+	-- Whatever a previous run learned is stale by definition -- that is the
+	-- reason this run is scanning at all.
+	for _, e in ipairs (gQueue) do
+		e.scanned  = nil;
+		e.liveUnit = nil;
+	end
+
 	gRun = {
 		posted	= 0,
 		skipped	= 0,
 		failed	= 0,
 		wait	= 0,
-		done	= {},		-- entries this run has already tried
-		keep	= {},		-- entries to leave in the queue afterwards
+		total	= #gQueue,		-- fixed at the start: the bar's denominator
+		done	= {},			-- entries this run has already tried
+		keep	= {},			-- entries to leave in the queue afterwards
+		scanned	= {},			-- item names this run has already scanned
+		scanName = nil,			-- the name currently out for a scan
+		scanWait = 0,			-- ticks x ATR_BP_TICK spent waiting on it
+		noScan	= not canScan,
 		duration = Atr_BP_Duration(),
 	};
 
-	Atr_BP_SetGoButton ("Cancel", true);
+	Atr_BP_Ensure();		-- before the paint: the bar is one of its children
 
-	Atr_BP_Ensure();
+	Atr_BP_SetGoButton ("Cancel", true);
+	Atr_BP_PaintProgress();
+
 	if (Atr_BP_Ticker) then
 		Atr_BP_Ticker.elapsed = 0;
 		Atr_BP_Ticker:Show();

@@ -59,9 +59,11 @@ a per-addon doc; link it from the table below in one line rather than summarisin
   lua5.1 management/addons/auctionator/tools/history-store-smoke.lua # 114 assertions
   lua5.1 management/addons/auctionator/tools/callboard-smoke.lua    # 25 assertions
   lua5.1 management/addons/auctionator/tools/price-variant-smoke.lua # 20 assertions
+  lua5.1 management/addons/auctionator/tools/batch-price-smoke.lua  # 25 assertions
+  lua5.1 management/addons/auctionator/tools/bound-scan-smoke.lua   # 32 assertions
   ```
 
-  All nine pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
+  All eleven pass as of 2026-08. Non-shipped tooling lives in `management/addons/<addon>/tools/`;
   anything new belongs there, not in an addon folder. Several source files are deliberately
   shaped to be testable this way — helpers kept global, `rawget(_G, "CreateFrame")` guards — so
   **do not break that shape** when editing them. That is a preservation rule, not an

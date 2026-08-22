@@ -1052,3 +1052,108 @@ Two findings worth carrying forward without opening that doc:
 
 `luac5.1 -p` clean; XML parses; all nine offline suites still pass. **Not verified in game** — the
 four things worth looking at first are listed at the end of `BATCH-POST.md`.
+
+---
+
+## 13. Batch Post should scan the live price at post time — DONE
+
+**Asked (owner, 2026-08-23, after the first in-game session on item 12):** *"Let's have it scan the
+current prices at the batch post time. Maybe have a progress bar, prices can change quickly."*
+
+**Built 2026-08-23.** Written up in `management/addons/auctionator/BATCH-POST.md` §3; item 12's
+entry above still describes the column itself.
+
+The three decisions worth having here rather than in the doc:
+
+- **Interleaved, not two phases.** One `Atr_Finder_StartNameScan` per distinct NAME, taken out
+  immediately before the first entry of that name is posted. Scan-everything-then-post-everything
+  costs identical wall clock but leaves the first item listing at a price read minutes earlier —
+  which is the staleness the request is about. Interleaved, the gap is one 0.25 s tick.
+- **It reads `F.GetResults()` raw, not the price database.** Scan records carry `rec.owner` and the
+  database throws it away, so the batch can now drop *your own* listings before taking the minimum.
+  That retires the limitation item 12 shipped with and documented — batch-posting the same item
+  twice no longer walks your own price down. It also means the live price does not depend on the
+  Finder's "Prices" option being on, which only governs whether the scan is *stored*.
+- **Scanned-and-nothing-listed is not the same as could-not-scan.** With no competing listing there
+  is nothing to undercut, so that case posts at the stored cascade price *without* the trim; a
+  failed scan posts at the same price *with* it, i.e. item 12's behaviour, and says so in chat.
+  "Only your own listed" lands in the first case, so a re-run matches your price instead of
+  undercutting it. `Atr_BP_EffectiveUnit` is the one place all three are decided.
+
+A run is now minutes, so the column's title row becomes a progress bar for the duration; an item
+out for a scan fills up to 0.8 of its own slice off the tick counter, so the bar keeps moving
+through the slow half instead of freezing exactly when the run is busiest.
+
+`Atr_Finder_CancelSearch` gained a third notify — `Atr_BP_ScanCancelled`, beside the one it already
+sends `Atr_SB_ScanCancel` — because the per-name callback rides `gFdr_OnFinish`, which a cancel
+clears. A 45s per-scan timeout backs that up for any path routing through neither hook.
+
+New suite `management/addons/auctionator/tools/batch-price-smoke.lua`, 25 assertions, passed first
+run: per-unit division, lowest-wins in every result order, own-listing exclusion, unknown-owner
+handling, same-name variant separation, and `Atr_BP_EffectiveUnit`'s three cases. Justified by
+precedent rather than by the house default — variant matching has escaped this addon three times
+(items 12, 15, 16) and this does variant matching *and* owner filtering over an order nobody
+controls.
+
+`luac5.1 -p` clean; XML parses; all ten suites pass. **Not verified in game** — the five things
+worth looking at first are at the end of `BATCH-POST.md`, and the first of them is whether the
+scan→post→scan chain advances at all, which is the one thing offline work cannot check.
+
+---
+
+## 14. BoP and Realmbound items still reach the selling categories — DONE
+
+**Asked (owner, 2026-08-23):** *"Also some items have BOP and Realmbound status that should also go
+to the bottom with soulbound items"*, with `db.ascension.gg` links to items 22523 and 134985.
+
+**Built 2026-08-23.** Write-up: `management/addons/auctionator/BATCH-POST.md` §4b–4c; item 12's
+entry covers the bucket itself.
+
+**The two links answered it without needing the client**, which is worth recording because it is
+the cheapest diagnostic route this repo has for a custom server:
+
+| item | its tooltip line | why it leaked |
+|---|---|---|
+| 22523 "Insignia of the Dawn" | `Binds when picked up` | see the two structural fixes below |
+| 134985 "Personal Bank" | `Binds to account` | **nothing here ever checked that global** |
+
+The second is a plain miss — the test knew `ITEM_SOULBOUND`, `ITEM_BIND_ON_PICKUP` and
+`ITEM_BIND_QUEST` only. Added: `ITEM_BIND_TO_ACCOUNT`, `ITEM_ACCOUNTBOUND`, `ITEM_BNETACCOUNTBOUND`,
+plus the literals `Realmbound` / `Realm Bound`, which are Ascension's own and have **no global in
+3.3.5 at all**. Matching is case-insensitive.
+
+Two structural fixes came with it, either of which can hide a status the list already knows:
+
+- **Both tooltip columns are read now.** The right-hand column of a two-column tooltip is the
+  cheapest place for a custom server to bolt a status on, and a column never read leaks silently.
+- **The scan starts at line 2.** Line 1 is the item NAME, and an item *called* "Soulbound Keepsake"
+  is not soulbound. That false positive hid a **sellable** item, which is the more expensive
+  direction to be wrong in.
+
+**What is deliberately NOT on the marker list is the whole safety property:** `ITEM_BIND_ON_EQUIP`
+and `ITEM_BIND_ON_USE`. Those are the ordinary state of most gear worth selling, they differ from
+"Binds when picked up" by one word, and anything loose enough to catch them — a bare "contains
+bound" test, say — would empty the browser of exactly what it exists for, silently, and only for
+whoever's bags hold them. Both negatives are asserted in the new suite.
+
+Bucket renamed `Soulbound (n)` -> **`Bound - not sellable (n)`**: it holds four bind kinds now, so
+the header names the predicate rather than one of them. Tile field `soulbound` -> `bound`.
+
+**New: `/atrbound [name filter]`.** An in-game diagnostic, which the house rules make a last resort
+and require a reason for. The reason: a custom server's tooltip strings are not knowable from
+outside its client — two of the markers above came from item pages and one from the owner's own
+wording, and an item whose status line has never been seen leaks without a sound. It dumps every bag
+item's verdict and every tooltip line in both columns, marks the line that matched, and prints the
+marker list underneath, so an item wrongly reading `sellable` shows the line that should have
+matched next to a list that lacks it. **Into the copy/paste box, never chat** — reusing
+`Atr_An_ShowDebugBox` rather than building a second one.
+
+New suite `bound-scan-smoke.lua`, 32 assertions. It loads the **real** `Auctionator.lua`: that file
+runs under bare lua5.1 with only `time` and `date` stubbed, which is worth knowing generally — a
+test of a transcribed marker list would be worth nothing. One assertion failed first run and it was
+the test's own fault (it reused a link the grey cache had already judged; correct behaviour, now
+asserted as such).
+
+`luac5.1 -p` clean; XML parses; all eleven suites pass. **Not verified in game** — and `/atrbound`
+is the first thing to run there, because anything still leaking is a string nobody has seen yet and
+that dump names it.
