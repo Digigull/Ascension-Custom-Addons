@@ -36,15 +36,38 @@ local FT = F and F.FT;
 -- The dialog is reused rather than replaced: Atr_FullScanFrame already has
 -- the item-count readout, the last-scan line, a status line and a Done
 -- button.  Only Atr_FullScanHTML (the explanation blob, 405x300 at 27,-175)
--- is hidden, and the category picker is built in Lua in exactly that space.
+-- is hidden, and the category picker is built in Lua in that space (a little
+-- wider now: the dialog grew to 520 to fit a level range on every row).
 --
--- WHY GEAR IS EXCLUDED, and why it is not merely unticked but absent:
--- gAtr_ScanDB is keyed by item NAME.  On Ascension one name covers many
--- scaled instances at different item levels, so a single stored price would
--- stand in for every variant and be wrong for all but one.  Rule 2 of the
--- price feed already refuses scaled equipment, so including gear would burn
--- an enormous amount of scan time to store almost nothing.  The Finder tab
--- reads each listing's REAL required level and is the right tool for gear.
+-- GEAR IS IN, AS OF 2026-08-22, AND THE OLD REASONING IS WORTH KEEPING.
+--
+-- SUPERSEDED: the Weapon and Armor rows used to be present-but-disabled, on the
+-- grounds that gAtr_ScanDB is keyed by item NAME -- on Ascension one name covers
+-- many scaled instances at different item levels, so a single stored price would
+-- stand in for every variant and be wrong for all but one.  Rule 2 of the price
+-- feed refuses scaled equipment, so a gear sweep burned an enormous amount of
+-- scan time to store almost nothing.  All of that is still true of the NAME-keyed
+-- database, and rule 2 is untouched.
+--
+-- What changed is that gear no longer has to be stored by name.  Two things were
+-- built after that decision:
+--
+--   * AUCTIONATOR_AH_VARIANT, keyed (itemID, ilvl, req) -- the tuple that names
+--     a scale-variant exactly.  It was fed only by the Verify sweep.
+--   * Fdr_HarvestListIlvl, which reads a listing's server tooltip WHILE ITS PAGE
+--     IS STILL CURRENT.  That is the only cheap moment a scaled listing's true
+--     item level exists, and it is exactly the moment a category sweep is in.
+--
+-- So a gear sweep now files every scaled listing it sees under its own variant
+-- key, and the tooltip on the item in your bags reads the price back from the
+-- same tuple.  The name-keyed DB still gets the UNSCALED gear (rule 2 skips the
+-- rest), which is correct and was always safe.
+--
+-- IT IS STILL THE LONGEST SWEEP THERE IS, which is why the two gear rows are the
+-- only ones that start UNTICKED and why every row now carries a level range: the
+-- server filters on required level, and on this realm that is the very axis the
+-- scale-variants differ along.  "Armor 70-80" is both a short scan and a
+-- meaningful slice; "Armor, everything" is neither.
 --
 -- MEMORY: categories run ONE AT A TIME and the price feed flushes after
 -- each.  A single Trade Goods sweep on this realm is ~37k records; holding
@@ -70,19 +93,25 @@ local gFS_Index		= 0;
 local gFS_Added		= 0;
 local gFS_Updated	= 0;
 local gFS_Skipped	= 0;
+local gFS_Variants	= 0;		-- scale-variant gear prices filed by this run
 local gFS_Bazaar	= false;
 local gFS_Built		= false;
 local gFS_Cancelling = false;	-- re-entrancy guard: the cancel path is mutual
 
 
 
+-- Gear is no longer refused; it is merely EXPENSIVE.  This predicate now says
+-- three things, all of them "treat this class as the big one": start unticked,
+-- read each listing's server tooltip during the sweep (spec.harvestTrue), and
+-- say so in the picker.
 function Fdr_FS_IsGearClass (ci)
 	return (ci == FS_WEAPON_CLASS or ci == FS_ARMOR_CLASS);
 end
 
 
--- Every auction class, gear flagged rather than dropped: the picker shows the
--- gear rows greyed so the exclusion is visible and explained, not silent.
+-- Every auction class.  The gear flag no longer means "refused" -- it means
+-- "long, and off unless you ask for it"; the picker labels those two rows
+-- rather than greying them.
 function Fdr_FS_Classes ()
 
 	local names;
@@ -135,24 +164,94 @@ function Fdr_FS_Store ()
 end
 
 
--- Gear is refused HERE as well as in the UI, so a hand-edited SavedVariables
--- file cannot smuggle Armor into a run.
+-- Default ON for everything except the two gear classes: those are the longest
+-- sweeps on the auction house and nobody should get one by pressing a button
+-- they have not looked at.  An explicit false is still false, so a stored
+-- choice always wins over the default.
 function Fdr_FS_IsSelected (ci)
 
-	if (Fdr_FS_IsGearClass (ci)) then return false; end
-
 	local v = Fdr_FS_Store()[tostring (ci)];
-	if (v == nil) then return true; end			-- default: every non-gear class
+	if (v == nil) then return not Fdr_FS_IsGearClass (ci); end
 	return v and true or false;
 end
 
 
 function Fdr_FS_SetSelected (ci, on)
 
-	if (Fdr_FS_IsGearClass (ci)) then return false; end
-
 	Fdr_FS_Store()[tostring (ci)] = on and true or false;
 	return true;
+end
+
+
+-- ---------------------------------------------------------------------------
+-- per-category level range (blank = the whole class)
+-- ---------------------------------------------------------------------------
+--
+-- AUCTIONATOR_FINDER_SETTINGS.fullScanLevels[tostring(ci)] = { min = n, max = n }
+--
+-- Stored under the CHECKBOX's class index and applied to every class that
+-- checkbox scans, so the merged Miscellaneous row's range covers Projectile and
+-- Quiver too -- one visible control, one meaning.
+--
+-- Absent or 0 means "no bound on that end", which is what QueryAuctionItems
+-- itself wants: it takes nil for an open end and treats 0 as a real level.
+function Fdr_FS_LevelStore ()
+
+	if (AUCTIONATOR_FINDER_SETTINGS == nil) then AUCTIONATOR_FINDER_SETTINGS = {}; end
+	if (type (AUCTIONATOR_FINDER_SETTINGS.fullScanLevels) ~= "table") then
+		AUCTIONATOR_FINDER_SETTINGS.fullScanLevels = {};
+	end
+	return AUCTIONATOR_FINDER_SETTINGS.fullScanLevels;
+end
+
+
+-- Returns min, max -- either or both nil.  A range typed backwards (80-70) is
+-- returned the right way round rather than refused: the server answers a
+-- backwards range with nothing at all, which reads in game as "the scan is
+-- broken" and is a miserable thing to debug from a status line.
+function Fdr_FS_Levels (ci)
+
+	local e = Fdr_FS_LevelStore()[tostring (ci)];
+	if (type (e) ~= "table") then return nil, nil; end
+
+	local lo = tonumber (e.min or 0) or 0;
+	local hi = tonumber (e.max or 0) or 0;
+
+	if (lo <= 0) then lo = nil; end
+	if (hi <= 0) then hi = nil; end
+
+	if (lo and hi and lo > hi) then return hi, lo; end
+
+	return lo, hi;
+end
+
+
+function Fdr_FS_SetLevels (ci, lo, hi)
+
+	lo = tonumber (lo or 0) or 0;
+	hi = tonumber (hi or 0) or 0;
+
+	local store = Fdr_FS_LevelStore ();
+
+	if (lo <= 0 and hi <= 0) then
+		store[tostring (ci)] = nil;			-- blank is the default, so store nothing
+		return true;
+	end
+
+	store[tostring (ci)] = { min = (lo > 0) and lo or nil,
+							 max = (hi > 0) and hi or nil };
+	return true;
+end
+
+
+-- "60-70", "60+", "up to 70", or nil when the whole class is being scanned.
+-- Used in the queue label, so a run's status line says which slice it is on.
+function Fdr_FS_LevelText (lo, hi)
+
+	if (lo and hi) then return lo.."-"..hi; end
+	if (lo) then return lo.."+"; end
+	if (hi) then return FT("up to ")..hi; end
+	return nil;
 end
 
 
@@ -167,10 +266,19 @@ function Fdr_FS_SelectedClasses ()
 
 	local i, j;
 	for i = 1, #all do
-		if (not all[i].gear and Fdr_FS_IsSelected (all[i].ci)) then
+		if (Fdr_FS_IsSelected (all[i].ci)) then
+
+			local lo, hi = Fdr_FS_Levels (all[i].ci);
 			local m = all[i].members or { all[i].ci };
+
 			for j = 1, #m do
-				out[#out + 1] = { ci = m[j], name = names[m[j]] or all[i].name };
+				out[#out + 1] = { ci		= m[j],
+								  name		= names[m[j]] or all[i].name,
+								  minLevel	= lo,
+								  maxLevel	= hi,
+								  -- the tooltip read is per LISTING and only pays
+								  -- for itself where the listings are gear
+								  harvest	= Fdr_FS_IsGearClass (m[j]) };
 			end
 		end
 	end
@@ -234,13 +342,24 @@ function Fdr_FS_Cancel (quiet)
 		local a, u = Atr_Finder_CancelSearch (false);
 		gFS_Added	= gFS_Added + (a or 0);		-- bank the partial flush
 		gFS_Updated	= gFS_Updated + (u or 0);
+
+		-- and the gear prices that flush filed.  Read AFTER the cancel, which is
+		-- what recorded them; the two calls are mutually guarded by
+		-- gFS_Cancelling, so this cannot count the same rows twice.
+		if (Atr_Finder_VariantsStored) then
+			gFS_Variants = gFS_Variants + Atr_Finder_VariantsStored ();
+		end
 	end
 	if (Atr_Bz_CancelCategoryScan) then Atr_Bz_CancelCategoryScan (true); end
 
 	gFS_Cancelling = false;
 
 	if (was and not quiet) then
-		Fdr_FS_Status (string.format (FT("Stopped - %d new, %d updated"), gFS_Added, gFS_Updated));
+		local stopped = string.format (FT("Stopped - %d new, %d updated"), gFS_Added, gFS_Updated);
+		if (gFS_Variants > 0) then
+			stopped = stopped..string.format (FT(", %d gear prices by version"), gFS_Variants);
+		end
+		Fdr_FS_Status (stopped);
 	end
 
 	Fdr_FS_UpdateButtons ();
@@ -270,9 +389,19 @@ function Fdr_FS_Done ()
 
 	Fdr_FS_StartBazaar ();
 
-	Fdr_FS_Status (string.format (FT("Done: %d %s, %d new, %d updated"),
+	local done = string.format (FT("Done: %d %s, %d new, %d updated"),
 					n, (n == 1) and FT("category") or FT("categories"),
-					gFS_Added, gFS_Updated));
+					gFS_Added, gFS_Updated);
+
+	-- The gear half of the run is invisible in the two counters above: those
+	-- are the name-keyed database, which refuses scaled gear by design, so a
+	-- Weapons-and-Armor run would otherwise report "0 new, 0 updated" having
+	-- filed several thousand prices.
+	if (gFS_Variants > 0) then
+		done = done..string.format (FT(", %d gear prices by version"), gFS_Variants);
+	end
+
+	Fdr_FS_Status (done);
 
 	Fdr_FS_UpdateButtons ();
 	if (Atr_UpdateFullScanFrame) then Atr_UpdateFullScanFrame (); end
@@ -291,15 +420,28 @@ function Fdr_FS_Next ()
 		return;
 	end
 
-	Fdr_FS_Status (string.format (FT("Scanning %s (%d of %d)"),
-					entry.name or "?", gFS_Index, #gFS_Queue));
+	local label = entry.name or "?";
+	local range = Fdr_FS_LevelText (entry.minLevel, entry.maxLevel);
+	if (range) then label = label.." ("..range..")"; end
 
-	local spec = { class = entry.ci, subclass = nil, autoAccept = true, label = entry.name };
+	Fdr_FS_Status (string.format (FT("Scanning %s (%d of %d)"),
+					label, gFS_Index, #gFS_Queue));
+
+	-- minLevel/maxLevel are read by Fdr_SendQuery in place of the Finder tab's
+	-- own boxes; harvestTrue turns on the per-listing tooltip read in
+	-- Fdr_HarvestPage.  Both are inert on a spec that does not set them, so
+	-- nothing else that builds a spec queue is affected.
+	local spec = { class = entry.ci, subclass = nil, autoAccept = true, label = label,
+				   minLevel = entry.minLevel, maxLevel = entry.maxLevel,
+				   harvestTrue = entry.harvest };
 
 	local started = Atr_Finder_StartQueueScan ({ spec }, function (added, updated, skipped)
 			gFS_Added	= gFS_Added + (added or 0);
 			gFS_Updated	= gFS_Updated + (updated or 0);
 			gFS_Skipped	= gFS_Skipped + (skipped or 0);
+			if (Atr_Finder_VariantsStored) then
+				gFS_Variants = gFS_Variants + Atr_Finder_VariantsStored ();
+			end
 			if (Atr_UpdateFullScanFrame) then Atr_UpdateFullScanFrame (); end
 			Fdr_FS_Next ();
 		end);
@@ -317,6 +459,63 @@ end
 -- the picker, built into the space Atr_FullScanHTML used to occupy
 -- ---------------------------------------------------------------------------
 
+-- Column geometry.  Two columns of rows, each row: checkbox + label on the
+-- left, a min/max pair on the right at a FIXED x so the boxes line up down the
+-- column however long the labels are.  The dialog was widened to 520 to pay for
+-- the pair (Auctionator.xml); at 405 the boxes sat on top of "Miscellaneous".
+local FS_COL_W		= 232;		-- distance between the two columns
+local FS_ROW_H		= 22;
+local FS_LVL_X		= 132;		-- min box, relative to its column
+local FS_LVL_DASH	= 167;
+local FS_LVL_X2		= 177;		-- max box
+local FS_LVL_W		= 30;
+
+-- One min/max pair.  Both boxes write straight through to Fdr_FS_SetLevels on
+-- every keystroke rather than on focus loss: pressing Start Scanning is a click
+-- elsewhere, and a box that only commits on OnEditFocusLost has a real chance of
+-- being read one keystroke stale by the very button the user pressed next.
+local function Fdr_FS_MakeLevelBox (panel, e, x, y, which)
+
+	local box = CreateFrame ("EditBox", "Atr_FS_Lvl"..which..e.ci, panel, "InputBoxTemplate");
+	box:SetSize (FS_LVL_W, 18);
+	box:SetPoint ("TOPLEFT", x, y);
+	box:SetAutoFocus (false);
+	box:SetNumeric (true);
+	box:SetMaxLetters (3);
+	box:SetJustifyH ("CENTER");
+
+	local lo, hi = Fdr_FS_Levels (e.ci);
+	local cur = (which == "Min") and lo or hi;
+	box:SetText (cur and tostring (cur) or "");
+
+	box:SetScript ("OnTextChanged", function (self)
+			-- read BOTH boxes and write the pair: the store keeps a range, not
+			-- two independent numbers, and a half-written pair is a range
+			-- somebody has to guess the other end of
+			local mn = _G["Atr_FS_LvlMin"..e.ci];
+			local mx = _G["Atr_FS_LvlMax"..e.ci];
+			Fdr_FS_SetLevels (e.ci,
+					mn and mn:GetNumber() or 0,
+					mx and mx:GetNumber() or 0);
+		end);
+
+	box:SetScript ("OnEnterPressed",  function (self) self:ClearFocus(); end);
+	box:SetScript ("OnEscapePressed", function (self) self:ClearFocus(); end);
+
+	if (GameTooltip) then
+		box:SetScript ("OnEnter", function (self)
+				GameTooltip:SetOwner (self, "ANCHOR_TOPLEFT");
+				GameTooltip:SetText (FT("Required level"), 1, 1, 1);
+				GameTooltip:AddLine (FT("Only scan listings inside this required-level range. Leave both blank to scan the whole category. On gear this is the axis the scaled versions of an item differ along, so a range both shortens the scan and picks a real slice of the market."), nil, nil, nil, true);
+				GameTooltip:Show();
+			end);
+		box:SetScript ("OnLeave", function () GameTooltip:Hide(); end);
+	end
+
+	return box;
+end
+
+
 function Fdr_FS_BuildPicker ()
 
 	if (gFS_Built) then return true; end
@@ -324,8 +523,8 @@ function Fdr_FS_BuildPicker ()
 
 	local panel = CreateFrame ("Frame", "Atr_FS_Picker", Atr_FullScanFrame);
 	panel:SetPoint ("TOPLEFT", 27, -175);
-	panel:SetWidth (405);
-	panel:SetHeight (300);
+	panel:SetWidth (465);
+	panel:SetHeight (270);
 
 	local head = panel:CreateFontString ("Atr_FS_PickerHead", "ARTWORK", "GameFontNormal");
 	head:SetPoint ("TOPLEFT", 0, 0);
@@ -338,6 +537,14 @@ function Fdr_FS_BuildPicker ()
 	local perCol = math.ceil (#all / 2);
 	if (perCol < 1) then perCol = 1; end
 
+	-- one "Levels" caption per column, over that column's boxes
+	local c;
+	for c = 0, 1 do
+		local cap = panel:CreateFontString (nil, "ARTWORK", "GameFontNormalSmall");
+		cap:SetPoint ("TOPLEFT", c * FS_COL_W + FS_LVL_X, -2);
+		cap:SetText ("|cff909090"..FT("Levels").."|r");
+	end
+
 	local col, row = 0, 0;
 	local i;
 
@@ -347,8 +554,10 @@ function Fdr_FS_BuildPicker ()
 		local cb  = CreateFrame ("CheckButton", "Atr_FS_Cat"..e.ci, panel, "UICheckButtonTemplate");
 		local txt = _G["Atr_FS_Cat"..e.ci.."Text"];
 
+		local y = -22 - (row * FS_ROW_H);
+
 		cb:SetSize (20, 20);
-		cb:SetPoint ("TOPLEFT", col * 200, -22 - (row * 22));
+		cb:SetPoint ("TOPLEFT", col * FS_COL_W, y);
 
 		-- a merged row says what it now covers, so the fold is not a surprise
 		local label = e.name or ("#"..e.ci);
@@ -358,37 +567,50 @@ function Fdr_FS_BuildPicker ()
 
 		if (txt) then txt:SetText (label); end
 
-		if (e.gear) then
-			-- present but refused: the exclusion has to be visible to be honest
-			cb:SetChecked (nil);
-			cb:Disable();
-			if (txt) then txt:SetText ("|cff808080"..label.."|r"); end
-		else
-			cb:SetChecked (Fdr_FS_IsSelected (e.ci) and true or nil);
-			cb:SetScript ("OnClick", function (self)
-					Fdr_FS_SetSelected (e.ci, self:GetChecked() and true or false);
-					if (Atr_UpdateFullScanFrame) then Atr_UpdateFullScanFrame (); end
-				end);
+		cb:SetChecked (Fdr_FS_IsSelected (e.ci) and true or nil);
+		cb:SetScript ("OnClick", function (self)
+				Fdr_FS_SetSelected (e.ci, self:GetChecked() and true or false);
+				if (Atr_UpdateFullScanFrame) then Atr_UpdateFullScanFrame (); end
+			end);
 
-			if (e.members and #e.members > 1 and GameTooltip) then
-				local names = (Atr_GetAuctionClasses and Atr_GetAuctionClasses ()) or {};
-				local parts, k = {}, nil;
-				for k = 1, #e.members do parts[k] = names[e.members[k]] or "?"; end
-				local tip = table.concat (parts, ", ");
-				cb:SetScript ("OnEnter", function (self)
-						GameTooltip:SetOwner (self, "ANCHOR_TOPLEFT");
-						GameTooltip:SetText (FT("Scans: ")..tip, 1, 1, 1);
-						GameTooltip:Show();
-					end);
-				cb:SetScript ("OnLeave", function () GameTooltip:Hide(); end);
-			end
+		-- what a row's tooltip says: the merged classes for a folded row, the
+		-- cost warning for a gear one.  Neither is guessable from the label.
+		local tip = nil;
+		if (e.members and #e.members > 1) then
+			local names = (Atr_GetAuctionClasses and Atr_GetAuctionClasses ()) or {};
+			local parts, k = {}, nil;
+			for k = 1, #e.members do parts[k] = names[e.members[k]] or "?"; end
+			tip = FT("Scans: ")..table.concat (parts, ", ");
 		end
+
+		local note = nil;
+		if (e.gear) then
+			note = FT("The longest sweep on the auction house, so this one starts off. Each listing's server tooltip is read as the page arrives, which is what lets its price be filed under its own scaled version instead of being thrown away. Set a level range to keep it short.");
+		end
+
+		if ((tip or note) and GameTooltip) then
+			cb:SetScript ("OnEnter", function (self)
+					GameTooltip:SetOwner (self, "ANCHOR_TOPLEFT");
+					GameTooltip:SetText (tip or label, 1, 1, 1);
+					if (note) then GameTooltip:AddLine (note, nil, nil, nil, true); end
+					GameTooltip:Show();
+				end);
+			cb:SetScript ("OnLeave", function () GameTooltip:Hide(); end);
+		end
+
+		Fdr_FS_MakeLevelBox (panel, e, col * FS_COL_W + FS_LVL_X, y - 1, "Min");
+
+		local dash = panel:CreateFontString (nil, "ARTWORK", "GameFontHighlightSmall");
+		dash:SetPoint ("TOPLEFT", col * FS_COL_W + FS_LVL_DASH, y - 5);
+		dash:SetText ("-");
+
+		Fdr_FS_MakeLevelBox (panel, e, col * FS_COL_W + FS_LVL_X2, y - 1, "Max");
 
 		row = row + 1;
 		if (row >= perCol) then row = 0; col = col + 1; end
 	end
 
-	local yBase = -22 - (perCol * 22) - 10;
+	local yBase = -22 - (perCol * FS_ROW_H) - 10;
 
 	local bz = CreateFrame ("CheckButton", "Atr_FS_BazaarCheck", panel, "UICheckButtonTemplate");
 	bz:SetSize (20, 20);
@@ -398,19 +620,51 @@ function Fdr_FS_BuildPicker ()
 		_G["Atr_FS_BazaarCheckText"]:SetText (FT("Also price the Bazaar catalogue"));
 	end
 
-	-- The exclusion, spelled out. 3.3.5 FontStrings wrap once a width is set
-	-- and nothing clips them, so the width is fixed and the height is not.
-	local why = panel:CreateFontString ("Atr_FS_WhyNoGear", "ARTWORK", "GameFontNormalSmall");
+	-- What the level boxes are for, and what a gear scan does with what it
+	-- finds.  3.3.5 FontStrings wrap once a width is set and nothing clips them,
+	-- so the width is fixed and the height is not.
+	local why = panel:CreateFontString ("Atr_FS_PickerNote", "ARTWORK", "GameFontNormalSmall");
 	why:SetPoint ("TOPLEFT", 0, yBase - 30);
-	why:SetWidth (395);
+	why:SetWidth (455);
 	why:SetJustifyH ("LEFT");
-	why:SetText ("|cffffcc00"..FT("Weapons and Armor are not scanned.").."|r  "
-				..FT("Auctionator's price database is keyed by item NAME. On Ascension "
-					.."one name covers many scaled versions at different item levels, so a "
-					.."single stored price would stand in for every version and be wrong "
-					.."for all but one. Use the Finder tab for gear."));
+	why:SetText ("|cffffcc00"..FT("Levels are the required level; blank scans the whole category.").."|r  "
+				..FT("Weapons and Armor start unticked because a whole-class sweep is the longest "
+					.."scan there is - give them a range. Their prices are filed under each scaled "
+					.."version of an item (item level and required level), not under its name, so a "
+					.."tooltip shows the price of the version you are actually holding."));
 
 	gFS_Built = true;
+	return true;
+end
+
+
+-- The picker is built ONCE and reused (SELL-TAB-COST.md: a window that rebuilds
+-- its widgets is a window that leaks them), so the widgets have to be put back
+-- in step with the store on each show rather than at create time.  In practice
+-- they only ever drift when something outside this file writes the settings --
+-- a hand-edited SavedVariables, or a future options panel -- but a picker that
+-- shows a range it will not scan is the worst kind of wrong.
+function Fdr_FS_SyncPicker ()
+
+	if (not gFS_Built) then return false; end
+
+	local all = Fdr_FS_Classes ();
+	local i;
+
+	for i = 1, #all do
+
+		local ci = all[i].ci;
+
+		local cb = _G["Atr_FS_Cat"..ci];
+		if (cb) then cb:SetChecked (Fdr_FS_IsSelected (ci) and true or nil); end
+
+		local lo, hi = Fdr_FS_Levels (ci);
+		local mn = _G["Atr_FS_LvlMin"..ci];
+		local mx = _G["Atr_FS_LvlMax"..ci];
+		if (mn) then mn:SetText (lo and tostring (lo) or ""); end
+		if (mx) then mx:SetText (hi and tostring (hi) or ""); end
+	end
+
 	return true;
 end
 
@@ -427,6 +681,7 @@ function Atr_ShowFullScanFrame ()
 	if (Atr_FullScanResults) then Atr_FullScanResults:Hide(); end
 
 	Fdr_FS_BuildPicker ();
+	Fdr_FS_SyncPicker ();
 	if (Atr_FS_Picker) then Atr_FS_Picker:Show(); end
 
 	Atr_FullScanFrame:Show();
@@ -482,6 +737,7 @@ function Atr_FullScanStart ()
 	gFS_Added	= 0;
 	gFS_Updated	= 0;
 	gFS_Skipped	= 0;
+	gFS_Variants = 0;
 	gFS_Bazaar	= (Atr_FS_BazaarCheck and Atr_FS_BazaarCheck:GetChecked()) and true or false;
 
 	Fdr_FS_UpdateButtons ();

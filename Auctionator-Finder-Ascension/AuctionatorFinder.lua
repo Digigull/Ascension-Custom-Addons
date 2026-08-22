@@ -68,6 +68,7 @@ local gFdr_TotalPages	= 0;
 
 local gFdr_DupRetries	= 0;
 local gFdr_SkippedPages	= 0;
+local gFdr_VarStored	= 0;		-- FINDER_TAB: scale-variant prices filed by the last scan
 
 local gFdr_SortKey		= "peritem";
 local gFdr_SortAsc		= true;
@@ -1249,6 +1250,59 @@ function FdrBuy_HarvestTrueData (index, rec)
 	Fdr_AHVariant_Record (rec);
 end
 
+-- The SCAN-TIME half of FdrBuy_HarvestTrueData, and the whole reason gear can
+-- be swept at all (management/addons/auctionator/FULL-SCAN-GEAR.md).
+--
+-- A listing's true item level exists in exactly one place -- the server's own
+-- tooltip for that listing -- and the tooltip can only be asked for a listing
+-- that is on the CURRENT page.  The Verify sweep exists because by the time you
+-- are looking at a finished result list the pages are long gone, so it re-finds
+-- each name with a fresh query.  During a scan there is nothing to re-find: the
+-- page is up while Fdr_HarvestPage reads it, so the tooltip is one call away.
+--
+-- DELIBERATELY LIGHTER THAN THE VERIFY READ.  That one keeps the whole rendered
+-- tooltip (up to 40 lines with colours) so a row can reproduce it later; a gear
+-- sweep is tens of thousands of rows and holding a tooltip for each would cost
+-- more memory than the scan itself.  This keeps the two numbers that identify
+-- and price a scale-variant -- item level and DPS -- and nothing else.  So it
+-- does NOT set fdrVerified: the row stops being greyed (it now knows its real
+-- item level) but its stat columns are still the cached base item's, and Verify
+-- remains the way to fill those in.
+function Fdr_HarvestListIlvl (index, rec)
+
+	local tt = Atr_FinderScanTT;
+	if (not (tt and tt.SetAuctionItem and tt.NumLines)) then return false; end
+
+	tt:SetOwner (UIParent, "ANCHOR_NONE");
+	tt:SetAuctionItem ("list", index);
+
+	-- The TOP of the tooltip only.  Both numbers live in an item's header block
+	-- -- name, item level, binding, slot and type, then damage/speed/DPS -- and
+	-- this runs on every equippable listing of a sweep that can be forty pages
+	-- long, so reading the enchant text and the flavour line fifty times a page
+	-- is work with no possible result.  Fifteen lines clears the header with
+	-- room to spare; the Verify read is the one that wants the whole thing.
+	local n = tt:NumLines() or 0;
+	if (n > 15) then n = 15; end
+
+	local ilvlPat = (ITEM_LEVEL and ITEM_LEVEL:gsub ("%%d", "(%%d+)")) or "Item Level (%d+)";
+
+	local j;
+	for j = 1, n do
+		local fs  = _G["Atr_FinderScanTTTextLeft"..j];
+		local txt = fs and fs:GetText();
+		if (txt) then
+			local il = txt:match (ilvlPat);
+			if (il) then rec.trueIlvl = tonumber (il); end
+
+			local d = txt:match ("([%d%.]+)%s+damage per second");	-- enUS pattern
+			if (d) then rec.trueDPS = tonumber (d); end
+		end
+	end
+
+	return rec.trueIlvl ~= nil;
+end
+
 -- Verification is the moment a scaled listing becomes storable: the server
 -- tooltip just gave us its real item level, and the list API's own `level`
 -- return gave us its real required level.  That tuple names the variant
@@ -1280,6 +1334,94 @@ function Fdr_AHVariant_Record (rec)
 	if (cnt < 1) then cnt = 1; end
 
 	return Atr_AHVariant_Note (itemID, ilvl, req, math.floor (bo / cnt));
+end
+
+-- Files every scale-variant a scan learned about, and returns how many
+-- DISTINCT variants that was.
+--
+-- Only rows carrying a trueIlvl reach the store, so in practice this is the
+-- gear sweep and nothing else: an ordinary search's rows have no server tooltip
+-- behind them and are left to the Verify button, as before.
+--
+-- SELF-SUFFICIENT ON PURPOSE.  It is called from two places that know very
+-- different amounts: Fdr_AnalyzeResults, where every row has been enriched and
+-- flagged, and Atr_Finder_CancelSearch, where nothing has -- a cancel never
+-- reaches the analysis pass.  A gear sweep is the longest scan there is and
+-- cancelling one part-way is the ordinary case, so binning the pages it had
+-- already read tooltips for would waste exactly the work that was most
+-- expensive to get.  Hence the base item level is re-read here when the row has
+-- not got one: GetItemInfo is cached-first and reports the BASE item, which is
+-- precisely what "is this listing scaled?" wants to compare against.
+--
+-- ONE SESSION PER CALL, opened only if there is something to file
+-- (Atr_AHVariant_Note rule 1: cheapest wins inside a session, a new session
+-- REPLACES).  One category sweep is exactly the "one snapshot of the market"
+-- that rule is written around.
+--
+-- A CAPPED SCAN IS REFUSED, for the reason Fdr_PriceDB_Update rule 3 refuses
+-- one: the cheapest listing of a variant may be on a page we never reached, so
+-- every price salvaged would be biased high -- and high is the direction that
+-- costs somebody a sale.  A per-category level range is the tool for staying
+-- under the cap.
+function Fdr_RecordScaleVariants (results, capped)
+
+	if (capped) then return 0; end
+	if (type (results) ~= "table") then return 0; end
+	if (type (Fdr_AHVariant_Record) ~= "function") then return 0; end
+
+	local opened, seen, n = false, {}, 0;
+
+	local i;
+	for i = 1, #results do
+
+		local rec = results[i];
+
+		if (type (rec) == "table" and rec.trueIlvl and rec.trueIlvl > 0 and rec.link) then
+
+			-- the cancel path arrives before any enrichment, so fill in what
+			-- the analysis pass would have set
+			if (rec.equippable == nil) then
+				rec.equippable = (IsEquippableItem and IsEquippableItem (rec.link)) and true or false;
+			end
+
+			local base = rec.ilvl;
+			if ((base == nil or base == 0) and GetItemInfo) then
+				local _, _, _, iLevel = GetItemInfo (rec.link);
+				base = iLevel or 0;
+			end
+
+			local scaled = rec.scaled;
+			if (scaled == nil) then
+				scaled = (base and base > 0 and rec.trueIlvl ~= base) or false;
+			end
+
+			if (rec.equippable and scaled) then
+
+				if (not opened) then
+					opened = true;
+					if (Atr_AHVariant_NewSession) then Atr_AHVariant_NewSession (); end
+				end
+
+				-- counted per VARIANT, not per write: several listings of one
+				-- variant is the normal case and each cheaper one writes again
+				-- (rule 1), so a write tally would report the shape of the price
+				-- list rather than what was learned.
+				local key = (rec.link:match ("|Hitem:(%d+)") or "?")
+							..":"..rec.trueIlvl..":"..tostring (rec.level or 0);
+
+				-- Fdr_AHVariant_Record reads rec.scaled itself, so a cancel-path
+				-- row has to carry the flag we just worked out
+				rec.scaled = scaled;
+
+				if (Fdr_AHVariant_Record (rec) and not seen[key]) then
+					seen[key] = true;
+					n = n + 1;
+				end
+			end
+		end
+	end
+
+	return n;
 end
 
 -- Lua patterns have no "literal" flag, so a stat label has to be escaped
@@ -2569,6 +2711,11 @@ function Atr_Finder_CancelSearch (showMsg)
 		-- insert-only so a truncated slice can never overwrite better data.
 		pAdd, pUpd = Fdr_PriceDB_Update (nil, true);
 
+		-- ... and the same for the gear prices: the tooltip read that produced
+		-- them is the most expensive thing the sweep did, and it has already
+		-- been paid for by the time anyone presses Cancel.
+		gFdr_VarStored = Fdr_RecordScaleVariants (gFdr_Results, gFdr_CapHit);
+
 		if (showMsg) then
 			if (pAdd > 0) then
 				Fdr_SetMessage (string.format (FT("Search cancelled - kept %d new prices"), pAdd));
@@ -2653,6 +2800,7 @@ function Atr_Finder_StartQueueScan (specs, onFinish)
 	gFdr_SkippedPages	= 0;
 	gFdr_CapHit			= false;
 	gFdr_NameScan		= false;
+	gFdr_VarStored		= 0;
 	gFdr_WaitTicks		= 0;
 	gFdr_RetryHold		= 0;
 
@@ -2721,6 +2869,7 @@ function Atr_Finder_StartNameScan (name, onFinish)
 	gFdr_SkippedPages	= 0;
 	gFdr_CapHit			= false;
 	gFdr_NameScan		= true;
+	gFdr_VarStored		= 0;
 	gFdr_WaitTicks		= 0;
 	gFdr_RetryHold		= 0;
 
@@ -2777,6 +2926,7 @@ function Atr_Finder_StartSearch ()
 	gFdr_SkippedPages	= 0;
 	gFdr_CapHit			= false;
 	gFdr_NameScan		= false;
+	gFdr_VarStored		= 0;
 	gFdr_WaitTicks		= 0;
 	gFdr_RetryHold		= 0;
 	gFdr_SpecQueue		= Fdr_BuildSpecQueue ();
@@ -2805,7 +2955,19 @@ local function Fdr_SendQuery ()
 
 	local spec = gFdr_SpecQueue[gFdr_SpecIdx] or {};
 
-	QueryAuctionItems (queryString, gFdr_MinLevel, gFdr_MaxLevel, spec.invType,
+	-- FINDER_TAB: a spec may carry its OWN level window, and the Full Scan
+	-- picker is the one thing that sets it (a level range per category).  The
+	-- tab's own boxes stay the fallback, so an ordinary search is unaffected --
+	-- specs built by Fdr_BuildSpecQueue never set these fields.
+	--
+	-- The server filters on REQUIRED level, which is the one per-instance truth
+	-- the list API reports for a scaled item (ASCENSION-CLIENT-NOTES).  So a
+	-- range on a gear category is not merely a way to shorten the sweep: it
+	-- selects along the very axis the scale-variants differ on.
+	local minLev = spec.minLevel or gFdr_MinLevel;
+	local maxLev = spec.maxLevel or gFdr_MaxLevel;
+
+	QueryAuctionItems (queryString, minLev, maxLev, spec.invType,
 					   spec.class or 0, spec.subclass or 0,
 					   gFdr_Page, gFdr_UsableOnly, nil);
 
@@ -2892,6 +3054,13 @@ local function Fdr_AnalyzeResults ()
 		if (rec.equippable and rec.link) then
 			local e = linkLevels[Fdr_NormalizeLink (rec.link)];
 			rec.scaled = (e and e.min ~= e.max)
+					-- the sharpest test there is, and only a gear sweep has it:
+					-- the SERVER's item level for this listing against the
+					-- cached base item's.  A lone listing of a scaled item
+					-- whose required level happens to match its base one is
+					-- invisible to both other tests and caught by this.
+					or (rec.trueIlvl and rec.trueIlvl > 0 and rec.ilvl and rec.ilvl > 0
+						and rec.trueIlvl ~= rec.ilvl)
 					or (rec.baseReq and rec.baseReq > 0 and rec.level and rec.level > 0
 						and rec.level ~= rec.baseReq)
 					or false;
@@ -2901,6 +3070,11 @@ local function Fdr_AnalyzeResults ()
 			end
 		end
 	end
+
+	-- FINDER_TAB: file what this scan learned about scale-variants.  Rules and
+	-- reasoning at Fdr_RecordScaleVariants; it no-ops on a scan with no
+	-- harvested rows, which is every scan but a gear sweep.
+	gFdr_VarStored = Fdr_RecordScaleVariants (gFdr_Results, gFdr_CapHit);
 
 	-- remember everything discovered, BEFORE the ubiquitousConstant filter
 	-- below throws any of it away -- see Fdr_LearnStatKeys for why the raw set
@@ -2942,6 +3116,14 @@ function Atr_Finder_GetStatKeys ()
 	return gFdr_StatKeys;
 end
 
+
+-- FINDER_TAB: how many scale-variant prices the last scan filed.  Read by the
+-- Full Scan driver for its run total; a plain accessor rather than a fifth
+-- argument on the finish hook, which three other drivers also ride.
+function Atr_Finder_VariantsStored ()
+	return gFdr_VarStored or 0;
+end
+
 local function Fdr_FinishSearch (note)
 
 	gFdr_State = FDR_NULL;
@@ -2975,11 +3157,21 @@ local function Fdr_FinishSearch (note)
 		if (pSkip > 0) then
 			msg = msg..string.format (FT(", %d scaled skipped"), pSkip);
 		end
-	else
+	elseif (gFdr_VarStored == 0) then
+		-- "prices not saved - all N rows are scaled gear" is the truth about the
+		-- name-keyed feed and, since those rows started being filed under their
+		-- own variant keys instead, no longer the truth about the scan.  Suppress
+		-- it when the variant store took them: reporting the database that
+		-- declined the work while staying silent about the one that did it reads
+		-- as a gear sweep having failed outright.  The count goes on below.
 		local why = Fdr_PriceDB_WhyText (pWhy, pSkip);		-- nil for "empty": the row count already said it
 		if (why) then
 			note = note and (note..", "..why) or why;
 		end
+	end
+
+	if (gFdr_VarStored > 0) then
+		msg = msg..string.format (FT("  ·  %d gear prices by version"), gFdr_VarStored);
 	end
 
 	if (gFdr_SkippedPages > 0) then
@@ -3137,6 +3329,23 @@ local function Fdr_HarvestPage ()
 
 			local spec		= gFdr_SpecQueue[gFdr_SpecIdx];
 			rec.autoAccept	= spec and spec.autoAccept or false;
+
+			-- FINDER_TAB: a gear sweep reads the server tooltip for each
+			-- equippable listing HERE, while its page is still the current one.
+			-- See Fdr_HarvestListIlvl: this is the only moment the true item
+			-- level of a scaled listing is obtainable without querying for it
+			-- all over again, and without it a gear scan would store nothing
+			-- (the name-keyed DB refuses scaled rows by rule 2, and the
+			-- variant DB cannot key one without its item level).
+			--
+			-- Only when the spec asks for it, which is only the Full Scan's
+			-- Weapon and Armor categories: an ordinary Finder search keeps its
+			-- old cost exactly, and a Trade Goods page pays nothing for a
+			-- feature that has no equippable rows to use it on.
+			if (spec and spec.harvestTrue and rec.link
+					and IsEquippableItem and IsEquippableItem (rec.link)) then
+				Fdr_HarvestListIlvl (x, rec);
+			end
 
 			tinsert (gFdr_Results, rec);
 		end

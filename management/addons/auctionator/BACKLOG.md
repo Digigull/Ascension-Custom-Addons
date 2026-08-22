@@ -22,6 +22,9 @@ variant key, so a search could not move the tooltip of any item a full scan alre
 up under the item. **Item 8 was built 2026-08-20** and its one open premise turned out to be
 wrong in a way that changed the design: slot 3 is not free.
 
+**Item 18 is new, 2026-08-22, and built the same day:** the Full Scan's gear exclusion, which two
+later pieces of work had already made obsolete without anyone going back to it.
+
 **Item 9 is new, 2026-08-20, and built the same day.** **Item 10 is new, 2026-08-20:** item 7's
 "+Reagent List" menu entry had never once appeared in game, and the suite that covers that menu did
 not load the file the entry depends on. Fixed the same day.
@@ -1299,3 +1302,46 @@ columns scroll and the four-row results list does not.
 
 `luac5.1 -p` clean, XML parses, all eleven suites pass. **Not verified in game** — pure layout,
 which is the category offline work cannot check.
+
+---
+
+## 18. Weapon and Armor in the Full Scan, with a level range per checkbox — DONE
+
+**Asked (owner, 2026-08-22):** *"With the Auctionator addon, are we at a point that we can add
+Weapon and Armor to the Full scan categories? If we are maybe we add a level range to each
+checkbox (blank = all)."*
+
+**Answered: yes, and it had been yes for a while.** The exclusion was never about scanning — it was
+that `gAtr_ScanDB` is name-keyed and one name covers every scaled version of an item, so there was
+nowhere honest to put a gear price. `AUCTIONATOR_AH_VARIANT` (keyed `itemID:ilvl:req`) has been that
+place since the Verify button was built; nothing had ever filed gear into it in bulk.
+
+**Built 2026-08-22.** Full write-up in `FULL-SCAN-GEAR.md`. Four parts:
+
+**1. The harvest.** `Fdr_HarvestListIlvl` reads a listing's server tooltip inside `Fdr_HarvestPage`,
+while its page is still the current one — the only cheap moment a scaled listing's true item level
+exists. Deliberately lighter than the Verify read (two numbers, first 15 lines, no `fdrVerified`),
+and it runs only for specs that ask (`spec.harvestTrue`), which is only the two gear categories.
+
+**2. The filing.** `Fdr_RecordScaleVariants` files each scaled listing under its own variant key,
+from `Fdr_AnalyzeResults` and — because a long sweep gets cancelled and the tooltip reads are the
+expensive part — from `Atr_Finder_CancelSearch`, where it re-derives what the analysis pass would
+have set. Refuses a capped scan for `Fdr_PriceDB_Update` rule 3's reason. Rule 2 is untouched: the
+name-keyed DB still takes the unscaled gear and nothing else.
+
+**3. The level range.** `fullScanLevels[ci] = {min,max}`, blank stores nothing, written per
+keystroke as a pair, applied to every class its checkbox scans, and read by `Fdr_SendQuery` in place
+of the tab's own boxes. It filters on **required level**, which on this realm is the axis the scaled
+versions of an item differ along — so on gear it picks a real slice rather than just shortening the
+scan.
+
+**4. Two things that fell out.** A third and sharper scaled test (`trueIlvl ~= base ilvl`) catches a
+lone listing whose required level happens to match its base one — which used to reach the name-keyed
+DB. And both status lines report `%d gear prices by version`, without which a gear run reads as a
+total failure: the two counters on the dialog are the database that declined the work.
+
+Weapon and Armor are the only two rows that start **unticked**, and the dialog grew to 520x455 to
+fit the boxes.
+
+`luac5.1 -p` clean, XML parses, all eleven suites pass. **Not verified in game** — the harvest's
+per-page cost in particular is reasoned, not measured.
